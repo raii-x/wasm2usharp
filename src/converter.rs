@@ -145,11 +145,12 @@ struct Func {
     ty: FuncType,
 }
 
+const BREAK_DEPTH: &str = "break_depth";
+
 struct CodeConverter<'input, 'conv> {
     conv: &'conv Converter<'input>,
     code_idx: usize,
     blocks: Vec<Block>,
-    label_count: u32,
     vars: Vec<Var>,
     local_count: u32,
     stmts: Vec<String>,
@@ -157,9 +158,9 @@ struct CodeConverter<'input, 'conv> {
 
 #[derive(Debug)]
 struct Block {
-    label: Label,
     stack: Vec<Var>,
     result: Option<Var>,
+    do_while: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -174,22 +175,12 @@ impl fmt::Display for Var {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Label(u32);
-
-impl fmt::Display for Label {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "label{}", self.0)
-    }
-}
-
 impl<'input, 'conv> CodeConverter<'input, 'conv> {
     fn new(conv: &'conv Converter<'input>, code_idx: usize) -> Self {
         Self {
             conv,
             code_idx,
             blocks: Vec::new(),
-            label_count: 0,
             vars: Vec::new(),
             local_count: 0,
             stmts: Vec::new(),
@@ -214,21 +205,21 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let results = self.conv.funcs[self.code_idx].ty.results();
 
-        // 最上位のブロックの戻り値をstackへpushする際に失敗しないようにするための仮のブロック
-        self.new_block(BlockType::Empty);
-
         // 関数の最上位のブロック
         self.visit_block(match results.len() {
             0 => BlockType::Empty,
             1 => BlockType::Type(results[0]),
             _ => panic!("multi value is not supported"),
         })?;
+        let result_var = self.blocks[0].result;
 
         for op in body.get_operators_reader()? {
             self.visit_operator(&op?)?;
         }
 
-        self.visit_return()?;
+        if let Some(res) = result_var {
+            self.stmts.push(format!("return {res};"));
+        }
 
         self.print();
 
@@ -239,13 +230,13 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         // 関数ヘッダ
         let func_ty = self.func().ty.clone();
 
-        let ret = match func_ty.results().len() {
+        let ret_cs_ty = match func_ty.results().len() {
             0 => "void",
             1 => func_ty.results()[0].get_cs_ty(),
             _ => unreachable!(),
         };
 
-        print!("{} {}(", ret, self.func().name);
+        print!("{ret_cs_ty} {}(", self.func().name);
 
         for (i, param) in func_ty.params().iter().enumerate() {
             if i != 0 {
@@ -256,14 +247,16 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         println!(") {{");
 
+        println!("int {BREAK_DEPTH} = 0;");
+
         // 一時変数
         for var in self.vars.iter().skip(func_ty.params().len()) {
-            println!("{} {};", var.ty.get_cs_ty(), var);
+            println!("{} {var};", var.ty.get_cs_ty());
         }
 
         // 本体
         for stmt in &self.stmts {
-            println!("{}", stmt);
+            println!("{stmt}");
         }
 
         println!("}}");
@@ -278,20 +271,17 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         var
     }
 
-    fn new_block(&mut self, blockty: BlockType) {
+    fn new_block(&mut self, blockty: BlockType, do_while: bool) {
         let result = match blockty {
             BlockType::Empty => None,
             BlockType::Type(ty) => Some(self.new_var(ty)),
             BlockType::FuncType(..) => panic!("func type blocks are not supported"),
         };
 
-        let label = Label(self.label_count);
-        self.label_count += 1;
-
         self.blocks.push(Block {
-            label,
             stack: Vec::new(),
             result,
+            do_while,
         });
     }
 
@@ -305,8 +295,12 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         }
     }
 
-    fn get_label(&self, relative_depth: u32) -> Label {
-        self.blocks[self.blocks.len() - 1 - relative_depth as usize].label
+    /// relative_depthが0より大きければBREAK_DEPTHに代入する処理を追加する
+    fn set_break_depth(&mut self, relative_depth: u32) {
+        if relative_depth > 0 {
+            self.stmts
+                .push(format!("{BREAK_DEPTH} = {relative_depth};"));
+        }
     }
 
     fn push_stack(&mut self, var: Var) {
@@ -559,21 +553,21 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_block(&mut self, blockty: BlockType) -> Self::Output {
-        self.new_block(blockty);
-        self.stmts.push("{".to_string());
+        self.new_block(blockty, true);
+        self.stmts.push("do {".to_string());
         Ok(())
     }
 
     fn visit_loop(&mut self, blockty: BlockType) -> Self::Output {
-        self.new_block(blockty);
+        self.new_block(blockty, false);
         self.stmts.push("while (true) {".to_string());
         Ok(())
     }
 
     fn visit_if(&mut self, blockty: BlockType) -> Self::Output {
         let var = self.pop_stack();
-        self.new_block(blockty);
-        self.stmts.push(format!("if ({var} != 0) {{"));
+        self.new_block(blockty, true);
+        self.stmts.push(format!("do if ({var} != 0) {{"));
         Ok(())
     }
 
@@ -591,20 +585,32 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         let block = self.blocks.pop().unwrap();
 
-        if let Some(result) = block.result {
-            self.push_stack(result);
+        if block.do_while {
+            self.stmts.push("} while (false);".to_string());
+        } else {
+            self.stmts.push("}".to_string());
         }
 
-        self.stmts.push("}".to_string());
-        self.stmts.push(format!("{}:;", block.label));
+        // 最も外側のブロックのendでない場合のみ
+        if !self.blocks.is_empty() {
+            if let Some(result) = block.result {
+                self.push_stack(result);
+            }
+
+            // 多重break
+            self.stmts.push(format!(
+                "if ({BREAK_DEPTH} > 0) {{ {BREAK_DEPTH}--; break; }}"
+            ));
+        }
+
         Ok(())
     }
 
     fn visit_br(&mut self, relative_depth: u32) -> Self::Output {
         self.block_result(relative_depth);
+        self.set_break_depth(relative_depth);
 
-        self.stmts
-            .push(format!("goto label{};", self.get_label(relative_depth)));
+        self.stmts.push("break;".to_string());
         Ok(())
     }
 
@@ -613,11 +619,11 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.stmts.push(format!("if ({var} != 0) {{"));
 
         self.block_result(relative_depth);
+        self.set_break_depth(relative_depth);
 
-        self.stmts
-            .push(format!("goto {};", self.get_label(relative_depth)));
+        self.stmts.push("break;".to_string());
+
         self.stmts.push("}".to_string());
-
         Ok(())
     }
 
@@ -628,18 +634,18 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         for target in targets.targets() {
             let target = target?;
-            let label = self.get_label(target);
 
             self.stmts.push(format!("case {var}:"));
             self.block_result(target);
-            self.stmts.push(format!("goto {label};"));
+            self.set_break_depth(target);
+            self.stmts.push("break;".to_string());
         }
 
         {
-            let label = self.get_label(targets.default());
             self.stmts.push("default:".to_string());
             self.block_result(targets.default());
-            self.stmts.push(format!("goto {label};"));
+            self.set_break_depth(targets.default());
+            self.stmts.push("break;".to_string());
         }
 
         self.stmts.push("}".to_string());
