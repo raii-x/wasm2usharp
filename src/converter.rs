@@ -3,8 +3,9 @@ use std::fmt;
 use anyhow::Result;
 use regex::Regex;
 use wasmparser::{
-    for_each_operator, BlockType, BrTable, FuncType, FunctionBody, GlobalType, Ieee32, Ieee64,
-    MemArg, Parser, RecGroup, StorageType, StructuralType, ValType, VisitOperator,
+    for_each_operator, BlockType, BrTable, ConstExpr, ElementItems, ElementKind, FuncType,
+    FunctionBody, GlobalType, Ieee32, Ieee64, MemArg, Parser, RecGroup, StorageType,
+    StructuralType, ValType, VisitOperator,
 };
 
 macro_rules! define_single_visit_operator {
@@ -28,6 +29,7 @@ pub struct Converter<'input> {
     buf: &'input [u8],
     types: Vec<FuncType>,
     funcs: Vec<Func>,
+    table: Vec<Option<u32>>,
     memory: u32,
     globals: Vec<GlobalType>,
     code_idx: usize,
@@ -41,6 +43,7 @@ impl<'input> Converter<'input> {
             buf,
             types: Vec::new(),
             funcs: Vec::new(),
+            table: Vec::new(),
             memory: 0,
             globals: Vec::new(),
             code_idx: 0,
@@ -78,9 +81,16 @@ impl<'input> Converter<'input> {
                     for func in s {
                         let func = func?;
 
-                        let name = format!("func{}", self.funcs.len());
+                        let name = FuncName::Index(self.funcs.len() as u32);
                         let ty = self.types[func as usize].clone();
                         self.funcs.push(Func { name, ty });
+                    }
+                }
+                TableSection(s) => {
+                    for table in s {
+                        let table = table?;
+                        assert!(table.ty.element_type.is_func_ref());
+                        self.table.resize(table.ty.initial as usize, None);
                     }
                 }
                 MemorySection(s) => {
@@ -97,7 +107,7 @@ impl<'input> Converter<'input> {
 
                         println!(
                             "{} global{};",
-                            global.ty.content_type.get_cs_ty(),
+                            get_cs_ty(global.ty.content_type),
                             self.globals.len()
                         );
 
@@ -112,8 +122,9 @@ impl<'input> Converter<'input> {
                         let export = export?;
                         match export.kind {
                             Func => {
-                                self.funcs[export.index as usize].name =
-                                    re.replace_all(export.name, "_").to_string();
+                                self.funcs[export.index as usize].name = FuncName::Exported(
+                                    re.replace_all(export.name, "_").to_string(),
+                                );
                             }
                             Table => {}
                             Memory => {}
@@ -121,6 +132,81 @@ impl<'input> Converter<'input> {
                             Tag => {}
                         }
                         // println!("  Export {} {:?}", export.name, export.kind);
+                    }
+                }
+                StartSection { func, .. } => {
+                    self.funcs[func as usize].name = FuncName::Exported("start".to_string());
+                }
+                ElementSection(s) => {
+                    for elem in s {
+                        let elem = elem?;
+
+                        let offset = match elem.kind {
+                            ElementKind::Active {
+                                table_index,
+                                offset_expr,
+                            } => {
+                                assert!(table_index.is_none());
+                                read_i32_const_ops(&offset_expr)
+                            }
+                            _ => panic!("Not supported element kind"),
+                        };
+
+                        if let ElementItems::Functions(s) = elem.items {
+                            for (i, item) in s.into_iter().enumerate() {
+                                let item = item?;
+                                self.table[offset as usize + i] = Some(item);
+                            }
+                        } else {
+                            panic!("Non function elements are not supported");
+                        }
+                    }
+
+                    for (i_ty, ty) in self.types.iter().enumerate() {
+                        let name = format!("{CALL_INDIRECT}{i_ty}");
+                        let mut params = ty
+                            .params()
+                            .iter()
+                            .enumerate()
+                            .map(|(i, param)| (get_cs_ty(*param), format!("param{i}")))
+                            .collect::<Vec<_>>();
+
+                        let call_params = params
+                            .iter()
+                            .map(|(_, y)| y.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+
+                        params.push((get_cs_ty(ValType::I32), "index".to_string()));
+
+                        println!(
+                            "{} {{",
+                            func_header(&name, result_cs_ty(ty.results()), &params)
+                        );
+
+                        println!("switch (index) {{");
+                        for (i, i_func) in self.table.iter().enumerate() {
+                            if let Some(i_func) = i_func {
+                                let func = &self.funcs[*i_func as usize];
+                                if func.ty != *ty {
+                                    continue;
+                                }
+
+                                if ty.results().is_empty() {
+                                    println!("case {i}: {}({}); return;", func.name, call_params);
+                                } else {
+                                    println!("case {i}: return {}({});", func.name, call_params);
+                                }
+                            }
+                        }
+                        print!("default: Debug.Error(\"invalid table index\"); return");
+                        if ty.results().is_empty() {
+                            println!(";");
+                        } else {
+                            println!(" 0;");
+                        }
+                        println!("}}");
+                        println!("}}");
                     }
                 }
                 CodeSectionEntry(s) => {
@@ -140,12 +226,43 @@ impl<'input> Converter<'input> {
     }
 }
 
+fn read_i32_const_ops(expr: &ConstExpr) -> i32 {
+    let mut op_iter = expr.get_operators_reader().into_iter();
+    let value = if let wasmparser::Operator::I32Const { value } = op_iter.next().unwrap().unwrap() {
+        value
+    } else {
+        panic!("Not supported const expr operator")
+    };
+
+    if let wasmparser::Operator::End = op_iter.next().unwrap().unwrap() {
+    } else {
+        panic!("Not supported const expr operator")
+    };
+
+    value
+}
+
 struct Func {
-    name: String,
+    name: FuncName,
     ty: FuncType,
 }
 
+enum FuncName {
+    Index(u32),
+    Exported(String),
+}
+
+impl fmt::Display for FuncName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Index(i) => write!(f, "func{i}"),
+            Self::Exported(name) => write!(f, "{name}"),
+        }
+    }
+}
+
 const BREAK_DEPTH: &str = "break_depth";
+const CALL_INDIRECT: &str = "call_indirect";
 
 struct CodeConverter<'input, 'conv> {
     conv: &'conv Converter<'input>,
@@ -230,28 +347,28 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         // 関数ヘッダ
         let func_ty = self.func().ty.clone();
 
-        let ret_cs_ty = match func_ty.results().len() {
-            0 => "void",
-            1 => func_ty.results()[0].get_cs_ty(),
-            _ => unreachable!(),
-        };
-
-        print!("{ret_cs_ty} {}(", self.func().name);
-
-        for (i, param) in func_ty.params().iter().enumerate() {
-            if i != 0 {
-                print!(", ");
-            }
-            print!("{} {}", param.get_cs_ty(), self.vars[i]);
+        if let FuncName::Exported(_) = self.func().name {
+            print!("public ");
         }
 
-        println!(") {{");
+        let params: Vec<(&str, &Var)> = func_ty
+            .params()
+            .iter()
+            .map(|&ty| get_cs_ty(ty))
+            .zip(self.vars.iter())
+            .collect();
+        print!(
+            "{}",
+            func_header(&self.func().name, result_cs_ty(func_ty.results()), &params)
+        );
+
+        println!(" {{");
 
         println!("int {BREAK_DEPTH} = 0;");
 
         // 一時変数
         for var in self.vars.iter().skip(func_ty.params().len()) {
-            println!("{} {var};", var.ty.get_cs_ty());
+            println!("{} {var};", get_cs_ty(var.ty));
         }
 
         // 本体
@@ -332,13 +449,13 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         match mem_type {
             I8 => load += &format!("memory[{0}+{1}];", idx, memarg.offset),
-            I16 => load += &format!("memory[{0}+{1}] | ({2})memory[{0}+{1}+1]<<8;", idx, memarg.offset, var_type.get_cs_ty()),
+            I16 => load += &format!("memory[{0}+{1}] | ({2})memory[{0}+{1}+1]<<8;", idx, memarg.offset, get_cs_ty(var_type)),
             Val(I32) => load += &format!(
                 "memory[{0}+{1}] | ({2})memory[{0}+{1}+1]<<8 | ({2})memory[{0}+{1}+2]<<16 | ({2})memory[{0}+{1}+3]<<24;",
-                idx, memarg.offset, var_type.get_cs_ty()),
+                idx, memarg.offset, get_cs_ty(var_type)),
             Val(I64) => load += &format!(
                 "memory[{0}+{1}] | ({2})memory[{0}+{1}+1]<<8 | ({2})memory[{0}+{1}+2]<<16 | ({2})memory[{0}+{1}+3]<<24 | ({2})memory[{0}+{1}+4]<<32 | ({2})memory[{0}+{1}+5]<<40 | ({2})memory[{0}+{1}+6]<<48 | ({2})memory[{0}+{1}+7]<<56;",
-                idx, memarg.offset, var_type.get_cs_ty()),
+                idx, memarg.offset, get_cs_ty(var_type)),
             _ => unreachable!(),
         }
         self.stmts.push(load);
@@ -403,10 +520,10 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_const<T: fmt::Display>(
+    fn visit_const(
         &mut self,
         ty: ValType,
-        value: T,
+        value: impl fmt::Display,
     ) -> <Self as VisitOperator>::Output {
         let var = self.new_var(ty);
         self.push_stack(var);
@@ -439,7 +556,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let mut stmt = format!("{result} = ");
 
         if signed {
-            let cs_ty = ty.get_cs_ty();
+            let cs_ty = get_cs_ty(ty);
             // 先頭の`u`を取り除く
             let cs_ty_s = &cs_ty[1..];
 
@@ -485,7 +602,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         self.stmts
             .push(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cs_ty = ty.get_cs_ty();
+        let cs_ty = get_cs_ty(ty);
         // 2進で文字列化して文字数を数える
         self.stmts.push(format!(
             "else {result} = ({cs_ty}){bits} - Convert.ToString({opnd}, 2).Length;",
@@ -502,7 +619,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         self.stmts
             .push(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cs_ty = ty.get_cs_ty();
+        let cs_ty = get_cs_ty(ty);
         // 1. 文字数を揃えるため、MSBだけが1の数とopndのORをとる
         // 2. 2進で文字列化する
         // 3. 最後に1が出現するインデックスを求める
@@ -519,12 +636,52 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result: Var = self.new_var(ty);
         self.push_stack(result);
 
-        let cs_ty = ty.get_cs_ty();
+        let cs_ty = get_cs_ty(ty);
         // 2進で文字列化して、0を除去した後の文字数を数える
         self.stmts.push(format!(
             "{result} = ({cs_ty})Convert.ToString({opnd}, 2).Replace(\"0\", \"\").Length;"
         ));
         Ok(())
+    }
+
+    fn get_result(&mut self, ty: FuncType, stmt: &mut String) {
+        match ty.results().len() {
+            0 => {}
+            1 => {
+                let var = self.new_var(ty.results()[0]);
+                *stmt += &format!("{var} = ");
+                self.push_stack(var);
+            }
+            _ => {
+                panic!("Multiple return values are not supported")
+            }
+        }
+    }
+}
+
+fn func_header(
+    name: impl fmt::Display,
+    result: impl fmt::Display,
+    params: &[(impl fmt::Display, impl fmt::Display)],
+) -> String {
+    let mut header = format!("{result} {name}(");
+
+    for (i, param) in params.iter().enumerate() {
+        if i != 0 {
+            header += ", ";
+        }
+        header += &format!("{} {}", param.0, param.1);
+    }
+
+    header += ")";
+    header
+}
+
+fn result_cs_ty(results: &[ValType]) -> &str {
+    match results.len() {
+        0 => "void",
+        1 => get_cs_ty(results[0]),
+        _ => unreachable!(),
     }
 }
 
@@ -672,23 +829,12 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         let func = &self.conv.funcs[function_index as usize];
 
-        let args: Vec<Var> = func.ty.params().iter().map(|_| self.pop_stack()).collect();
+        let params: Vec<Var> = func.ty.params().iter().map(|_| self.pop_stack()).collect();
 
-        match func.ty.results().len() {
-            0 => {}
-            1 => {
-                let var = self.new_var(func.ty.results()[0]);
-                call += &format!("{var} = ");
-                self.push_stack(var);
-            }
-            _ => {
-                panic!("Multiple return values are not supported")
-            }
-        }
-
+        self.get_result(func.ty.clone(), &mut call);
         call += &format!("{}(", func.name);
 
-        for (i, arg) in args.iter().enumerate() {
+        for (i, arg) in params.iter().rev().enumerate() {
             if i != 0 {
                 call += ", ";
             }
@@ -707,7 +853,31 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         table_index: u32,
         table_byte: u8,
     ) -> Self::Output {
-        todo!()
+        assert!(table_index == 0);
+        assert!(table_byte == 0);
+
+        let mut call = String::new();
+
+        let ty = self.conv.types[type_index as usize].clone();
+
+        let params: Vec<Var> = (0..ty.params().len() + 1)
+            .map(|_| self.pop_stack())
+            .collect();
+
+        self.get_result(ty, &mut call);
+        call += &format!("{CALL_INDIRECT}{}(", type_index);
+
+        for (i, arg) in params.iter().rev().enumerate() {
+            if i != 0 {
+                call += ", ";
+            }
+            call += &format!("{arg}");
+        }
+
+        call += ");";
+
+        self.stmts.push(call);
+        Ok(())
     }
 
     fn visit_drop(&mut self) -> Self::Output {
@@ -1411,19 +1581,13 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 }
 
-trait GetCsTy {
-    fn get_cs_ty(&self) -> &'static str;
-}
-
-impl GetCsTy for ValType {
-    fn get_cs_ty(&self) -> &'static str {
-        match self {
-            ValType::I32 => "uint",
-            ValType::I64 => "ulong",
-            ValType::F32 => "float",
-            ValType::F64 => "double",
-            _ => unreachable!(),
-        }
+fn get_cs_ty(ty: ValType) -> &'static str {
+    match ty {
+        ValType::I32 => "uint",
+        ValType::I64 => "ulong",
+        ValType::F32 => "float",
+        ValType::F64 => "double",
+        _ => unreachable!(),
     }
 }
 
