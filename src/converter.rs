@@ -1126,7 +1126,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.push_stack(var);
 
         self.stmts
-            .push(format!("{var} = {MEMORY}.Length() / {PAGE_SIZE};"));
+            .push(format!("{var} = {MEMORY}.Length / {PAGE_SIZE};"));
         Ok(())
     }
 
@@ -1142,16 +1142,16 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         // 前のサイズを返す
         self.stmts
-            .push(format!("{var} = {MEMORY}.Length() / {PAGE_SIZE};"));
+            .push(format!("{var} = {MEMORY}.Length / {PAGE_SIZE};"));
 
         // メモリをsizeだけ拡張
         self.stmts.push("{".to_string());
         self.stmts.push(format!("var old = {MEMORY};"));
         self.stmts.push(format!(
-            "{MEMORY} = new byte[old.Length() + {size} * {PAGE_SIZE}];"
+            "{MEMORY} = new byte[old.Length + {size} * {PAGE_SIZE}];"
         ));
         self.stmts
-            .push(format!("Array.Copy(old, {MEMORY}, old.Length());"));
+            .push(format!("Array.Copy(old, {MEMORY}, old.Length);"));
         self.stmts.push("}".to_string());
         Ok(())
     }
