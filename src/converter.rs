@@ -1125,8 +1125,10 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(ValType::I32);
         self.push_stack(var);
 
-        self.stmts
-            .push(format!("{var} = {MEMORY}.Length / {PAGE_SIZE};"));
+        self.stmts.push(format!(
+            "{var} = ({})({MEMORY}.Length / {PAGE_SIZE});",
+            get_cs_ty(var.ty)
+        ));
         Ok(())
     }
 
