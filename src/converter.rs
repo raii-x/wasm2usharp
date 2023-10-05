@@ -1125,10 +1125,9 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(ValType::I32);
         self.push_stack(var);
 
-        self.stmts.push(format!(
-            "{var} = ({})({MEMORY}.Length / {PAGE_SIZE});",
-            get_cs_ty(var.ty)
-        ));
+        let cs_ty = get_cs_ty(var.ty);
+        self.stmts
+            .push(format!("{var} = ({cs_ty})({MEMORY}.Length / {PAGE_SIZE});"));
         Ok(())
     }
 
@@ -1143,8 +1142,9 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.push_stack(var);
 
         // 前のサイズを返す
+        let cs_ty = get_cs_ty(var.ty);
         self.stmts
-            .push(format!("{var} = {MEMORY}.Length / {PAGE_SIZE};"));
+            .push(format!("{var} = ({cs_ty})({MEMORY}.Length / {PAGE_SIZE});"));
 
         // メモリをsizeだけ拡張
         self.stmts.push("{".to_string());
