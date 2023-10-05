@@ -16,7 +16,7 @@ fn main() -> Result<()> {
 
     let buf: Vec<u8> = std::fs::read(&args[1])?;
     validate(&buf)?;
-    let mut converter = Converter::new(&buf);
+    let mut converter = Converter::new(&buf, false);
     converter.convert(&mut std::io::stdout())?;
 
     Ok(())

@@ -27,32 +27,48 @@ macro_rules! define_visit_operator {
 
 pub struct Converter<'input> {
     buf: &'input [u8],
+    udon: bool,
     types: Vec<FuncType>,
     funcs: Vec<Func>,
     table: Vec<Option<u32>>,
     memory: u32,
     globals: Vec<GlobalType>,
     code_idx: usize,
+    start_func: Option<u32>,
 }
 
 const PAGE_SIZE: u32 = 65536;
+const CLASS_NAME: &str = "Wasm2USharp";
+const W2US_PREFIX: &str = "w2us_";
+const MEMORY: &str = "w2us_memory";
+const INIT: &str = "w2us_init";
+const BREAK_DEPTH: &str = "w2us_break_depth";
+const CALL_INDIRECT: &str = "w2us_call_indirect";
 
 impl<'input> Converter<'input> {
-    pub fn new(buf: &'input [u8]) -> Self {
+    pub fn new(buf: &'input [u8], udon: bool) -> Self {
         Self {
             buf,
+            udon,
             types: Vec::new(),
             funcs: Vec::new(),
             table: Vec::new(),
             memory: 0,
             globals: Vec::new(),
             code_idx: 0,
+            start_func: None,
         }
     }
 
     pub fn convert(&mut self, out_file: &mut impl Write) -> Result<()> {
         writeln!(out_file, "using System;")?;
-        writeln!(out_file, "class Wasm2USharp : UdonSharpBehaviour {{")?;
+
+        write!(out_file, "class {CLASS_NAME} ")?;
+        if self.udon {
+            writeln!(out_file, ": UdonSharpBehaviour {{")?;
+        } else {
+            writeln!(out_file, "{{")?;
+        }
 
         for payload in Parser::new(0).parse_all(self.buf) {
             use wasmparser::Payload::*;
@@ -100,7 +116,7 @@ impl<'input> Converter<'input> {
 
                         writeln!(
                             out_file,
-                            "byte[] memory = new byte[{}];",
+                            "byte[] {MEMORY} = new byte[{}];",
                             self.memory * PAGE_SIZE
                         )?;
                     }
@@ -140,7 +156,7 @@ impl<'input> Converter<'input> {
                     }
                 }
                 StartSection { func, .. } => {
-                    self.funcs[func as usize].name = FuncName::Exported("start".to_string());
+                    self.start_func = Some(func);
                 }
                 ElementSection(s) => {
                     for elem in s {
@@ -213,10 +229,11 @@ impl<'input> Converter<'input> {
                                 }
                             }
                         }
-                        write!(
-                            out_file,
-                            "default: Debug.Error(\"invalid table index\"); return"
-                        )?;
+                        write!(out_file, "default: ")?;
+                        if self.udon {
+                            write!(out_file, "Debug.Error(\"invalid table index\"); ")?;
+                        }
+                        write!(out_file, "return")?;
                         if ty.results().is_empty() {
                             writeln!(out_file, ";")?;
                         } else {
@@ -235,6 +252,29 @@ impl<'input> Converter<'input> {
                     // println!("found payload {:?}", _other);
                 }
             }
+        }
+
+        writeln!(out_file, "public void {INIT}() {{")?;
+        if let Some(start_func) = self.start_func {
+            writeln!(out_file, "{}();", self.funcs[start_func as usize].name)?;
+        }
+        writeln!(out_file, "}}")?;
+
+        if !self.udon {
+            writeln!(
+                out_file,
+                r#"static void Main(string[] args)
+{{
+    var instance = new {CLASS_NAME}();
+    instance.{INIT}();
+    if (args.Length != 0)
+    {{
+        var t = instance.GetType();
+        var mi = t.GetMethod(args[0]);
+        mi.Invoke(instance, null);
+    }}
+}}"#
+            )?;
         }
 
         writeln!(out_file, "}}")?;
@@ -272,14 +312,11 @@ enum FuncName {
 impl fmt::Display for FuncName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Index(i) => write!(f, "func{i}"),
+            Self::Index(i) => write!(f, "{W2US_PREFIX}func{i}"),
             Self::Exported(name) => write!(f, "{name}"),
         }
     }
 }
-
-const BREAK_DEPTH: &str = "break_depth";
-const CALL_INDIRECT: &str = "call_indirect";
 
 struct CodeConverter<'input, 'conv> {
     conv: &'conv Converter<'input>,
@@ -480,13 +517,13 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let mut load = format!("{var} = ");
 
         match mem_type {
-            I8 => load += &format!("memory[{0}+{1}];", idx, memarg.offset),
-            I16 => load += &format!("memory[{0}+{1}] | ({2})memory[{0}+{1}+1]<<8;", idx, memarg.offset, get_cs_ty(var_type)),
+            I8 => load += &format!("{MEMORY}[{0}+{1}];", idx, memarg.offset),
+            I16 => load += &format!("{MEMORY}[{0}+{1}] | ({2}){MEMORY}[{0}+{1}+1]<<8;", idx, memarg.offset, get_cs_ty(var_type)),
             Val(I32) => load += &format!(
-                "memory[{0}+{1}] | ({2})memory[{0}+{1}+1]<<8 | ({2})memory[{0}+{1}+2]<<16 | ({2})memory[{0}+{1}+3]<<24;",
+                "{MEMORY}[{0}+{1}] | ({2}){MEMORY}[{0}+{1}+1]<<8 | ({2}){MEMORY}[{0}+{1}+2]<<16 | ({2}){MEMORY}[{0}+{1}+3]<<24;",
                 idx, memarg.offset, get_cs_ty(var_type)),
             Val(I64) => load += &format!(
-                "memory[{0}+{1}] | ({2})memory[{0}+{1}+1]<<8 | ({2})memory[{0}+{1}+2]<<16 | ({2})memory[{0}+{1}+3]<<24 | ({2})memory[{0}+{1}+4]<<32 | ({2})memory[{0}+{1}+5]<<40 | ({2})memory[{0}+{1}+6]<<48 | ({2})memory[{0}+{1}+7]<<56;",
+                "{MEMORY}[{0}+{1}] | ({2}){MEMORY}[{0}+{1}+1]<<8 | ({2}){MEMORY}[{0}+{1}+2]<<16 | ({2}){MEMORY}[{0}+{1}+3]<<24 | ({2}){MEMORY}[{0}+{1}+4]<<32 | ({2}){MEMORY}[{0}+{1}+5]<<40 | ({2}){MEMORY}[{0}+{1}+6]<<48 | ({2}){MEMORY}[{0}+{1}+7]<<56;",
                 idx, memarg.offset, get_cs_ty(var_type)),
             _ => unreachable!(),
         }
@@ -527,22 +564,22 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let idx = self.pop_stack();
 
         self.stmts.push(match mem_type {
-            I8 => format!("memory[{0}+{1}]=(byte)({2}&0xff);", idx, memarg.offset, var),
+            I8 => format!("{MEMORY}[{0}+{1}]=(byte)({2}&0xff);", idx, memarg.offset, var),
             I16 => {
                 format!(
-                    "memory[{0}+{1}]=(byte)({2}&0xff); memory[{0}+{1}+1]=(byte)(({2}>>8)&0xff);",
+                    "{MEMORY}[{0}+{1}]=(byte)({2}&0xff); {MEMORY}[{0}+{1}+1]=(byte)(({2}>>8)&0xff);",
                     idx, memarg.offset, var
                 )
             }
             Val(I32) => {
                 format!(
-                    "memory[{0}+{1}]=(byte)({2}&0xff); memory[{0}+{1}+1]=(byte)(({2}>>8)&0xff); memory[{0}+{1}+2]=(byte)(({2}>>16)&0xff); memory[{0}+{1}+3]=(byte)(({2}>>24)&0xff);",
+                    "{MEMORY}[{0}+{1}]=(byte)({2}&0xff); {MEMORY}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {MEMORY}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {MEMORY}[{0}+{1}+3]=(byte)(({2}>>24)&0xff);",
                     idx, memarg.offset, var
                 )
             }
             Val(I64) => {
                 format!(
-                    "memory[{0}+{1}]=(byte)({2}&0xff); memory[{0}+{1}+1]=(byte)(({2}>>8)&0xff); memory[{0}+{1}+2]=(byte)(({2}>>16)&0xff); memory[{0}+{1}+3]=(byte)(({2}>>24)&0xff); memory[{0}+{1}+4]=(byte)(({2}>>32)&0xff); memory[{0}+{1}+5]=(byte)(({2}>>40)&0xff); memory[{0}+{1}+6]=(byte)(({2}>>48)&0xff); memory[{0}+{1}+7]=(byte)(({2}>>56)&0xff);",
+                    "{MEMORY}[{0}+{1}]=(byte)({2}&0xff); {MEMORY}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {MEMORY}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {MEMORY}[{0}+{1}+3]=(byte)(({2}>>24)&0xff); {MEMORY}[{0}+{1}+4]=(byte)(({2}>>32)&0xff); {MEMORY}[{0}+{1}+5]=(byte)(({2}>>40)&0xff); {MEMORY}[{0}+{1}+6]=(byte)(({2}>>48)&0xff); {MEMORY}[{0}+{1}+7]=(byte)(({2}>>56)&0xff);",
                     idx, memarg.offset, var
                 )
             }
@@ -737,8 +774,10 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     for_each_operator!(define_visit_operator);
 
     fn visit_unreachable(&mut self) -> Self::Output {
-        self.stmts
-            .push(r#"Debug.Error("unreachable");"#.to_string());
+        if self.conv.udon {
+            self.stmts
+                .push(r#"Debug.Error("unreachable");"#.to_string());
+        }
         Ok(())
     }
 
@@ -1087,7 +1126,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.push_stack(var);
 
         self.stmts
-            .push(format!("{var} = memory.Length() / {PAGE_SIZE};"));
+            .push(format!("{var} = {MEMORY}.Length() / {PAGE_SIZE};"));
         Ok(())
     }
 
@@ -1103,16 +1142,16 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         // 前のサイズを返す
         self.stmts
-            .push(format!("{var} = memory.Length() / {PAGE_SIZE};"));
+            .push(format!("{var} = {MEMORY}.Length() / {PAGE_SIZE};"));
 
         // メモリをsizeだけ拡張
         self.stmts.push("{".to_string());
-        self.stmts.push("var old = memory;".to_string());
+        self.stmts.push(format!("var old = {MEMORY};"));
         self.stmts.push(format!(
-            "memory = new byte[old.Length() + {size} * {PAGE_SIZE}];"
+            "{MEMORY} = new byte[old.Length() + {size} * {PAGE_SIZE}];"
         ));
         self.stmts
-            .push("Array.Copy(old, memory, old.Length());".to_string());
+            .push(format!("Array.Copy(old, {MEMORY}, old.Length());"));
         self.stmts.push("}".to_string());
         Ok(())
     }

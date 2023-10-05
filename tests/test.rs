@@ -10,11 +10,11 @@ use wast::{
 
 #[test]
 fn block() {
-    test_wast(Path::new("tests/testsuite/block.wast")).unwrap()
+    test_wast(Path::new("tests/testsuite/block.wast"));
 }
 
-fn test_wast(path: &Path) -> anyhow::Result<()> {
-    let buf = read_to_string(path)?;
+fn test_wast(path: &Path) {
+    let buf = read_to_string(path).unwrap();
 
     let adjust_wast = |mut err: wast::Error| {
         err.set_path(path.as_ref());
@@ -23,21 +23,21 @@ fn test_wast(path: &Path) -> anyhow::Result<()> {
     };
 
     let lexer = Lexer::new(&buf);
-    let buf = ParseBuffer::new_with_lexer(lexer).map_err(adjust_wast)?;
-    let ast = parser::parse::<Wast>(&buf).map_err(adjust_wast)?;
+    let buf = ParseBuffer::new_with_lexer(lexer)
+        .map_err(adjust_wast)
+        .unwrap();
+    let ast = parser::parse::<Wast>(&buf).map_err(adjust_wast).unwrap();
 
     for directive in ast.directives {
         match directive {
-            WastDirective::Wat(module) => wat(module)?,
+            WastDirective::Wat(module) => compile_wat(module),
             _ => (),
         }
         // println!("{:?}", directive);
     }
-
-    Ok(())
 }
 
-fn wat(mut wat: QuoteWat<'_>) -> anyhow::Result<()> {
+fn compile_wat(mut wat: QuoteWat<'_>) {
     match &wat {
         QuoteWat::Wat(Wat::Module(_)) | QuoteWat::QuoteModule(..) => (),
         QuoteWat::Wat(Wat::Component(_)) | QuoteWat::QuoteComponent(..) => {
@@ -45,7 +45,7 @@ fn wat(mut wat: QuoteWat<'_>) -> anyhow::Result<()> {
         }
     };
 
-    let bytes = wat.encode()?;
-    let mut conv = wasm2usharp::Converter::new(&bytes);
-    conv.convert(&mut std::io::stdout())
+    let bytes = wat.encode().unwrap();
+    let mut conv = wasm2usharp::Converter::new(&bytes, false);
+    conv.convert(&mut std::io::stdout()).unwrap();
 }
