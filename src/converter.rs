@@ -434,7 +434,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         // 一時変数
         for var in self.vars.iter().skip(func_ty.params().len()) {
-            writeln!(out_file, "{} {var};", get_cs_ty(var.ty))?;
+            writeln!(out_file, "{} {var} = 0;", get_cs_ty(var.ty))?;
         }
 
         // 本体
