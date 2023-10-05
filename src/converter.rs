@@ -423,10 +423,11 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             .map(|&ty| get_cs_ty(ty))
             .zip(self.vars.iter())
             .collect();
-        print!(
+        write!(
+            out_file,
             "{}",
             func_header(&self.func().name, result_cs_ty(func_ty.results()), &params)
-        );
+        )?;
 
         writeln!(out_file, " {{")?;
 
