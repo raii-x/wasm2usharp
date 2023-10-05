@@ -271,6 +271,8 @@ struct CodeConverter<'input, 'conv> {
     vars: Vec<Var>,
     local_count: u32,
     stmts: Vec<String>,
+    /// brの後など、到達不可能なコードの処理時にtrue
+    unreachable: bool,
 }
 
 #[derive(Debug)]
@@ -301,6 +303,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             vars: Vec::new(),
             local_count: 0,
             stmts: Vec::new(),
+            unreachable: false,
         }
     }
 
@@ -331,7 +334,16 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result_var = self.blocks[0].result;
 
         for op in body.get_operators_reader()? {
-            self.visit_operator(&op?)?;
+            let op = op?;
+
+            if self.unreachable {
+                use wasmparser::Operator::*;
+                match &op {
+                    End | Else => {}
+                    _ => continue,
+                }
+            }
+            self.visit_operator(&op)?;
         }
 
         if let Some(res) = result_var {
@@ -404,10 +416,11 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
     /// ブロックに戻り値があれば、stmtsに戻り値を代入する処理を追加する
     fn block_result(&mut self, relative_depth: u32) {
-        let block = &self.blocks[self.blocks.len() - 1 - relative_depth as usize];
+        let upper_block = &self.blocks[self.blocks.len() - 1 - relative_depth as usize];
 
-        if let Some(result) = block.result {
-            let rhs = block.stack.last().unwrap();
+        if let Some(result) = upper_block.result {
+            let current_block = &self.blocks[self.blocks.len() - 1];
+            let rhs = current_block.stack.last().unwrap();
             self.stmts.push(format!("{result} = {rhs};"));
         }
     }
@@ -735,7 +748,11 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_else(&mut self) -> Self::Output {
-        self.block_result(0);
+        if self.unreachable {
+            self.unreachable = false;
+        } else {
+            self.block_result(0);
+        }
 
         self.blocks.last_mut().unwrap().stack.clear();
 
@@ -744,7 +761,11 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_end(&mut self) -> Self::Output {
-        self.block_result(0);
+        if self.unreachable {
+            self.unreachable = false;
+        } else {
+            self.block_result(0);
+        }
 
         let block = self.blocks.pop().unwrap();
 
@@ -772,6 +793,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     fn visit_br(&mut self, relative_depth: u32) -> Self::Output {
         self.block_result(relative_depth);
         self.set_break_depth(relative_depth);
+        self.unreachable = true;
 
         self.stmts.push("break;".to_string());
         Ok(())
