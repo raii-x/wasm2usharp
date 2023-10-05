@@ -587,9 +587,15 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let bits = get_int_bits(ty);
 
-        self.stmts.push(format!(
-            "{result} = ({lhs} << {rhs}) | ({lhs} >> ({bits} - {rhs}));"
-        ));
+        if right {
+            self.stmts.push(format!(
+                "{result} = ({lhs} >> {rhs}) | ({lhs} << ({bits} - {rhs}))"
+            ));
+        } else {
+            self.stmts.push(format!(
+                "{result} = ({lhs} << {rhs}) | ({lhs} >> ({bits} - {rhs}));"
+            ));
+        }
         Ok(())
     }
 
