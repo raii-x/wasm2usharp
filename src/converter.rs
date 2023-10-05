@@ -876,20 +876,26 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         self.stmts.push(format!("switch ({var}) {{"));
 
-        for target in targets.targets() {
-            let target = target?;
-
-            self.stmts.push(format!("case {var}:"));
-            self.block_result(target);
-            self.set_break_depth(target);
-            self.stmts.push("break;".to_string());
-        }
-
         {
-            self.stmts.push("default:".to_string());
-            self.block_result(targets.default());
-            self.set_break_depth(targets.default());
-            self.stmts.push("break;".to_string());
+            let mut i = 0;
+            let mut peekable = targets.targets().peekable();
+
+            while let Some(target) = peekable.next() {
+                let target = target?;
+
+                if peekable.peek().is_some() {
+                    // 最後ではない場合
+                    self.stmts.push(format!("case {i}:"));
+                } else {
+                    // 最後の場合
+                    self.stmts.push("default:".to_string());
+                }
+                self.block_result(target);
+                self.set_break_depth(target);
+                self.stmts.push("break;".to_string());
+
+                i += 1;
+            }
         }
 
         self.stmts.push("}".to_string());
