@@ -606,7 +606,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result = self.new_var(ValType::I32);
         self.push_stack(result);
 
-        self.stmts.push(format!("{result} = {opnd} == 0;"));
+        self.stmts.push(format!("{result} = {opnd} == 0 ? 1 : 0;"));
         Ok(())
     }
 
