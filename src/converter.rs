@@ -1160,11 +1160,11 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i32_const(&mut self, value: i32) -> Self::Output {
-        self.visit_const(ValType::I32, value)
+        self.visit_const(ValType::I32, value as u32)
     }
 
     fn visit_i64_const(&mut self, value: i64) -> Self::Output {
-        self.visit_const(ValType::I64, value)
+        self.visit_const(ValType::I64, value as u64)
     }
 
     fn visit_f32_const(&mut self, value: Ieee32) -> Self::Output {
