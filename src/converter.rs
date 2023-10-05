@@ -980,7 +980,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.push_stack(select);
 
         self.stmts
-            .push(format!("{select} = {c} != 0 ? {val1} : {val2}"));
+            .push(format!("{select} = {c} != 0 ? {val1} : {val2};"));
 
         Ok(())
     }
