@@ -699,7 +699,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         // 2. 2進で文字列化する
         // 3. 最後に1が出現するインデックスを求める
         self.stmts.push(format!(
-            "else {result} = {} - ({cs_ty})Convert.ToString(x | {}, 2).LastIndexOf('1');",
+            "else {result} = {} - ({cs_ty})Convert.ToString({opnd} | {}, 2).LastIndexOf('1');",
             bits - 1,
             1u64 << (bits - 1)
         ));
