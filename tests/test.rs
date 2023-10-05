@@ -1,6 +1,6 @@
 extern crate wasm2usharp;
 
-use std::{error::Error, fs::read_to_string, path::Path};
+use std::{fs::read_to_string, path::Path};
 
 use wast::{
     lexer::Lexer,
@@ -47,5 +47,5 @@ fn wat(mut wat: QuoteWat<'_>) -> anyhow::Result<()> {
 
     let bytes = wat.encode()?;
     let mut conv = wasm2usharp::Converter::new(&bytes);
-    conv.convert()
+    conv.convert(&mut std::io::stdout())
 }

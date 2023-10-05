@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, io::Write};
 
 use anyhow::Result;
 use regex::Regex;
@@ -50,9 +50,9 @@ impl<'input> Converter<'input> {
         }
     }
 
-    pub fn convert(&mut self) -> Result<()> {
-        println!("using System;");
-        println!("class Wasm2USharp : UdonSharpBehaviour {{");
+    pub fn convert(&mut self, out_file: &mut impl Write) -> Result<()> {
+        writeln!(out_file, "using System;")?;
+        writeln!(out_file, "class Wasm2USharp : UdonSharpBehaviour {{")?;
 
         for payload in Parser::new(0).parse_all(self.buf) {
             use wasmparser::Payload::*;
@@ -98,18 +98,23 @@ impl<'input> Converter<'input> {
                         let memory = memory?;
                         self.memory = memory.initial as u32;
 
-                        println!("byte[] memory = new byte[{}];", self.memory * PAGE_SIZE);
+                        writeln!(
+                            out_file,
+                            "byte[] memory = new byte[{}];",
+                            self.memory * PAGE_SIZE
+                        )?;
                     }
                 }
                 GlobalSection(s) => {
                     for global in s {
                         let global = global?;
 
-                        println!(
+                        writeln!(
+                            out_file,
                             "{} global{};",
                             get_cs_ty(global.ty.content_type),
                             self.globals.len()
-                        );
+                        )?;
 
                         self.globals.push(global.ty);
                     }
@@ -179,12 +184,13 @@ impl<'input> Converter<'input> {
 
                         params.push((get_cs_ty(ValType::I32), "index".to_string()));
 
-                        println!(
+                        writeln!(
+                            out_file,
                             "{} {{",
                             func_header(&name, result_cs_ty(ty.results()), &params)
-                        );
+                        )?;
 
-                        println!("switch (index) {{");
+                        writeln!(out_file, "switch (index) {{")?;
                         for (i, i_func) in self.table.iter().enumerate() {
                             if let Some(i_func) = i_func {
                                 let func = &self.funcs[*i_func as usize];
@@ -193,25 +199,36 @@ impl<'input> Converter<'input> {
                                 }
 
                                 if ty.results().is_empty() {
-                                    println!("case {i}: {}({}); return;", func.name, call_params);
+                                    writeln!(
+                                        out_file,
+                                        "case {i}: {}({}); return;",
+                                        func.name, call_params
+                                    )?;
                                 } else {
-                                    println!("case {i}: return {}({});", func.name, call_params);
+                                    writeln!(
+                                        out_file,
+                                        "case {i}: return {}({});",
+                                        func.name, call_params
+                                    )?;
                                 }
                             }
                         }
-                        print!("default: Debug.Error(\"invalid table index\"); return");
+                        write!(
+                            out_file,
+                            "default: Debug.Error(\"invalid table index\"); return"
+                        )?;
                         if ty.results().is_empty() {
-                            println!(";");
+                            writeln!(out_file, ";")?;
                         } else {
-                            println!(" 0;");
+                            writeln!(out_file, " 0;")?;
                         }
-                        println!("}}");
-                        println!("}}");
+                        writeln!(out_file, "}}")?;
+                        writeln!(out_file, "}}")?;
                     }
                 }
                 CodeSectionEntry(s) => {
                     let mut code_conv = CodeConverter::new(self, self.code_idx);
-                    code_conv.convert(s)?;
+                    code_conv.convert(s, out_file)?;
                     self.code_idx += 1;
                 }
                 _other => {
@@ -220,7 +237,7 @@ impl<'input> Converter<'input> {
             }
         }
 
-        println!("}}");
+        writeln!(out_file, "}}")?;
 
         Ok(())
     }
@@ -311,7 +328,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         &self.conv.funcs[self.code_idx]
     }
 
-    fn convert(&mut self, body: FunctionBody<'_>) -> Result<()> {
+    fn convert(&mut self, body: FunctionBody<'_>, out_file: &mut impl Write) -> Result<()> {
         for &ty in self.conv.funcs[self.code_idx].ty.params() {
             let _ = self.new_var(ty);
             self.local_count += 1;
@@ -350,17 +367,17 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts.push(format!("return {res};"));
         }
 
-        self.print();
+        self.write(out_file)?;
 
         Ok(())
     }
 
-    fn print(&self) {
+    fn write(&self, out_file: &mut impl Write) -> Result<()> {
         // 関数ヘッダ
         let func_ty = self.func().ty.clone();
 
         if let FuncName::Exported(_) = self.func().name {
-            print!("public ");
+            write!(out_file, "public ")?;
         }
 
         let params: Vec<(&str, &Var)> = func_ty
@@ -374,21 +391,23 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             func_header(&self.func().name, result_cs_ty(func_ty.results()), &params)
         );
 
-        println!(" {{");
+        writeln!(out_file, " {{")?;
 
-        println!("int {BREAK_DEPTH} = 0;");
+        writeln!(out_file, "int {BREAK_DEPTH} = 0;")?;
 
         // 一時変数
         for var in self.vars.iter().skip(func_ty.params().len()) {
-            println!("{} {var};", get_cs_ty(var.ty));
+            writeln!(out_file, "{} {var};", get_cs_ty(var.ty))?;
         }
 
         // 本体
         for stmt in &self.stmts {
-            println!("{stmt}");
+            writeln!(out_file, "{stmt}")?;
         }
 
-        println!("}}");
+        writeln!(out_file, "}}")?;
+
+        Ok(())
     }
 
     fn new_var(&mut self, ty: ValType) -> Var {
@@ -1062,8 +1081,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         if mem != 0 {
             panic!("Multi memory is not supported")
         }
-        // TODO: mem_byte引数の意味を調べる
-        println!("{:?}", mem_byte);
+        assert!(mem_byte == 0);
 
         let var = self.new_var(ValType::I32);
         self.push_stack(var);
@@ -1077,8 +1095,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         if mem != 0 {
             panic!("Multi memory is not supported")
         }
-        // TODO: mem_byte引数の意味を調べる
-        println!("{:?}", mem_byte);
+        assert!(mem_byte == 0);
 
         let size = self.pop_stack();
         let var = self.new_var(ValType::I32);
