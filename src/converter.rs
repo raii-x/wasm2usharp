@@ -263,45 +263,47 @@ impl<'input> Converter<'input> {
         if !self.udon {
             writeln!(
                 out_file,
-                r#"static void Main(string[] args)
+                r#"static void Main(string[] programArgs)
 {{
     var instance = new {CLASS_NAME}();
     instance.{INIT}();
-    if (args.Length == 0) return;
 
-    var t = instance.GetType();
-    var mi = t.GetMethod(args[0]);
-    if (mi == null) {{
-        throw new ArgumentException($"Method '{{args[0]}}' is not found");
-    }}
+    string? line;
+    while ((line = Console.ReadLine()) != null) {{
+        var args = line.Split(' ');
 
-    object[]? parameters = null;
-    if (args.Length != 1) {{
-        parameters = new object[(args.Length - 1) / 2];
-        for (int i = 0; i < parameters.Length; i++) {{
-            int iArgs = 1 + i * 2;
-            string ty = args[iArgs];
-            string val = args[iArgs + 1];
-            parameters[i] = ty switch {{
-                "i32" => uint.Parse(val),
-                "i64" => ulong.Parse(val),
-                "f32" => BitConverter.UInt32BitsToSingle(uint.Parse(val)),
-                "f64" => BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
-                _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
-            }};
+        var t = instance.GetType();
+        var mi = t.GetMethod(args[0]);
+        if (mi == null) {{
+            throw new ArgumentException($"Method '{{args[0]}}' is not found");
         }}
-    }}
 
-    var result = mi.Invoke(instance, parameters);
-    string? resultStr = result switch {{
-        uint x => $"i32 {{x}}",
-        ulong x => $"i64 {{x}}",
-        float x => $"f32 {{BitConverter.SingleToUInt32Bits(x)}}",
-        double x => $"f64 {{BitConverter.DoubleToUInt64Bits(x)}}",
-        null => null,
-        _ => throw new InvalidOperationException($"Unsupported result type: '{{result.GetType()}}'"),
-    }};
-    if (resultStr is not null) {{
+        object[]? parameters = null;
+        if (args.Length != 1) {{
+            parameters = new object[(args.Length - 1) / 2];
+            for (int i = 0; i < parameters.Length; i++) {{
+                int iArgs = 1 + i * 2;
+                string ty = args[iArgs];
+                string val = args[iArgs + 1];
+                parameters[i] = ty switch {{
+                    "i32" => uint.Parse(val),
+                    "i64" => ulong.Parse(val),
+                    "f32" => BitConverter.UInt32BitsToSingle(uint.Parse(val)),
+                    "f64" => BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
+                    _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
+                }};
+            }}
+        }}
+
+        var result = mi.Invoke(instance, parameters);
+        string resultStr = result switch {{
+            uint x => $"i32 {{x}}",
+            ulong x => $"i64 {{x}}",
+            float x => $"f32 {{BitConverter.SingleToUInt32Bits(x)}}",
+            double x => $"f64 {{BitConverter.DoubleToUInt64Bits(x)}}",
+            null => "",
+            _ => throw new InvalidOperationException($"Unsupported result type: '{{result.GetType()}}'"),
+        }};
         Console.WriteLine(resultStr);
     }}
 }}"#,
