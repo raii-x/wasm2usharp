@@ -312,10 +312,10 @@ impl<'input> Converter<'input> {
                 string ty = args[iArgs];
                 string val = args[iArgs + 1];
                 parameters[i] = ty switch {{
-                    "i32" => uint.Parse(val),
-                    "i64" => ulong.Parse(val),
-                    "f32" => BitConverter.UInt32BitsToSingle(uint.Parse(val)),
-                    "f64" => BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
+                    "i32" => (object)uint.Parse(val),
+                    "i64" => (object)ulong.Parse(val),
+                    "f32" => (object)BitConverter.UInt32BitsToSingle(uint.Parse(val)),
+                    "f64" => (object)BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
                     _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
                 }};
             }}
