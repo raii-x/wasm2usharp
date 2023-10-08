@@ -95,25 +95,7 @@ fn convert_wat(mut wat: QuoteWat<'_>, out_dir: &Path) {
 fn execute<'a>(exec: WastExecute, out_path: &Path) -> Vec<WastRetEq<'a>> {
     match exec {
         wast::WastExecute::Invoke(invoke) => {
-            // 2番目以降のコマンド引数に関数の引数を指定
             use wast::core::WastArgCore::*;
-            let args: Vec<String> = invoke
-                .args
-                .iter()
-                .flat_map(|arg| match arg {
-                    WastArg::Core(arg) => match arg {
-                        I32(x) => ["i32".to_string(), (*x as u32).to_string()],
-                        I64(x) => ["i64".to_string(), (*x as u64).to_string()],
-                        F32(x) => ["f32".to_string(), x.bits.to_string()],
-                        F64(x) => ["f64".to_string(), x.bits.to_string()],
-                        V128(_) => panic!("simd is not supported"),
-                        RefNull(_) | RefExtern(_) | RefHost(_) => {
-                            panic!("reference-type is not supported")
-                        }
-                    },
-                    WastArg::Component(_) => panic!("component-model is not supported"),
-                })
-                .collect();
 
             // .NETプロジェクトを実行
             let output = Command::new("dotnet")
@@ -127,7 +109,20 @@ fn execute<'a>(exec: WastExecute, out_path: &Path) -> Vec<WastRetEq<'a>> {
                     // 最初のコマンド引数に呼び出す関数名を指定
                     invoke.name,
                 ])
-                .args(args)
+                // 2番目以降のコマンド引数に関数の引数を指定
+                .args(invoke.args.iter().flat_map(|arg| match arg {
+                    WastArg::Core(arg) => match arg {
+                        I32(x) => ["i32".to_string(), (*x as u32).to_string()],
+                        I64(x) => ["i64".to_string(), (*x as u64).to_string()],
+                        F32(x) => ["f32".to_string(), x.bits.to_string()],
+                        F64(x) => ["f64".to_string(), x.bits.to_string()],
+                        V128(_) => panic!("simd is not supported"),
+                        RefNull(_) | RefExtern(_) | RefHost(_) => {
+                            panic!("reference-type is not supported")
+                        }
+                    },
+                    WastArg::Component(_) => panic!("component-model is not supported"),
+                }))
                 .output()
                 .expect("failed to execute");
 
