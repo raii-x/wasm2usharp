@@ -48,16 +48,15 @@ fn test_wast(name: &str) {
     let ast = parser::parse::<Wast>(&buf).map_err(adjust_wast).unwrap();
 
     let out_dir = tempdir().unwrap();
-    let mut exe_path = None;
 
     for directive in ast.directives {
         use wast::WastDirective::*;
         match directive {
-            Wat(module) => exe_path = Some(compile_wat(module, out_dir.path(), name)),
+            Wat(module) => convert_wat(module, out_dir.path()),
             Invoke(invoke) => {}
             AssertReturn { exec, results, .. } => {
                 assert_eq!(
-                    &execute(exec, exe_path.as_ref().unwrap()),
+                    &execute(exec, out_dir.path()),
                     &results.into_iter().map(WastRetEq).collect::<Vec<_>>()
                 );
             }
@@ -68,7 +67,7 @@ fn test_wast(name: &str) {
     }
 }
 
-fn compile_wat(mut wat: QuoteWat<'_>, out_dir: &Path, name: &str) -> PathBuf {
+fn convert_wat(mut wat: QuoteWat<'_>, out_dir: &Path) {
     match &wat {
         QuoteWat::Wat(Wat::Module(_)) | QuoteWat::QuoteModule(..) => (),
         QuoteWat::Wat(Wat::Component(_)) | QuoteWat::QuoteComponent(..) => {
@@ -76,71 +75,77 @@ fn compile_wat(mut wat: QuoteWat<'_>, out_dir: &Path, name: &str) -> PathBuf {
         }
     };
 
+    // .NETプロジェクトを作成
+    let status = Command::new("dotnet")
+        .args(["new", "console", "-o", out_dir.to_str().unwrap()])
+        .status()
+        .expect("failed to execute");
+    assert!(status.success());
+
     let bytes = wat.encode().unwrap();
     let mut conv = wasm2usharp::Converter::new(&bytes, false);
 
-    let out_path = out_dir.join(name);
-
-    let mut cs_path = out_path.clone();
-    cs_path.set_extension("cs");
     {
-        let mut cs_file = File::create(&cs_path).unwrap();
+        // Program.csファイルに書き込み
+        let mut cs_file = File::create(out_dir.join("Program.cs")).unwrap();
         conv.convert(&mut cs_file).unwrap();
     }
-
-    let mut exe_path = out_path.clone();
-    exe_path.set_extension("exe");
-
-    let status = Command::new("csc")
-        .args([
-            &("/out:".to_string() + exe_path.to_str().unwrap()),
-            cs_path.to_str().unwrap(),
-        ])
-        .status()
-        .expect("failed to execute");
-
-    assert!(status.success());
-
-    exe_path
 }
 
-fn execute<'a>(exec: WastExecute, exe_path: &Path) -> Vec<WastRetEq<'a>> {
+fn execute<'a>(exec: WastExecute, out_path: &Path) -> Vec<WastRetEq<'a>> {
     match exec {
         wast::WastExecute::Invoke(invoke) => {
-            // 最初のコマンド引数に呼び出す関数名を指定
-            let mut exe_args = vec![invoke.name.to_owned()];
             // 2番目以降のコマンド引数に関数の引数を指定
             use wast::core::WastArgCore::*;
-            exe_args.extend(invoke.args.iter().flat_map(|arg| match arg {
-                WastArg::Core(arg) => match arg {
-                    I32(x) => ["i32".to_string(), (*x as u32).to_string()],
-                    I64(x) => ["i64".to_string(), (*x as u64).to_string()],
-                    F32(x) => ["f32".to_string(), x.bits.to_string()],
-                    F64(x) => ["f64".to_string(), x.bits.to_string()],
-                    V128(_) => panic!("simd is not supported"),
-                    RefNull(_) | RefExtern(_) | RefHost(_) => {
-                        panic!("reference-type is not supported")
-                    }
-                },
-                WastArg::Component(_) => panic!("component-model is not supported"),
-            }));
+            let args: Vec<String> = invoke
+                .args
+                .iter()
+                .flat_map(|arg| match arg {
+                    WastArg::Core(arg) => match arg {
+                        I32(x) => ["i32".to_string(), (*x as u32).to_string()],
+                        I64(x) => ["i64".to_string(), (*x as u64).to_string()],
+                        F32(x) => ["f32".to_string(), x.bits.to_string()],
+                        F64(x) => ["f64".to_string(), x.bits.to_string()],
+                        V128(_) => panic!("simd is not supported"),
+                        RefNull(_) | RefExtern(_) | RefHost(_) => {
+                            panic!("reference-type is not supported")
+                        }
+                    },
+                    WastArg::Component(_) => panic!("component-model is not supported"),
+                })
+                .collect();
 
-            // exeを実行
-            let output = Command::new(exe_path)
-                .args(exe_args)
+            // .NETプロジェクトを実行
+            let output = Command::new("dotnet")
+                .args([
+                    "run",
+                    "--project",
+                    out_path.to_str().unwrap(),
+                    "--property",
+                    "WarningLevel=0",
+                    "--",
+                    // 最初のコマンド引数に呼び出す関数名を指定
+                    invoke.name,
+                ])
+                .args(args)
                 .output()
                 .expect("failed to execute");
-            assert!(output.status.success());
 
             // 戻り値を取得
-            let output = String::from_utf8(output.stdout).unwrap();
-            output
+            let output_str = String::from_utf8(output.stdout).unwrap();
+
+            if !output.status.success() {
+                panic!("{}", output_str);
+            }
+
+            output_str
                 .lines()
                 .map(|line| {
                     // スペースで区切った1つ目が型で、2つ目が値のビットを数値で表現した文字列
                     let mut sp = line.split_whitespace();
                     let ty = sp.next().unwrap();
                     let val = sp.next().unwrap();
+                    println!("{ty}, {val}");
                     assert!(sp.next().is_none());
 
                     match ty {
