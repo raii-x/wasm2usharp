@@ -52,7 +52,7 @@ fn test_wast(name: &str) {
     for directive in ast.directives {
         use wast::WastDirective::*;
         match directive {
-            Wat(module) => convert_wat(module, out_dir.path()),
+            Wat(module) => compile_wat(module, out_dir.path()),
             Invoke(invoke) => {}
             AssertReturn { exec, results, .. } => {
                 assert_eq!(
@@ -67,7 +67,7 @@ fn test_wast(name: &str) {
     }
 }
 
-fn convert_wat(mut wat: QuoteWat<'_>, out_dir: &Path) {
+fn compile_wat(mut wat: QuoteWat<'_>, out_dir: &Path) {
     match &wat {
         QuoteWat::Wat(Wat::Module(_)) | QuoteWat::QuoteModule(..) => (),
         QuoteWat::Wat(Wat::Component(_)) | QuoteWat::QuoteComponent(..) => {
@@ -76,11 +76,10 @@ fn convert_wat(mut wat: QuoteWat<'_>, out_dir: &Path) {
     };
 
     // .NETプロジェクトを作成
-    let status = Command::new("dotnet")
+    Command::new("dotnet")
         .args(["new", "console", "-o", out_dir.to_str().unwrap()])
         .status()
-        .expect("failed to execute");
-    assert!(status.success());
+        .unwrap();
 
     let bytes = wat.encode().unwrap();
     let mut conv = wasm2usharp::Converter::new(&bytes, false);
@@ -90,9 +89,15 @@ fn convert_wat(mut wat: QuoteWat<'_>, out_dir: &Path) {
         let mut cs_file = File::create(out_dir.join("Program.cs")).unwrap();
         conv.convert(&mut cs_file).unwrap();
     }
+
+    // .NETプロジェクトをビルド
+    Command::new("dotnet")
+        .args(["build", out_dir.to_str().unwrap()])
+        .status()
+        .unwrap();
 }
 
-fn execute<'a>(exec: WastExecute, out_path: &Path) -> Vec<WastRetEq<'a>> {
+fn execute<'a>(exec: WastExecute, out_dir: &Path) -> Vec<WastRetEq<'a>> {
     match exec {
         wast::WastExecute::Invoke(invoke) => {
             use wast::core::WastArgCore::*;
@@ -102,9 +107,7 @@ fn execute<'a>(exec: WastExecute, out_path: &Path) -> Vec<WastRetEq<'a>> {
                 .args([
                     "run",
                     "--project",
-                    out_path.to_str().unwrap(),
-                    "--property",
-                    "WarningLevel=0",
+                    out_dir.to_str().unwrap(),
                     "--",
                     // 最初のコマンド引数に呼び出す関数名を指定
                     invoke.name,
