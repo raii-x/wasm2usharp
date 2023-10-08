@@ -1754,6 +1754,14 @@ pub enum OperatorError {
 }
 
 pub fn convert_to_ident(name: &str) -> String {
+    let prefix = if name.chars().next().unwrap().is_ascii_digit() {
+        "_"
+    } else {
+        ""
+    };
+
     static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\W").unwrap());
-    RE.replace_all(name, "_").to_string()
+    let ident = RE.replace_all(name, "_");
+
+    prefix.to_string() + ident.as_ref()
 }
