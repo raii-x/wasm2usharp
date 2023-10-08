@@ -112,6 +112,7 @@ fn execute<'a>(exec: WastExecute, out_dir: &Path) -> Vec<WastRetEq<'a>> {
                     "run",
                     "--project",
                     out_dir.to_str().unwrap(),
+                    "--no-build",
                     "--",
                     // 最初のコマンド引数に呼び出す関数名を指定
                     &convert_to_ident(invoke.name),
