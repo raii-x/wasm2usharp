@@ -7,6 +7,7 @@ use std::{
 };
 
 use tempfile::tempdir;
+use wasm2usharp::convert_to_ident;
 use wast::{
     core::{NanPattern, WastRetCore},
     lexer::Lexer,
@@ -68,6 +69,8 @@ fn test_wast(name: &str) {
 }
 
 fn compile_wat(mut wat: QuoteWat<'_>, out_dir: &Path) {
+    println!("Compiling wat");
+
     match &wat {
         QuoteWat::Wat(Wat::Module(_)) | QuoteWat::QuoteModule(..) => (),
         QuoteWat::Wat(Wat::Component(_)) | QuoteWat::QuoteComponent(..) => {
@@ -101,6 +104,7 @@ fn execute<'a>(exec: WastExecute, out_dir: &Path) -> Vec<WastRetEq<'a>> {
     match exec {
         wast::WastExecute::Invoke(invoke) => {
             use wast::core::WastArgCore::*;
+            println!("Invoking: {} {:?}", invoke.name, invoke.args);
 
             // .NETプロジェクトを実行
             let output = Command::new("dotnet")
@@ -110,7 +114,7 @@ fn execute<'a>(exec: WastExecute, out_dir: &Path) -> Vec<WastRetEq<'a>> {
                     out_dir.to_str().unwrap(),
                     "--",
                     // 最初のコマンド引数に呼び出す関数名を指定
-                    invoke.name,
+                    &convert_to_ident(invoke.name),
                 ])
                 // 2番目以降のコマンド引数に関数の引数を指定
                 .args(invoke.args.iter().flat_map(|arg| match arg {
@@ -129,21 +133,18 @@ fn execute<'a>(exec: WastExecute, out_dir: &Path) -> Vec<WastRetEq<'a>> {
                 .output()
                 .expect("failed to execute");
 
-            // 戻り値を取得
-            let output_str = String::from_utf8(output.stdout).unwrap();
-
             if !output.status.success() {
-                panic!("{}", output_str);
+                panic!("{}", String::from_utf8(output.stderr).unwrap());
             }
 
-            output_str
+            String::from_utf8(output.stdout)
+                .unwrap()
                 .lines()
                 .map(|line| {
                     // スペースで区切った1つ目が型で、2つ目が値のビットを数値で表現した文字列
                     let mut sp = line.split_whitespace();
                     let ty = sp.next().unwrap();
                     let val = sp.next().unwrap();
-                    println!("{ty}, {val}");
                     assert!(sp.next().is_none());
 
                     match ty {

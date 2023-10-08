@@ -1,6 +1,7 @@
 use std::{fmt, io::Write};
 
 use anyhow::Result;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use wasmparser::{
     for_each_operator, BlockType, BrTable, ConstExpr, ElementItems, ElementKind, FuncType,
@@ -136,16 +137,14 @@ impl<'input> Converter<'input> {
                     }
                 }
                 ExportSection(s) => {
-                    let re = Regex::new(r"\W").unwrap();
                     for export in s {
                         use wasmparser::ExternalKind::*;
 
                         let export = export?;
                         match export.kind {
                             Func => {
-                                self.funcs[export.index as usize].name = FuncName::Exported(
-                                    re.replace_all(export.name, "_").to_string(),
-                                );
+                                self.funcs[export.index as usize].name =
+                                    FuncName::Exported(convert_to_ident(export.name));
                             }
                             Table => {}
                             Memory => {}
@@ -267,13 +266,44 @@ impl<'input> Converter<'input> {
 {{
     var instance = new {CLASS_NAME}();
     instance.{INIT}();
-    if (args.Length != 0)
-    {{
-        var t = instance.GetType();
-        var mi = t.GetMethod(args[0]);
-        mi.Invoke(instance, null);
+    if (args.Length == 0) return;
+
+    var t = instance.GetType();
+    var mi = t.GetMethod(args[0]);
+    if (mi == null) {{
+        throw new ArgumentException($"Method '{{args[0]}}' is not found");
     }}
-}}"#
+
+    object[]? parameters = null;
+    if (args.Length != 1) {{
+        parameters = new object[(args.Length - 1) / 2];
+        for (int i = 0; i < parameters.Length; i++) {{
+            int iArgs = 1 + i * 2;
+            string ty = args[iArgs];
+            string val = args[iArgs + 1];
+            parameters[i] = ty switch {{
+                "i32" => uint.Parse(val),
+                "i64" => ulong.Parse(val),
+                "f32" => BitConverter.UInt32BitsToSingle(uint.Parse(val)),
+                "f64" => BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
+                _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
+            }};
+        }}
+    }}
+
+    var result = mi.Invoke(instance, parameters);
+    string? resultStr = result switch {{
+        uint x => $"i32 {{x}}",
+        ulong x => $"i64 {{x}}",
+        float x => $"f32 {{BitConverter.SingleToUInt32Bits(x)}}",
+        double x => $"f64 {{BitConverter.DoubleToUInt64Bits(x)}}",
+        null => null,
+        _ => throw new InvalidOperationException($"Unsupported result type: '{{result.GetType()}}'"),
+    }};
+    if (resultStr is not null) {{
+        Console.WriteLine(resultStr);
+    }}
+}}"#,
             )?;
         }
 
@@ -1689,4 +1719,9 @@ fn get_cs_ty(ty: ValType) -> &'static str {
 pub enum OperatorError {
     #[error("`{0}` proposal is not implemented")]
     NotSupported(&'static str),
+}
+
+pub fn convert_to_ident(name: &str) -> String {
+    static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\W").unwrap());
+    RE.replace_all(name, "_").to_string()
 }
