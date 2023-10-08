@@ -6,8 +6,8 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use wasmparser::{
-    ConstExpr, ElementItems, ElementKind, FuncType, GlobalType, Parser, RecGroup, StructuralType,
-    ValType,
+    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, Parser, RecGroup,
+    StructuralType, ValType,
 };
 
 use crate::converter::code::CodeConverter;
@@ -20,6 +20,7 @@ pub struct Converter<'input> {
     table: Vec<Option<u32>>,
     memory: u32,
     globals: Vec<GlobalType>,
+    datas: Vec<(u32, &'input [u8])>,
     code_idx: usize,
     start_func: Option<u32>,
 }
@@ -28,6 +29,7 @@ const PAGE_SIZE: u32 = 65536;
 const CLASS_NAME: &str = "Wasm2USharp";
 const W2US_PREFIX: &str = "w2us_";
 const MEMORY: &str = "w2us_memory";
+const DATA: &str = "w2us_data";
 const INIT: &str = "w2us_init";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
 
@@ -41,6 +43,7 @@ impl<'input> Converter<'input> {
             table: Vec::new(),
             memory: 0,
             globals: Vec::new(),
+            datas: Vec::new(),
             code_idx: 0,
             start_func: None,
         }
@@ -231,6 +234,31 @@ impl<'input> Converter<'input> {
                         writeln!(out_file, "}}")?;
                     }
                 }
+                DataSection(s) => {
+                    for (i, data) in s.into_iter().enumerate() {
+                        let data = data?;
+                        let offset = match data.kind {
+                            DataKind::Active {
+                                memory_index,
+                                offset_expr,
+                            } => {
+                                if memory_index != 0 {
+                                    panic!("Multi memory is not supported");
+                                }
+                                read_i32_const_ops(&offset_expr)
+                            }
+                            DataKind::Passive => panic!("Passive data segment is not supported"),
+                        };
+                        self.datas.push((offset, data.data));
+
+                        // データ配列
+                        write!(out_file, "byte[] {DATA}{i} = new byte[] {{ ")?;
+                        for byte in data.data {
+                            write!(out_file, "{byte},")?;
+                        }
+                        writeln!(out_file, " }};")?;
+                    }
+                }
                 CodeSectionEntry(s) => {
                     let mut code_conv = CodeConverter::new(self, self.code_idx);
                     code_conv.convert(s, out_file)?;
@@ -242,8 +270,18 @@ impl<'input> Converter<'input> {
             }
         }
 
+        // 初期化用関数
         writeln!(out_file, "public void {INIT}() {{")?;
+        for (i, (offset, data)) in self.datas.iter().enumerate() {
+            // メモリへのデータのコピー
+            writeln!(
+                out_file,
+                "Array.Copy({DATA}{i}, 0, {MEMORY}, {offset}, {});",
+                data.len()
+            )?;
+        }
         if let Some(start_func) = self.start_func {
+            // start関数の呼び出し
             writeln!(out_file, "{}();", self.funcs[start_func as usize].name)?;
         }
         writeln!(out_file, "}}")?;
@@ -304,7 +342,7 @@ impl<'input> Converter<'input> {
     }
 }
 
-fn read_i32_const_ops(expr: &ConstExpr) -> i32 {
+fn read_i32_const_ops(expr: &ConstExpr) -> u32 {
     let mut op_iter = expr.get_operators_reader().into_iter();
     let value = if let wasmparser::Operator::I32Const { value } = op_iter.next().unwrap().unwrap() {
         value
@@ -317,7 +355,7 @@ fn read_i32_const_ops(expr: &ConstExpr) -> i32 {
         panic!("Not supported const expr operator")
     };
 
-    value
+    value as u32
 }
 
 struct Func {
