@@ -44,6 +44,7 @@ const W2US_PREFIX: &str = "w2us_";
 const MEMORY: &str = "w2us_memory";
 const INIT: &str = "w2us_init";
 const BREAK_DEPTH: &str = "w2us_break_depth";
+const LOOP: &str = "w2us_loop";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
 
 impl<'input> Converter<'input> {
@@ -357,18 +358,19 @@ struct CodeConverter<'input, 'conv> {
     stmts: Vec<String>,
     /// brの後など、到達不可能なコードの処理時にtrue
     unreachable: bool,
+    loop_var_count: usize,
 }
 
 #[derive(Debug)]
 struct Block {
     stack: Vec<Var>,
     result: Option<Var>,
-    do_while: bool,
+    loop_var: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct Var {
-    index: u32,
+    index: usize,
     ty: ValType,
 }
 
@@ -388,6 +390,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             local_count: 0,
             stmts: Vec::new(),
             unreachable: false,
+            loop_var_count: 0,
         }
     }
 
@@ -463,6 +466,11 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         writeln!(out_file, "int {BREAK_DEPTH} = 0;")?;
 
+        // ループ変数
+        for i in 0..self.loop_var_count {
+            writeln!(out_file, "bool {LOOP}{i};")?;
+        }
+
         // 一時変数
         for var in self.vars.iter().skip(func_ty.params().len()) {
             writeln!(out_file, "{} {var} = 0;", get_cs_ty(var.ty))?;
@@ -480,25 +488,35 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
     fn new_var(&mut self, ty: ValType) -> Var {
         let var = Var {
-            index: self.vars.len() as u32,
+            index: self.vars.len(),
             ty,
         };
         self.vars.push(var);
         var
     }
 
-    fn new_block(&mut self, blockty: BlockType, do_while: bool) {
+    fn new_block(&mut self, blockty: BlockType, is_loop: bool) -> &Block {
         let result = match blockty {
             BlockType::Empty => None,
             BlockType::Type(ty) => Some(self.new_var(ty)),
             BlockType::FuncType(..) => panic!("func type blocks are not supported"),
         };
 
+        let loop_var = if is_loop {
+            Some({
+                self.loop_var_count += 1;
+                self.loop_var_count - 1
+            })
+        } else {
+            None
+        };
+
         self.blocks.push(Block {
             stack: Vec::new(),
             result,
-            do_while,
+            loop_var,
         });
+        self.blocks.last().unwrap()
     }
 
     /// ブロックに戻り値があれば、stmtsに戻り値を代入する処理を追加する
@@ -819,20 +837,23 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_block(&mut self, blockty: BlockType) -> Self::Output {
-        self.new_block(blockty, true);
+        self.new_block(blockty, false);
         self.stmts.push("do {".to_string());
         Ok(())
     }
 
     fn visit_loop(&mut self, blockty: BlockType) -> Self::Output {
-        self.new_block(blockty, false);
-        self.stmts.push("while (true) {".to_string());
+        let block = self.new_block(blockty, true);
+        let loop_var = block.loop_var.unwrap();
+        self.stmts.push("do {".to_string());
+        self.stmts.push("do {".to_string());
+        self.stmts.push(format!("{LOOP}{} = true;", loop_var));
         Ok(())
     }
 
     fn visit_if(&mut self, blockty: BlockType) -> Self::Output {
         let var = self.pop_stack();
-        self.new_block(blockty, true);
+        self.new_block(blockty, false);
         self.stmts.push(format!("do if ({var} != 0) {{"));
         Ok(())
     }
@@ -859,10 +880,15 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         let block = self.blocks.pop().unwrap();
 
-        if block.do_while {
-            self.stmts.push("} while (false);".to_string());
-        } else {
-            self.stmts.push("}".to_string());
+        match block.loop_var {
+            Some(loop_var) => {
+                self.stmts.push(format!("{LOOP}{} = false;", loop_var));
+                self.stmts.push("} while (false);".to_string());
+                self.stmts.push(format!("}} while ({LOOP}{});", loop_var));
+            }
+            None => {
+                self.stmts.push("} while (false);".to_string());
+            }
         }
 
         // 最も外側のブロックのendでない場合のみ
