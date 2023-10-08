@@ -1,23 +1,47 @@
 mod converter;
 
-use std::env;
+use std::{env, process::ExitCode};
 
-use anyhow::Result;
 use wasmparser::validate;
 
 use crate::converter::Converter;
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
+    let mut file_path = None;
+    let mut test = false;
+
     let args = env::args().collect::<Vec<_>>();
-    if args.len() != 2 {
-        println!("Usage: {} in.wasm", args[0]);
-        return Ok(());
+    for arg in &args[1..] {
+        match arg.as_str() {
+            "--test" => test = true,
+            _ => match file_path {
+                Some(_) => {
+                    // 入力ファイルが2個以上指定されている場合はエラー
+                    show_usage(&args[0]);
+                    return ExitCode::FAILURE;
+                }
+                None => file_path = Some(arg),
+            },
+        }
     }
 
-    let buf: Vec<u8> = std::fs::read(&args[1])?;
-    validate(&buf)?;
-    let mut converter = Converter::new(&buf, false);
-    converter.convert(&mut std::io::stdout())?;
+    let file_path = match file_path {
+        Some(x) => x,
+        None => {
+            // 入力ファイルが指定されていない場合はエラー
+            show_usage(&args[0]);
+            return ExitCode::FAILURE;
+        }
+    };
 
-    Ok(())
+    let buf: Vec<u8> = std::fs::read(file_path).unwrap();
+    validate(&buf).unwrap();
+    let mut converter = Converter::new(&buf, test);
+    converter.convert(&mut std::io::stdout()).unwrap();
+
+    ExitCode::SUCCESS
+}
+
+fn show_usage(program: &str) {
+    println!("Usage: {} [--test] file", program);
 }

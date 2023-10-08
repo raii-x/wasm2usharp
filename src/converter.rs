@@ -28,7 +28,7 @@ macro_rules! define_visit_operator {
 
 pub struct Converter<'input> {
     buf: &'input [u8],
-    udon: bool,
+    test: bool,
     types: Vec<FuncType>,
     funcs: Vec<Func>,
     table: Vec<Option<u32>>,
@@ -48,10 +48,10 @@ const LOOP: &str = "w2us_loop";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
 
 impl<'input> Converter<'input> {
-    pub fn new(buf: &'input [u8], udon: bool) -> Self {
+    pub fn new(buf: &'input [u8], test: bool) -> Self {
         Self {
             buf,
-            udon,
+            test,
             types: Vec::new(),
             funcs: Vec::new(),
             table: Vec::new(),
@@ -64,16 +64,16 @@ impl<'input> Converter<'input> {
 
     pub fn convert(&mut self, out_file: &mut impl Write) -> Result<()> {
         writeln!(out_file, "using System;")?;
-        if self.udon {
+        if !self.test {
             writeln!(out_file, "using UdonSharp;")?;
             writeln!(out_file, "using UnityEngine;")?;
         }
 
         write!(out_file, "class {CLASS_NAME} ")?;
-        if self.udon {
-            writeln!(out_file, ": UdonSharpBehaviour {{")?;
-        } else {
+        if self.test {
             writeln!(out_file, "{{")?;
+        } else {
+            writeln!(out_file, ": UdonSharpBehaviour {{")?;
         }
 
         for payload in Parser::new(0).parse_all(self.buf) {
@@ -234,7 +234,7 @@ impl<'input> Converter<'input> {
                             }
                         }
                         write!(out_file, "default: ")?;
-                        if self.udon {
+                        if !self.test {
                             write!(out_file, "Debug.LogError(\"invalid table index\"); ")?;
                         }
                         write!(out_file, "return")?;
@@ -264,7 +264,7 @@ impl<'input> Converter<'input> {
         }
         writeln!(out_file, "}}")?;
 
-        if !self.udon {
+        if self.test {
             writeln!(
                 out_file,
                 r#"static void Main(string[] programArgs)
@@ -830,7 +830,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     for_each_operator!(define_visit_operator);
 
     fn visit_unreachable(&mut self) -> Self::Output {
-        if self.conv.udon {
+        if !self.conv.test {
             self.stmts
                 .push(r#"Debug.LogError("unreachable");"#.to_string());
         }
