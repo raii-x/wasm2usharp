@@ -64,6 +64,10 @@ impl<'input> Converter<'input> {
 
     pub fn convert(&mut self, out_file: &mut impl Write) -> Result<()> {
         writeln!(out_file, "using System;")?;
+        if self.udon {
+            writeln!(out_file, "using UdonSharp;")?;
+            writeln!(out_file, "using UnityEngine;")?;
+        }
 
         write!(out_file, "class {CLASS_NAME} ")?;
         if self.udon {
@@ -231,7 +235,7 @@ impl<'input> Converter<'input> {
                         }
                         write!(out_file, "default: ")?;
                         if self.udon {
-                            write!(out_file, "Debug.Error(\"invalid table index\"); ")?;
+                            write!(out_file, "Debug.LogError(\"invalid table index\"); ")?;
                         }
                         write!(out_file, "return")?;
                         if ty.results().is_empty() {
@@ -828,7 +832,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     fn visit_unreachable(&mut self) -> Self::Output {
         if self.conv.udon {
             self.stmts
-                .push(r#"Debug.Error("unreachable");"#.to_string());
+                .push(r#"Debug.LogError("unreachable");"#.to_string());
         }
         Ok(())
     }
