@@ -1,3 +1,5 @@
+mod value;
+
 extern crate wasm2usharp;
 
 use std::{
@@ -8,14 +10,15 @@ use std::{
 };
 
 use tempfile::{tempdir, TempDir};
-use wasm2usharp::{convert_to_ident, util::bit_mask};
+use wasm2usharp::convert_to_ident;
 use wast::{
-    core::{NanPattern, WastRetCore},
+    core::WastRetCore,
     lexer::Lexer,
     parser::{self, ParseBuffer},
-    token::{Float32, Float64},
     QuoteWat, Wast, WastArg, WastExecute, WastRet, Wat,
 };
+
+use crate::value::{f32_to_wasm_ret_core, f64_to_wasm_ret_core, WastRetEq};
 
 macro_rules! test (
     ($func_name:ident, $name:expr) => {
@@ -65,7 +68,11 @@ fn test_wast(name: &str) {
             AssertReturn { exec, results, .. } => {
                 assert_eq!(
                     &execute(exec, &mut dir_child.as_mut().unwrap().child),
-                    &results.into_iter().map(WastRetEq).collect::<Vec<_>>()
+                    &results
+                        .into_iter()
+                        .map(WastRetEq)
+                        .map(|x| x.into_canonical_nan())
+                        .collect::<Vec<_>>()
                 );
             }
             AssertInvalid => (),
@@ -181,101 +188,5 @@ fn execute<'a>(exec: WastExecute, child: &mut Child) -> Vec<WastRetEq<'a>> {
                 .collect()
         }
         _ => panic!(),
-    }
-}
-
-fn f32_to_wasm_ret_core<'a>(bits: u32) -> WastRetCore<'a> {
-    WastRetCore::F32(
-        match f_to_wasm_ret_core(bits as u64, 32, (f32::MANTISSA_DIGITS - 1) as u64) {
-            NanPattern::CanonicalNan => NanPattern::CanonicalNan,
-            NanPattern::ArithmeticNan => NanPattern::ArithmeticNan,
-            NanPattern::Value(bits) => NanPattern::Value(Float32 { bits: bits as u32 }),
-        },
-    )
-}
-
-fn f64_to_wasm_ret_core<'a>(bits: u64) -> WastRetCore<'a> {
-    WastRetCore::F64(
-        match f_to_wasm_ret_core(bits, 64, (f64::MANTISSA_DIGITS - 1) as u64) {
-            NanPattern::CanonicalNan => NanPattern::CanonicalNan,
-            NanPattern::ArithmeticNan => NanPattern::ArithmeticNan,
-            NanPattern::Value(bits) => NanPattern::Value(Float64 { bits }),
-        },
-    )
-}
-
-fn f_to_wasm_ret_core(bits: u64, size_bits: u64, frac_bits: u64) -> NanPattern<u64> {
-    let expo_bits = size_bits - 1 - frac_bits;
-    let expo_mask = bit_mask(expo_bits) << frac_bits;
-
-    if bits & expo_mask == expo_mask {
-        let frac = bits & bit_mask(frac_bits);
-        if frac == 1 << (frac_bits - 1) {
-            NanPattern::CanonicalNan
-        } else {
-            NanPattern::ArithmeticNan
-        }
-    } else {
-        NanPattern::Value(bits)
-    }
-}
-
-#[derive(Debug)]
-struct WastRetEq<'a>(WastRet<'a>);
-
-impl<'a> PartialEq for WastRetEq<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        wast_ret_eq(&self.0, &other.0)
-    }
-}
-
-fn wast_ret_eq(lhs: &WastRet, rhs: &WastRet) -> bool {
-    use WastRet::*;
-    match (lhs, rhs) {
-        (Core(l0), Core(r0)) => wast_ret_core_eq(l0, r0),
-        (Component(_), Component(_)) => {
-            panic!("component-model is not supported")
-        }
-        _ => false,
-    }
-}
-
-fn wast_ret_core_eq(lhs: &WastRetCore, rhs: &WastRetCore) -> bool {
-    use WastRetCore::*;
-    match (lhs, rhs) {
-        (I32(l0), I32(r0)) => l0 == r0,
-        (I64(l0), I64(r0)) => l0 == r0,
-        (F32(l0), F32(r0)) => nan_pattern_eq(l0, r0),
-        (F64(l0), F64(r0)) => nan_pattern_eq(l0, r0),
-        _ => false,
-    }
-}
-
-fn nan_pattern_eq<T: PartialEq>(
-    lhs: &NanPattern<impl FloatBits<T>>,
-    rhs: &NanPattern<impl FloatBits<T>>,
-) -> bool {
-    use NanPattern::*;
-    match (lhs, rhs) {
-        (CanonicalNan, CanonicalNan) => true,
-        (ArithmeticNan, ArithmeticNan) => true,
-        (Value(l0), Value(r0)) => l0.float_bits() == r0.float_bits(),
-        _ => false,
-    }
-}
-
-trait FloatBits<T> {
-    fn float_bits(&self) -> T;
-}
-
-impl FloatBits<u32> for Float32 {
-    fn float_bits(&self) -> u32 {
-        self.bits
-    }
-}
-
-impl FloatBits<u64> for Float64 {
-    fn float_bits(&self) -> u64 {
-        self.bits
     }
 }
