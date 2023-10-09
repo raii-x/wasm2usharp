@@ -30,6 +30,7 @@ macro_rules! test (
 );
 
 test!(test_address, "address");
+test!(test_align, "align");
 test!(test_block, "block");
 // test!(test_br_table, "br_table");
 // test!(test_br_if, "br_if");
@@ -111,10 +112,11 @@ fn run_wat(mut wat: QuoteWat<'_>) -> DirChild {
     }
 
     // .NETプロジェクトをビルド
-    Command::new("dotnet")
+    let status = Command::new("dotnet")
         .args(["build", dir_path.to_str().unwrap()])
         .status()
         .unwrap();
+    assert!(status.success());
 
     // .NETプロジェクトを実行
     let child = Command::new("dotnet")
