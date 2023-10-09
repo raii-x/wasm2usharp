@@ -443,7 +443,6 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         self.int_store(memarg, StorageType::Val(i_ty), idx, i_var);
 
-        self.stmts.push("}".to_string());
         Ok(())
     }
 
@@ -526,6 +525,8 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             bits - 1,
             frac_bits
         ));
+
+        self.stmts.push("}".to_string());
     }
 
     fn visit_const(
