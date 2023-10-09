@@ -531,12 +531,11 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         &mut self,
         ty: ValType,
         value: impl fmt::Display,
-        suffix: &'static str,
     ) -> <Self as VisitOperator>::Output {
         let var = self.new_var(ty);
         self.push_stack(var);
 
-        self.stmts.push(format!("{var} = {value}{suffix};"));
+        self.stmts.push(format!("{var} = {value};"));
         Ok(())
     }
 
@@ -1152,19 +1151,22 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i32_const(&mut self, value: i32) -> Self::Output {
-        self.visit_const(ValType::I32, value as u32, "")
+        self.visit_const(ValType::I32, value as u32)
     }
 
     fn visit_i64_const(&mut self, value: i64) -> Self::Output {
-        self.visit_const(ValType::I64, value as u64, "")
+        self.visit_const(ValType::I64, value as u64)
     }
 
     fn visit_f32_const(&mut self, value: Ieee32) -> Self::Output {
-        self.visit_const(ValType::F32, f32::from_bits(value.bits()), "f")
+        self.visit_const(
+            ValType::F32,
+            &format!("{:e}f", f32::from_bits(value.bits())),
+        )
     }
 
     fn visit_f64_const(&mut self, value: Ieee64) -> Self::Output {
-        self.visit_const(ValType::F64, f64::from_bits(value.bits()), "")
+        self.visit_const(ValType::F64, &format!("{:e}", f64::from_bits(value.bits())))
     }
 
     fn visit_i32_eqz(&mut self) -> Self::Output {
