@@ -1,10 +1,8 @@
-mod converter;
-
 use std::{env, process::ExitCode};
 
 use wasmparser::validate;
 
-use crate::converter::Converter;
+use wasm2usharp::Converter;
 
 fn main() -> ExitCode {
     let mut file_path = None;

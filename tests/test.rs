@@ -8,7 +8,7 @@ use std::{
 };
 
 use tempfile::{tempdir, TempDir};
-use wasm2usharp::convert_to_ident;
+use wasm2usharp::{convert_to_ident, util::bit_mask};
 use wast::{
     core::{NanPattern, WastRetCore},
     lexer::Lexer,
@@ -185,19 +185,23 @@ fn execute<'a>(exec: WastExecute, child: &mut Child) -> Vec<WastRetEq<'a>> {
 }
 
 fn f32_to_wasm_ret_core<'a>(bits: u32) -> WastRetCore<'a> {
-    WastRetCore::F32(match f_to_wasm_ret_core(bits as u64, 32, 23) {
-        NanPattern::CanonicalNan => NanPattern::CanonicalNan,
-        NanPattern::ArithmeticNan => NanPattern::ArithmeticNan,
-        NanPattern::Value(bits) => NanPattern::Value(Float32 { bits: bits as u32 }),
-    })
+    WastRetCore::F32(
+        match f_to_wasm_ret_core(bits as u64, 32, (f32::MANTISSA_DIGITS - 1) as u64) {
+            NanPattern::CanonicalNan => NanPattern::CanonicalNan,
+            NanPattern::ArithmeticNan => NanPattern::ArithmeticNan,
+            NanPattern::Value(bits) => NanPattern::Value(Float32 { bits: bits as u32 }),
+        },
+    )
 }
 
 fn f64_to_wasm_ret_core<'a>(bits: u64) -> WastRetCore<'a> {
-    WastRetCore::F64(match f_to_wasm_ret_core(bits, 64, 52) {
-        NanPattern::CanonicalNan => NanPattern::CanonicalNan,
-        NanPattern::ArithmeticNan => NanPattern::ArithmeticNan,
-        NanPattern::Value(bits) => NanPattern::Value(Float64 { bits }),
-    })
+    WastRetCore::F64(
+        match f_to_wasm_ret_core(bits, 64, (f64::MANTISSA_DIGITS - 1) as u64) {
+            NanPattern::CanonicalNan => NanPattern::CanonicalNan,
+            NanPattern::ArithmeticNan => NanPattern::ArithmeticNan,
+            NanPattern::Value(bits) => NanPattern::Value(Float64 { bits }),
+        },
+    )
 }
 
 fn f_to_wasm_ret_core(bits: u64, size_bits: u64, frac_bits: u64) -> NanPattern<u64> {
@@ -214,11 +218,6 @@ fn f_to_wasm_ret_core(bits: u64, size_bits: u64, frac_bits: u64) -> NanPattern<u
     } else {
         NanPattern::Value(bits)
     }
-}
-
-/// 与えられた数のLSBからのビットが全て1の数を返す
-fn bit_mask(bits: u64) -> u64 {
-    (0..bits).fold(0, |acc, x| acc | (1 << x))
 }
 
 #[derive(Debug)]

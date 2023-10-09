@@ -8,6 +8,8 @@ use wasmparser::{
     StorageType, ValType, VisitOperator,
 };
 
+use crate::util::bit_mask;
+
 use super::{
     func_header, get_cs_ty, result_cs_ty, Converter, Func, FuncName, CALL_INDIRECT, MEMORY,
     PAGE_SIZE,
@@ -234,18 +236,32 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         *self.blocks.last().unwrap().stack.last().unwrap()
     }
 
-    fn visit_load(
+    fn visit_int_load(
         &mut self,
         memarg: MemArg,
         var_type: ValType,
         mem_type: StorageType,
         signed: bool,
     ) -> <Self as VisitOperator>::Output {
-        use {StorageType::*, ValType::*};
-
         let idx = self.pop_stack();
         let var = self.new_var(var_type);
         self.push_stack(var);
+
+        self.int_load(memarg, var_type, mem_type, signed, idx, var);
+
+        Ok(())
+    }
+
+    fn int_load(
+        &mut self,
+        memarg: MemArg,
+        var_type: ValType,
+        mem_type: StorageType,
+        signed: bool,
+        idx: Var,
+        var: Var,
+    ) {
+        use {StorageType::*, ValType::*};
 
         let mut load = format!("{var} = ");
 
@@ -282,19 +298,97 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
             self.stmts.push(sign);
         }
+    }
 
+    fn visit_float_load(
+        &mut self,
+        memarg: MemArg,
+        var_type: ValType,
+    ) -> <Self as VisitOperator>::Output {
+        let idx = self.pop_stack();
+        let i_ty = ty_f_to_i(var_type);
+        let i_var = self.new_var(i_ty);
+
+        let var = self.new_var(var_type);
+        self.push_stack(var);
+
+        self.int_load(memarg, i_ty, StorageType::Val(i_ty), false, idx, i_var);
+
+        let bits = get_int_bits(i_ty);
+        let frac_bits = get_frac_bits(var_type);
+        let expo_bits = bits - 1 - frac_bits;
+        let expo_bit_mask = bit_mask(expo_bits as u64); // LSBに寄せた後のビットマスク
+        let expo_offset = (1 << (expo_bits - 1)) - 1;
+        let cs_ty = get_cs_ty(var_type);
+        let class = self.math_class(var_type);
+
+        self.stmts.push("{".to_string());
+
+        // ビット列の各データを抽出
+        self.stmts
+            .push(format!("var sign = {i_var} >> {};", bits - 1));
+        self.stmts.push(format!(
+            "var expo = ({i_var} >> {frac_bits}) & {expo_bit_mask};",
+        ));
+        self.stmts.push(format!(
+            "var frac = {i_var} & {};",
+            bit_mask(frac_bits as u64)
+        ));
+
+        self.stmts.push("if (expo == 0) {".to_string());
+        {
+            self.stmts.push("if (frac == 0) {".to_string());
+            // 0の場合
+            self.stmts.push(format!("{var} = sign == 0 ? 0f : -0f;"));
+            self.stmts.push("} else {".to_string());
+            // 非正規化数の場合
+            self.stmts
+                .push(format!("{var} = ({cs_ty})frac * {cs_ty}.Epsilon;"));
+            self.stmts.push("}".to_string());
+        }
+        self.stmts
+            .push(format!("}} else if (expo == {expo_bit_mask}) {{"));
+        {
+            self.stmts.push("if (frac == 0) {".to_string());
+            // 無限大の場合
+            self.stmts.push(format!(
+                "{var} = sign == 0 ? {cs_ty}.PositiveInfinity : {cs_ty}.NegativeInfinity;"
+            ));
+            self.stmts.push("} else {".to_string());
+            // NaNの場合
+            self.stmts.push(format!("{var} = {cs_ty}.NaN;"));
+            self.stmts.push("}".to_string());
+        }
+        self.stmts.push("} else {".to_string());
+        {
+            // 浮動小数点数の変数に代入
+            let sign = format!("(1 - ({cs_ty})sign * 2)");
+            let expo = format!("{class}.Pow(2, expo - {})", expo_offset);
+            let frac = format!("(({cs_ty})frac / {} + 1)", 1 << frac_bits);
+            self.stmts
+                .push(format!("{var} = {frac} * {expo} * {sign};"));
+        }
+        self.stmts.push("}".to_string());
+
+        self.stmts.push("}".to_string());
         Ok(())
     }
 
-    fn visit_store(
+    fn visit_int_store(
         &mut self,
         memarg: MemArg,
         mem_type: StorageType,
     ) -> <Self as VisitOperator>::Output {
-        use {StorageType::*, ValType::*};
-
         let var = self.pop_stack();
         let idx = self.pop_stack();
+
+        self.int_store(memarg, mem_type, idx, var);
+
+        Ok(())
+    }
+
+    fn int_store(&mut self, memarg: MemArg, mem_type: StorageType, idx: Var, var: Var) {
+        use {StorageType::*, ValType::*};
 
         self.stmts.push(match mem_type {
             I8 => format!("{MEMORY}[{0}+{1}]=(byte)({2}&0xff);", idx, memarg.offset, var),
@@ -318,7 +412,94 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             }
             _ => unreachable!(),
         });
+    }
 
+    fn visit_float_store(
+        &mut self,
+        memarg: MemArg,
+        mem_type: ValType,
+    ) -> <Self as VisitOperator>::Output {
+        let var = self.pop_stack();
+        let idx = self.pop_stack();
+        let i_ty = ty_f_to_i(mem_type);
+        let i_var = self.new_var(i_ty);
+
+        let bits = get_int_bits(i_ty);
+        let frac_bits = get_frac_bits(mem_type);
+        let expo_bits = bits - 1 - frac_bits;
+        let expo_bit_mask = bit_mask(expo_bits as u64); // LSBに寄せた後のビットマスク
+        let expo_offset = (1 << (expo_bits - 1)) - 1;
+        let f_cs_ty = get_cs_ty(mem_type);
+        let i_cs_ty = get_cs_ty(i_ty);
+        let class = self.math_class(mem_type);
+
+        self.stmts.push("{".to_string());
+        self.stmts.push(format!("{i_cs_ty} sign;"));
+        self.stmts.push(format!("{i_cs_ty} expo;"));
+        self.stmts.push(format!("{i_cs_ty} frac;"));
+
+        self.stmts.push(format!("if ({var} == 0) {{"));
+        {
+            // 0の場合
+            // 1/0を計算することで+0と-0を区別
+            self.stmts.push(format!("sign = 1 / {var} > 0 ? 0 : 1;"));
+            self.stmts.push("expo = 0;".to_string());
+            self.stmts.push("frac = 0;".to_string());
+        }
+        self.stmts
+            .push(format!("}} if ({f_cs_ty}.IsInfinity({var})) {{"));
+        {
+            // 無限大の場合
+            self.stmts.push(format!("sign = {var} > 0 ? 0 : 1;"));
+            self.stmts.push(format!("expo = {expo_bit_mask};"));
+            self.stmts.push("frac = 0;".to_string());
+        }
+        self.stmts
+            .push(format!("}} if ({f_cs_ty}.IsNaN({var})) {{"));
+        {
+            // NaNの場合
+            self.stmts.push("sign = 1;".to_string());
+            self.stmts.push(format!("expo = {expo_bit_mask};"));
+            // MSBだけが1
+            self.stmts.push(format!("frac = {};", 1 << (frac_bits - 1)));
+        }
+        self.stmts.push("} else {".to_string());
+        {
+            self.stmts.push(format!("sign = {var} > 0 ? 0 : 1;"));
+            self.stmts.push(format!("var absVar = {class}.Abs({var});"));
+            self.stmts.push(format!(
+                "var expoF = ({i_cs_ty}){class}.Floor({class}.Log2(absVar));"
+            ));
+            self.stmts
+                .push(format!("if (expoF == {}) {{", -expo_offset));
+            {
+                // 非正規化数の場合
+                self.stmts.push("expo = 0;".to_string());
+                self.stmts
+                    .push(format!("frac = absVar / {f_cs_ty}.Epsilon;"));
+            }
+            self.stmts.push("} else {".to_string());
+            {
+                // 通常の浮動小数点数の場合
+                self.stmts
+                    .push(format!("expo = ({i_cs_ty})expoF + {expo_offset};"));
+                self.stmts.push(format!(
+                    "frac = ({i_cs_ty})((absVar / {class}.Pow(2, expoF) - 1) * {});",
+                    1 << frac_bits
+                ));
+            }
+            self.stmts.push("}".to_string());
+        }
+
+        self.stmts.push(format!(
+            "{i_var} = (sign << {}) | (expo << {}) | frac;",
+            bits - 1,
+            frac_bits
+        ));
+
+        self.int_store(memarg, StorageType::Val(mem_type), idx, i_var);
+
+        self.stmts.push("}".to_string());
         Ok(())
     }
 
@@ -466,13 +647,19 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             }
         }
     }
-}
 
-fn get_int_bits(ty: ValType) -> i32 {
-    match ty {
-        ValType::I32 => 32,
-        ValType::I64 => 64,
-        _ => unreachable!(),
+    fn math_class(&self, ty: ValType) -> &'static str {
+        match ty {
+            ValType::F32 => {
+                if self.conv.test {
+                    "MathF"
+                } else {
+                    "Mathf"
+                }
+            }
+            ValType::F64 => "Math",
+            _ => panic!("Specify float type as argument"),
+        }
     }
 }
 
@@ -737,95 +924,95 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i32_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I32, StorageType::Val(ValType::I32), false)
+        self.visit_int_load(memarg, ValType::I32, StorageType::Val(ValType::I32), false)
     }
 
     fn visit_i64_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I64, StorageType::Val(ValType::I64), false)
+        self.visit_int_load(memarg, ValType::I64, StorageType::Val(ValType::I64), false)
     }
 
     fn visit_f32_load(&mut self, memarg: MemArg) -> Self::Output {
-        todo!()
+        self.visit_float_load(memarg, ValType::F32)
     }
 
     fn visit_f64_load(&mut self, memarg: MemArg) -> Self::Output {
-        todo!()
+        self.visit_float_load(memarg, ValType::F64)
     }
 
     fn visit_i32_load8_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I32, StorageType::I8, true)
+        self.visit_int_load(memarg, ValType::I32, StorageType::I8, true)
     }
 
     fn visit_i32_load8_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I32, StorageType::I8, false)
+        self.visit_int_load(memarg, ValType::I32, StorageType::I8, false)
     }
 
     fn visit_i32_load16_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I32, StorageType::I16, true)
+        self.visit_int_load(memarg, ValType::I32, StorageType::I16, true)
     }
 
     fn visit_i32_load16_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I32, StorageType::I16, false)
+        self.visit_int_load(memarg, ValType::I32, StorageType::I16, false)
     }
 
     fn visit_i64_load8_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I64, StorageType::I8, true)
+        self.visit_int_load(memarg, ValType::I64, StorageType::I8, true)
     }
 
     fn visit_i64_load8_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I64, StorageType::I8, false)
+        self.visit_int_load(memarg, ValType::I64, StorageType::I8, false)
     }
 
     fn visit_i64_load16_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I64, StorageType::I16, true)
+        self.visit_int_load(memarg, ValType::I64, StorageType::I16, true)
     }
 
     fn visit_i64_load16_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I64, StorageType::I16, false)
+        self.visit_int_load(memarg, ValType::I64, StorageType::I16, false)
     }
 
     fn visit_i64_load32_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I64, StorageType::Val(ValType::I32), true)
+        self.visit_int_load(memarg, ValType::I64, StorageType::Val(ValType::I32), true)
     }
 
     fn visit_i64_load32_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, ValType::I64, StorageType::Val(ValType::I32), false)
+        self.visit_int_load(memarg, ValType::I64, StorageType::Val(ValType::I32), false)
     }
 
     fn visit_i32_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, StorageType::Val(ValType::I32))
+        self.visit_int_store(memarg, StorageType::Val(ValType::I32))
     }
 
     fn visit_i64_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, StorageType::Val(ValType::I64))
+        self.visit_int_store(memarg, StorageType::Val(ValType::I64))
     }
 
     fn visit_f32_store(&mut self, memarg: MemArg) -> Self::Output {
-        todo!()
+        self.visit_float_store(memarg, ValType::F32)
     }
 
     fn visit_f64_store(&mut self, memarg: MemArg) -> Self::Output {
-        todo!()
+        self.visit_float_store(memarg, ValType::F64)
     }
 
     fn visit_i32_store8(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, StorageType::I8)
+        self.visit_int_store(memarg, StorageType::I8)
     }
 
     fn visit_i32_store16(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, StorageType::I16)
+        self.visit_int_store(memarg, StorageType::I16)
     }
 
     fn visit_i64_store8(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, StorageType::I8)
+        self.visit_int_store(memarg, StorageType::I8)
     }
 
     fn visit_i64_store16(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, StorageType::I16)
+        self.visit_int_store(memarg, StorageType::I16)
     }
 
     fn visit_i64_store32(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, StorageType::Val(ValType::I32))
+        self.visit_int_store(memarg, StorageType::Val(ValType::I32))
     }
 
     fn visit_memory_size(&mut self, mem: u32, mem_byte: u8) -> Self::Output {
@@ -1383,4 +1570,35 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 pub enum OperatorError {
     #[error("`{0}` proposal is not implemented")]
     NotSupported(&'static str),
+}
+
+fn ty_i_to_f(ty: ValType) -> ValType {
+    match ty {
+        ValType::I32 => ValType::F32,
+        ValType::I64 => ValType::F64,
+        _ => panic!("Specify integer type as argument"),
+    }
+}
+fn ty_f_to_i(ty: ValType) -> ValType {
+    match ty {
+        ValType::F32 => ValType::I32,
+        ValType::F64 => ValType::I64,
+        _ => panic!("Specify float type as argument"),
+    }
+}
+
+fn get_int_bits(ty: ValType) -> u32 {
+    match ty {
+        ValType::I32 => 32,
+        ValType::I64 => 64,
+        _ => panic!("Specify integer type as argument"),
+    }
+}
+
+fn get_frac_bits(ty: ValType) -> u32 {
+    match ty {
+        ValType::F32 => f32::MANTISSA_DIGITS - 1,
+        ValType::F64 => f64::MANTISSA_DIGITS - 1,
+        _ => panic!("Specify float type as argument"),
+    }
 }
