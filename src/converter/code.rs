@@ -745,6 +745,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
             Some(loop_var) => {
                 self.stmts.push(format!("{LOOP}{} = false;", loop_var));
                 self.stmts.push("} while (false);".to_string());
+                self.stmts.push(format!("if ({BREAK_DEPTH} > 0) break;"));
                 self.stmts.push(format!("}} while ({LOOP}{});", loop_var));
             }
             None => {
