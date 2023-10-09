@@ -364,7 +364,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             // 浮動小数点数の変数に代入
             let sign = format!("(1 - ({cs_ty})sign * 2)");
             let expo = format!("{class}.Pow(2, expo - {})", expo_offset);
-            let frac = format!("(({cs_ty})frac / {} + 1)", 1 << frac_bits);
+            let frac = format!("(({cs_ty})frac / {} + 1)", 1u64 << frac_bits);
             self.stmts
                 .push(format!("{var} = {frac} * {expo} * {sign};"));
         }
@@ -461,7 +461,8 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts.push("sign = 1;".to_string());
             self.stmts.push(format!("expo = {expo_bit_mask};"));
             // MSBだけが1
-            self.stmts.push(format!("frac = {};", 1 << (frac_bits - 1)));
+            self.stmts
+                .push(format!("frac = {};", 1u64 << (frac_bits - 1)));
         }
         self.stmts.push("} else {".to_string());
         {
@@ -485,7 +486,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
                     .push(format!("expo = ({i_cs_ty})expoF + {expo_offset};"));
                 self.stmts.push(format!(
                     "frac = ({i_cs_ty})((absVar / {class}.Pow(2, expoF) - 1) * {});",
-                    1 << frac_bits
+                    1u64 << frac_bits
                 ));
             }
             self.stmts.push("}".to_string());
