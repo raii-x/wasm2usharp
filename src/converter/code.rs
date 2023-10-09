@@ -442,7 +442,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         {
             // 0の場合
             // 1/0を計算することで+0と-0を区別
-            self.stmts.push(format!("sign = 1 / {var} > 0 ? 0 : 1;"));
+            self.stmts.push(format!("sign = 1 / {var} > 0 ? 0u : 1u;"));
             self.stmts.push("expo = 0;".to_string());
             self.stmts.push("frac = 0;".to_string());
         }
@@ -450,7 +450,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             .push(format!("}} if ({f_cs_ty}.IsInfinity({var})) {{"));
         {
             // 無限大の場合
-            self.stmts.push(format!("sign = {var} > 0 ? 0 : 1;"));
+            self.stmts.push(format!("sign = {var} > 0 ? 0u : 1u;"));
             self.stmts.push(format!("expo = {expo_bit_mask};"));
             self.stmts.push("frac = 0;".to_string());
         }
@@ -466,18 +466,17 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         }
         self.stmts.push("} else {".to_string());
         {
-            self.stmts.push(format!("sign = {var} > 0 ? 0 : 1;"));
+            self.stmts.push(format!("sign = {var} > 0 ? 0u : 1u;"));
             self.stmts.push(format!("var absVar = {class}.Abs({var});"));
-            self.stmts.push(format!(
-                "var expoF = ({i_cs_ty}){class}.Floor({class}.Log2(absVar));"
-            ));
+            self.stmts
+                .push(format!("var expoF = {class}.Floor({class}.Log2(absVar));"));
             self.stmts
                 .push(format!("if (expoF == {}) {{", -expo_offset));
             {
                 // 非正規化数の場合
                 self.stmts.push("expo = 0;".to_string());
                 self.stmts
-                    .push(format!("frac = absVar / {f_cs_ty}.Epsilon;"));
+                    .push(format!("frac = ({i_cs_ty})(absVar / {f_cs_ty}.Epsilon);"));
             }
             self.stmts.push("} else {".to_string());
             {
