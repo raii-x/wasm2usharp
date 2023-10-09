@@ -351,6 +351,8 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             bit_mask(frac_bits as u64)
         ));
 
+        let sign = format!("(1 - ({cs_ty})sign * 2)");
+
         self.stmts.push("if (expo == 0) {".to_string());
         {
             self.stmts.push("if (frac == 0) {".to_string());
@@ -358,8 +360,9 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts.push(format!("{f_var} = sign == 0 ? 0f : -0f;"));
             self.stmts.push("} else {".to_string());
             // 非正規化数の場合
-            self.stmts
-                .push(format!("{f_var} = ({cs_ty})frac * {cs_ty}.Epsilon;"));
+            self.stmts.push(format!(
+                "{f_var} = ({cs_ty})frac * {cs_ty}.Epsilon * {sign};"
+            ));
             self.stmts.push("}".to_string());
         }
         self.stmts
@@ -378,7 +381,6 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         self.stmts.push("} else {".to_string());
         {
             // 浮動小数点数の変数に代入
-            let sign = format!("(1 - ({cs_ty})sign * 2)");
             let expo = format!("{class}.Pow(2, (int)expo - {})", expo_offset);
             let frac = format!("(({cs_ty})frac / {} + 1)", 1u64 << frac_bits);
             self.stmts
