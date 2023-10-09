@@ -3,6 +3,7 @@ use std::fmt;
 use std::io::Write;
 
 use anyhow::Result;
+use num_traits::float::Float;
 use wasmparser::{
     for_each_operator, BlockType, BrTable, FuncType, FunctionBody, Ieee32, Ieee64, MemArg,
     StorageType, ValType, VisitOperator,
@@ -537,6 +538,33 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         self.stmts.push(format!("{var} = {value};"));
         Ok(())
+    }
+
+    fn visit_float_const<T, F>(
+        &mut self,
+        value: T,
+        ty: ValType,
+        normal_display: F,
+    ) -> std::result::Result<(), anyhow::Error>
+    where
+        T: Float,
+        F: FnOnce() -> String,
+    {
+        let cs_ty = get_cs_ty(ty);
+
+        let literal = if value.is_infinite() {
+            if value.is_sign_positive() {
+                format!("{cs_ty}.PositiveInfinity")
+            } else {
+                format!("{cs_ty}.NegativeInfinity")
+            }
+        } else if value.is_nan() {
+            format!("{cs_ty}.NaN")
+        } else {
+            normal_display()
+        };
+
+        self.visit_const(ty, literal)
     }
 
     fn visit_eqz(&mut self) -> <Self as VisitOperator>::Output {
@@ -1159,14 +1187,13 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_f32_const(&mut self, value: Ieee32) -> Self::Output {
-        self.visit_const(
-            ValType::F32,
-            &format!("{:e}f", f32::from_bits(value.bits())),
-        )
+        let value = f32::from_bits(value.bits());
+        self.visit_float_const(value, ValType::F32, || format!("{:e}f", value))
     }
 
     fn visit_f64_const(&mut self, value: Ieee64) -> Self::Output {
-        self.visit_const(ValType::F64, &format!("{:e}", f64::from_bits(value.bits())))
+        let value = f64::from_bits(value.bits());
+        self.visit_float_const(value, ValType::F64, || format!("{:e}", value))
     }
 
     fn visit_i32_eqz(&mut self) -> Self::Output {
