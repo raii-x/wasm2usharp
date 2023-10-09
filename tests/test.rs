@@ -3,11 +3,11 @@ extern crate wasm2usharp;
 use std::{
     fs::{read_to_string, File},
     io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Child, Command, Stdio},
 };
 
-use tempfile::tempdir;
+use tempfile::{tempdir, TempDir};
 use wasm2usharp::convert_to_ident;
 use wast::{
     core::{NanPattern, WastRetCore},
@@ -31,6 +31,11 @@ test!(test_block, "block");
 // test!(test_br_table, "br_table");
 // test!(test_br_if, "br_if");
 
+struct DirChild {
+    child: Child,
+    _dir: TempDir,
+}
+
 fn test_wast(name: &str) {
     let mut wast_path: PathBuf = PathBuf::from("tests/testsuite/");
     wast_path.push(name);
@@ -50,17 +55,16 @@ fn test_wast(name: &str) {
         .unwrap();
     let ast = parser::parse::<Wast>(&buf).map_err(adjust_wast).unwrap();
 
-    let out_dir = tempdir().unwrap();
-    let mut child = None;
+    let mut dir_child = None;
 
     for directive in ast.directives {
         use wast::WastDirective::*;
         match directive {
-            Wat(module) => child = Some(run_wat(module, out_dir.path())),
+            Wat(module) => dir_child = Some(run_wat(module)),
             Invoke(invoke) => {}
             AssertReturn { exec, results, .. } => {
                 assert_eq!(
-                    &execute(exec, child.as_mut().unwrap()),
+                    &execute(exec, &mut dir_child.as_mut().unwrap().child),
                     &results.into_iter().map(WastRetEq).collect::<Vec<_>>()
                 );
             }
@@ -71,7 +75,7 @@ fn test_wast(name: &str) {
     }
 }
 
-fn run_wat(mut wat: QuoteWat<'_>, out_dir: &Path) -> Child {
+fn run_wat(mut wat: QuoteWat<'_>) -> DirChild {
     println!("Running wat");
 
     match &wat {
@@ -81,9 +85,12 @@ fn run_wat(mut wat: QuoteWat<'_>, out_dir: &Path) -> Child {
         }
     };
 
+    let dir = tempdir().unwrap();
+    let dir_path = dir.path();
+
     // .NETプロジェクトを作成
     Command::new("dotnet")
-        .args(["new", "console", "-o", out_dir.to_str().unwrap()])
+        .args(["new", "console", "-o", dir_path.to_str().unwrap()])
         .status()
         .unwrap();
 
@@ -92,23 +99,25 @@ fn run_wat(mut wat: QuoteWat<'_>, out_dir: &Path) -> Child {
 
     {
         // Program.csファイルに書き込み
-        let mut cs_file = File::create(out_dir.join("Program.cs")).unwrap();
+        let mut cs_file = File::create(dir_path.join("Program.cs")).unwrap();
         conv.convert(&mut cs_file).unwrap();
     }
 
     // .NETプロジェクトをビルド
     Command::new("dotnet")
-        .args(["build", out_dir.to_str().unwrap()])
+        .args(["build", dir_path.to_str().unwrap()])
         .status()
         .unwrap();
 
     // .NETプロジェクトを実行
-    Command::new("dotnet")
-        .args(["run", "--project", out_dir.to_str().unwrap(), "--no-build"])
+    let child = Command::new("dotnet")
+        .args(["run", "--project", dir_path.to_str().unwrap(), "--no-build"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .unwrap()
+        .unwrap();
+
+    DirChild { _dir: dir, child }
 }
 
 fn execute<'a>(exec: WastExecute, child: &mut Child) -> Vec<WastRetEq<'a>> {
