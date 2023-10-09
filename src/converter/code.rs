@@ -39,8 +39,10 @@ pub struct CodeConverter<'input, 'conv> {
     vars: Vec<Var>,
     local_count: u32,
     stmts: Vec<String>,
-    /// brの後など、到達不可能なコードの処理時にtrue
-    unreachable: bool,
+    /// brの後など、到達不可能なコードの処理時に1加算。
+    /// unreachableが1以上の場合のブロックの出現ごとに1加算。
+    /// ブロックの終了時に1減算。
+    unreachable: i32,
     loop_var_count: usize,
 }
 
@@ -75,7 +77,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             vars: Vec::new(),
             local_count: 0,
             stmts: Vec::new(),
-            unreachable: false,
+            unreachable: 0,
             loop_var_count: 0,
         }
     }
@@ -109,10 +111,10 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         for op in body.get_operators_reader()? {
             let op = op?;
 
-            if self.unreachable {
+            if self.unreachable > 0 {
                 use wasmparser::Operator::*;
                 match &op {
-                    End | Else => {}
+                    Block { .. } | Loop { .. } | If { .. } | Else | End => {}
                     _ => continue,
                 }
             }
@@ -680,12 +682,20 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_block(&mut self, blockty: BlockType) -> Self::Output {
+        if self.unreachable > 0 {
+            self.unreachable += 1;
+            return Ok(());
+        }
         self.new_block(blockty, false);
         self.stmts.push("do {".to_string());
         Ok(())
     }
 
     fn visit_loop(&mut self, blockty: BlockType) -> Self::Output {
+        if self.unreachable > 0 {
+            self.unreachable += 1;
+            return Ok(());
+        }
         let block = self.new_block(blockty, true);
         let loop_var = block.loop_var.unwrap();
         self.stmts.push("do {".to_string());
@@ -695,6 +705,10 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_if(&mut self, blockty: BlockType) -> Self::Output {
+        if self.unreachable > 0 {
+            self.unreachable += 1;
+            return Ok(());
+        }
         let var = self.pop_stack();
         self.new_block(blockty, false);
         self.stmts.push(format!("do if ({var} != 0) {{"));
@@ -702,10 +716,10 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_else(&mut self) -> Self::Output {
-        if self.unreachable {
-            self.unreachable = false;
-        } else {
-            self.block_result(0);
+        match self.unreachable {
+            x if x == 0 => self.block_result(0),
+            x if x == 1 => self.unreachable -= 1,
+            _ => return Ok(()),
         }
 
         self.blocks.last_mut().unwrap().stack.clear();
@@ -715,10 +729,13 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_end(&mut self) -> Self::Output {
-        if self.unreachable {
-            self.unreachable = false;
-        } else {
-            self.block_result(0);
+        match self.unreachable {
+            x if x == 0 => self.block_result(0),
+            x if x == 1 => self.unreachable -= 1,
+            _ => {
+                self.unreachable -= 1;
+                return Ok(());
+            }
         }
 
         let block = self.blocks.pop().unwrap();
@@ -752,7 +769,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     fn visit_br(&mut self, relative_depth: u32) -> Self::Output {
         self.block_result(relative_depth);
         self.set_break_depth(relative_depth);
-        self.unreachable = true;
+        self.unreachable = 1;
 
         self.stmts.push("break;".to_string());
         Ok(())
