@@ -482,10 +482,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     for_each_operator!(define_visit_operator);
 
     fn visit_unreachable(&mut self) -> Self::Output {
-        if !self.conv.test {
-            self.stmts
-                .push(r#"Debug.LogError("unreachable");"#.to_string());
-        }
+        self.stmts.push(self.conv.trap("unreachable"));
         Ok(())
     }
 

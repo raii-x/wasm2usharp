@@ -221,9 +221,7 @@ impl<'input> Converter<'input> {
                             }
                         }
                         write!(out_file, "default: ")?;
-                        if !self.test {
-                            write!(out_file, "Debug.LogError(\"invalid table index\"); ")?;
-                        }
+                        write!(out_file, "{}", self.trap("invalid table index"))?;
                         write!(out_file, "return")?;
                         if ty.results().is_empty() {
                             writeln!(out_file, ";")?;
@@ -339,6 +337,14 @@ impl<'input> Converter<'input> {
         writeln!(out_file, "}}")?;
 
         Ok(())
+    }
+
+    fn trap(&self, message: &str) -> String {
+        if self.test {
+            format!("throw new Exception(\"{message}\");")
+        } else {
+            format!("Debug.LogError(\"{message}\");")
+        }
     }
 }
 
