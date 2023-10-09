@@ -501,7 +501,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts
                 .push(format!("var expoF = {class}.Floor({class}.Log2(absVar));"));
             self.stmts
-                .push(format!("if (expoF == {}) {{", -expo_offset));
+                .push(format!("if (expoF <= {}) {{", -expo_offset));
             {
                 // 非正規化数の場合
                 self.stmts.push("expo = 0;".to_string());
