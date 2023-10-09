@@ -32,10 +32,10 @@ fn f_to_wasm_ret_core(bits: u64, size_bits: u64, frac_bits: u64) -> NanPattern<u
 
     if bits & expo_mask == expo_mask {
         let frac = bits & bit_mask(frac_bits);
-        if frac == 1 << (frac_bits - 1) {
-            NanPattern::CanonicalNan
-        } else {
-            NanPattern::ArithmeticNan
+        match frac {
+            0 => NanPattern::Value(bits), // 無限大
+            x if x == 1 << (frac_bits - 1) => NanPattern::CanonicalNan,
+            _ => NanPattern::ArithmeticNan,
         }
     } else {
         NanPattern::Value(bits)
