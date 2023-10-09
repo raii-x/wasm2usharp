@@ -624,7 +624,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let cs_ty = get_cs_ty(ty);
         // 2進で文字列化して文字数を数える
         self.stmts.push(format!(
-            "else {result} = ({cs_ty}){bits} - Convert.ToString({opnd}, 2).Length;",
+            "else {result} = ({cs_ty}){bits} - Convert.ToString((long){opnd}, 2).Length;",
         ));
         Ok(())
     }
@@ -643,7 +643,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         // 2. 2進で文字列化する
         // 3. 最後に1が出現するインデックスを求める
         self.stmts.push(format!(
-            "else {result} = {} - ({cs_ty})Convert.ToString({opnd} | {}, 2).LastIndexOf('1');",
+            "else {result} = {} - ({cs_ty})Convert.ToString((long)({opnd} | {}), 2).LastIndexOf('1');",
             bits - 1,
             1u64 << (bits - 1)
         ));
@@ -658,7 +658,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let cs_ty = get_cs_ty(ty);
         // 2進で文字列化して、0を除去した後の文字数を数える
         self.stmts.push(format!(
-            "{result} = ({cs_ty})Convert.ToString({opnd}, 2).Replace(\"0\", \"\").Length;"
+            "{result} = ({cs_ty})Convert.ToString((long){opnd}, 2).Replace(\"0\", \"\").Length;"
         ));
         Ok(())
     }
