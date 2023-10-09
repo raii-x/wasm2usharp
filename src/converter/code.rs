@@ -1590,13 +1590,6 @@ pub enum OperatorError {
     NotSupported(&'static str),
 }
 
-fn ty_i_to_f(ty: ValType) -> ValType {
-    match ty {
-        ValType::I32 => ValType::F32,
-        ValType::I64 => ValType::F64,
-        _ => panic!("Specify integer type as argument"),
-    }
-}
 fn ty_f_to_i(ty: ValType) -> ValType {
     match ty {
         ValType::F32 => ValType::I32,
