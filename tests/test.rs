@@ -15,7 +15,7 @@ use wast::{
     core::WastRetCore,
     lexer::Lexer,
     parser::{self, ParseBuffer},
-    QuoteWat, Wast, WastArg, WastExecute, WastRet, Wat,
+    QuoteWat, Wast, WastArg, WastExecute, WastInvoke, WastRet, Wat,
 };
 
 use crate::value::{f32_to_wasm_ret_core, f64_to_wasm_ret_core, WastRetEq};
@@ -31,6 +31,7 @@ macro_rules! test (
 
 test!(test_address, "address");
 test!(test_align, "align");
+test!(test_binary_leb128, "binary-leb128");
 test!(test_block, "block");
 // test!(test_br_table, "br_table");
 // test!(test_br_if, "br_if");
@@ -65,20 +66,33 @@ fn test_wast(name: &str) {
         use wast::WastDirective::*;
         match directive {
             Wat(module) => dir_child = Some(run_wat(module)),
-            Invoke(invoke) => {}
-            AssertReturn { exec, results, .. } => {
-                assert_eq!(
-                    &execute(exec, &mut dir_child.as_mut().unwrap().child),
-                    &results
-                        .into_iter()
-                        .map(WastRetEq)
-                        .map(|x| x.into_canonical_nan())
-                        .collect::<Vec<_>>()
-                );
+            Invoke(invoke) => {
+                invoke_func(invoke, &mut dir_child.as_mut().unwrap().child);
             }
-            AssertInvalid => (),
-            TypeUse => {}
-            AssertMalformed => {}
+            AssertReturn { exec, results, .. } => match exec {
+                WastExecute::Invoke(invoke) => {
+                    assert_eq!(
+                        &invoke_func(invoke, &mut dir_child.as_mut().unwrap().child),
+                        &results
+                            .into_iter()
+                            .map(WastRetEq)
+                            .map(|x| x.into_canonical_nan())
+                            .collect::<Vec<_>>()
+                    );
+                }
+                _ => panic!(),
+            },
+            AssertMalformed { .. }
+            | AssertInvalid { .. }
+            | AssertTrap { .. }
+            | AssertExhaustion { .. }
+            | AssertUnlinkable { .. }
+            | AssertException { .. } => {
+                println!("Failure case is skipped")
+            }
+            Register { .. } => {
+                println!("Register is skipped")
+            }
         }
     }
 }
@@ -129,66 +143,57 @@ fn run_wat(mut wat: QuoteWat<'_>) -> DirChild {
     DirChild { _dir: dir, child }
 }
 
-fn execute<'a>(exec: WastExecute, child: &mut Child) -> Vec<WastRetEq<'a>> {
-    match exec {
-        wast::WastExecute::Invoke(invoke) => {
-            use wast::core::WastArgCore::*;
-            println!("Invoking: {} {:?}", invoke.name, invoke.args);
+fn invoke_func<'a>(invoke: WastInvoke, child: &mut Child) -> Vec<WastRetEq<'a>> {
+    use wast::core::WastArgCore::*;
+    println!("Invoking: {} {:?}", invoke.name, invoke.args);
 
-            // 最初のコマンド引数に呼び出す関数名を指定
-            let mut args = vec![convert_to_ident(invoke.name)];
-            // 2番目以降のコマンド引数に関数の引数を指定
-            args.extend(invoke.args.iter().flat_map(|arg| match arg {
-                WastArg::Core(arg) => match arg {
-                    I32(x) => ["i32".to_string(), (*x as u32).to_string()],
-                    I64(x) => ["i64".to_string(), (*x as u64).to_string()],
-                    F32(x) => ["f32".to_string(), x.bits.to_string()],
-                    F64(x) => ["f64".to_string(), x.bits.to_string()],
-                    V128(_) => panic!("simd is not supported"),
-                    RefNull(_) | RefExtern(_) | RefHost(_) => {
-                        panic!("reference-type is not supported")
-                    }
-                },
-                WastArg::Component(_) => panic!("component-model is not supported"),
-            }));
-
-            let args = args.join(" ") + "\n";
-            let stdin = child.stdin.as_mut().unwrap();
-            stdin.write_all(args.as_bytes()).unwrap();
-
-            // if !output.status.success() {
-            //     panic!("{}", String::from_utf8(output.stderr).unwrap());
-            // }
-
-            let stdout = child.stdout.as_mut().unwrap();
-            let mut stdout = BufReader::new(stdout);
-            let mut line = String::new();
-            stdout.read_line(&mut line).unwrap();
-
-            let mut results = Vec::new();
-
-            // スペースで区切った1つ目が型で、2つ目が値のビットを数値で表現した文字列
-            let mut sp = line.split_whitespace();
-            let ty = sp.next();
-            if let Some(ty) = ty {
-                let val = sp.next().unwrap();
-                assert!(sp.next().is_none());
-
-                results.push(match ty {
-                    "i32" => WastRetCore::I32(val.parse::<u32>().unwrap() as i32),
-                    "i64" => WastRetCore::I64(val.parse::<u64>().unwrap() as i64),
-                    "f32" => f32_to_wasm_ret_core(val.parse::<u32>().unwrap()),
-                    "f64" => f64_to_wasm_ret_core(val.parse::<u64>().unwrap()),
-                    _ => panic!("unknown return type"),
-                });
+    // 最初のコマンド引数に呼び出す関数名を指定
+    let mut args = vec![convert_to_ident(invoke.name)];
+    // 2番目以降のコマンド引数に関数の引数を指定
+    args.extend(invoke.args.iter().flat_map(|arg| match arg {
+        WastArg::Core(arg) => match arg {
+            I32(x) => ["i32".to_string(), (*x as u32).to_string()],
+            I64(x) => ["i64".to_string(), (*x as u64).to_string()],
+            F32(x) => ["f32".to_string(), x.bits.to_string()],
+            F64(x) => ["f64".to_string(), x.bits.to_string()],
+            V128(_) => panic!("simd is not supported"),
+            RefNull(_) | RefExtern(_) | RefHost(_) => {
+                panic!("reference-type is not supported")
             }
+        },
+        WastArg::Component(_) => panic!("component-model is not supported"),
+    }));
 
-            results
-                .into_iter()
-                .map(WastRet::Core)
-                .map(WastRetEq)
-                .collect()
-        }
-        _ => panic!(),
+    let args = args.join(" ") + "\n";
+    let stdin = child.stdin.as_mut().unwrap();
+    stdin.write_all(args.as_bytes()).unwrap();
+
+    let stdout = child.stdout.as_mut().unwrap();
+    let mut stdout = BufReader::new(stdout);
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+
+    let mut results = Vec::new();
+
+    // スペースで区切った1つ目が型で、2つ目が値のビットを数値で表現した文字列
+    let mut sp = line.split_whitespace();
+    let ty = sp.next();
+    if let Some(ty) = ty {
+        let val = sp.next().unwrap();
+        assert!(sp.next().is_none());
+
+        results.push(match ty {
+            "i32" => WastRetCore::I32(val.parse::<u32>().unwrap() as i32),
+            "i64" => WastRetCore::I64(val.parse::<u64>().unwrap() as i64),
+            "f32" => f32_to_wasm_ret_core(val.parse::<u32>().unwrap()),
+            "f64" => f64_to_wasm_ret_core(val.parse::<u64>().unwrap()),
+            _ => panic!("unknown return type"),
+        });
     }
+
+    results
+        .into_iter()
+        .map(WastRet::Core)
+        .map(WastRetEq)
+        .collect()
 }
