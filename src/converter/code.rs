@@ -491,6 +491,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             }
             self.stmts.push("}".to_string());
         }
+        self.stmts.push("}".to_string());
 
         self.stmts.push(format!(
             "{i_var} = (sign << {}) | (expo << {}) | frac;",
