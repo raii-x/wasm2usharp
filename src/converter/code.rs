@@ -379,7 +379,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         {
             // 浮動小数点数の変数に代入
             let sign = format!("(1 - ({cs_ty})sign * 2)");
-            let expo = format!("{class}.Pow(2, expo - {})", expo_offset);
+            let expo = format!("{class}.Pow(2, (int)expo - {})", expo_offset);
             let frac = format!("(({cs_ty})frac / {} + 1)", 1u64 << frac_bits);
             self.stmts
                 .push(format!("{f_var} = {frac} * {expo} * {sign};"));
