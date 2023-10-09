@@ -208,8 +208,13 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
     }
 
     /// ブロックに戻り値があれば、stmtsに戻り値を代入する処理を追加する
-    fn block_result(&mut self, relative_depth: u32) {
+    fn block_result(&mut self, relative_depth: u32, is_br: bool) {
         let upper_block = &self.blocks[self.blocks.len() - 1 - relative_depth as usize];
+
+        // brでループを再開する場合は戻り値を取らない
+        if is_br && upper_block.loop_var.is_some() {
+            return;
+        }
 
         if let Some(result) = upper_block.result {
             let current_block = &self.blocks[self.blocks.len() - 1];
@@ -786,7 +791,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
     fn visit_else(&mut self) -> Self::Output {
         match self.unreachable {
-            x if x == 0 => self.block_result(0),
+            x if x == 0 => self.block_result(0, false),
             x if x == 1 => self.unreachable -= 1,
             _ => return Ok(()),
         }
@@ -799,7 +804,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
     fn visit_end(&mut self) -> Self::Output {
         match self.unreachable {
-            x if x == 0 => self.block_result(0),
+            x if x == 0 => self.block_result(0, false),
             x if x == 1 => self.unreachable -= 1,
             _ => {
                 self.unreachable -= 1;
@@ -837,7 +842,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_br(&mut self, relative_depth: u32) -> Self::Output {
-        self.block_result(relative_depth);
+        self.block_result(relative_depth, true);
         self.set_break_depth(relative_depth);
         self.unreachable = 1;
 
@@ -849,7 +854,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.pop_stack();
         self.stmts.push(format!("if ({var} != 0) {{"));
 
-        self.block_result(relative_depth);
+        self.block_result(relative_depth, true);
         self.set_break_depth(relative_depth);
 
         self.stmts.push("break;".to_string());
@@ -859,6 +864,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_br_table(&mut self, targets: BrTable<'a>) -> Self::Output {
+        self.unreachable = 1;
         let var = self.pop_stack();
 
         self.stmts.push(format!("switch ({var}) {{"));
@@ -867,13 +873,13 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
             let target = target?;
 
             self.stmts.push(format!("case {i}:"));
-            self.block_result(target);
+            self.block_result(target, true);
             self.set_break_depth(target);
             self.stmts.push("break;".to_string());
         }
 
         self.stmts.push("default:".to_string());
-        self.block_result(targets.default());
+        self.block_result(targets.default(), true);
         self.set_break_depth(targets.default());
         self.stmts.push("break;".to_string());
 
