@@ -476,7 +476,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts.push("frac = 0;".to_string());
         }
         self.stmts
-            .push(format!("}} if ({f_cs_ty}.IsInfinity({f_var})) {{"));
+            .push(format!("}} else if ({f_cs_ty}.IsInfinity({f_var})) {{"));
         {
             // 無限大の場合
             self.stmts.push(format!("sign = {f_var} > 0 ? 0u : 1u;"));
@@ -484,7 +484,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts.push("frac = 0;".to_string());
         }
         self.stmts
-            .push(format!("}} if ({f_cs_ty}.IsNaN({f_var})) {{"));
+            .push(format!("}} else if ({f_cs_ty}.IsNaN({f_var})) {{"));
         {
             // NaNの場合
             self.stmts.push("sign = 1;".to_string());
