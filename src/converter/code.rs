@@ -498,7 +498,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             frac_bits
         ));
 
-        self.int_store(memarg, StorageType::Val(mem_type), idx, i_var);
+        self.int_store(memarg, StorageType::Val(i_ty), idx, i_var);
 
         self.stmts.push("}".to_string());
         Ok(())
