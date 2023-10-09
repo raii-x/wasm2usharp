@@ -151,7 +151,7 @@ fn test_wast(name: &str) {
                         &results
                             .into_iter()
                             .map(WastRetEq)
-                            .map(|x| x.into_canonical_nan())
+                            .map(|x| x.normalize_nan())
                             .collect::<Vec<_>>()
                     );
                 }

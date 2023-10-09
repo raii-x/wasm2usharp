@@ -46,7 +46,7 @@ fn f_to_wasm_ret_core(bits: u64, size_bits: u64, frac_bits: u64) -> NanPattern<u
 pub struct WastRetEq<'a>(pub WastRet<'a>);
 
 impl<'a> WastRetEq<'a> {
-    pub fn into_canonical_nan(self) -> Self {
+    pub fn normalize_nan(self) -> Self {
         Self(match self.0 {
             WastRet::Core(x) => WastRet::Core(match x {
                 WastRetCore::F32(x) => {
@@ -68,8 +68,6 @@ where
     F: FnOnce(T) -> bool,
 {
     match pattern {
-        NanPattern::CanonicalNan => NanPattern::CanonicalNan,
-        NanPattern::ArithmeticNan => NanPattern::CanonicalNan,
         NanPattern::Value(value) => {
             if is_nan(value) {
                 NanPattern::CanonicalNan
@@ -77,6 +75,7 @@ where
                 NanPattern::Value(value)
             }
         }
+        _other => _other,
     }
 }
 
@@ -129,8 +128,7 @@ where
 {
     use NanPattern::*;
     match (lhs, rhs) {
-        (CanonicalNan, CanonicalNan) => true,
-        (ArithmeticNan, ArithmeticNan) => true,
+        (CanonicalNan | ArithmeticNan, CanonicalNan | ArithmeticNan) => true,
         (Value(l0), Value(r0)) => eq(*l0, *r0),
         _ => false,
     }
