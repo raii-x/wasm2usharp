@@ -9,7 +9,7 @@ use std::{
     process::{Child, Command, Stdio},
 };
 
-use tempfile::{tempdir, TempDir};
+use tempfile::tempdir;
 use wasm2usharp::convert_to_ident;
 use wast::{
     core::WastRetCore,

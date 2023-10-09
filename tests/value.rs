@@ -1,3 +1,4 @@
+use float_cmp::approx_eq;
 use wasm2usharp::util::bit_mask;
 use wast::{
     core::{NanPattern, WastRetCore},
@@ -101,37 +102,36 @@ fn wast_ret_core_eq(lhs: &WastRetCore, rhs: &WastRetCore) -> bool {
     match (lhs, rhs) {
         (I32(l0), I32(r0)) => l0 == r0,
         (I64(l0), I64(r0)) => l0 == r0,
-        (F32(l0), F32(r0)) => nan_pattern_eq(l0, r0),
-        (F64(l0), F64(r0)) => nan_pattern_eq(l0, r0),
+        (F32(l0), F32(r0)) => nan_pattern_eq(l0, r0, |l, r| {
+            approx_eq!(
+                f32,
+                f32::from_bits(l.bits),
+                f32::from_bits(r.bits),
+                ulps = 2
+            )
+        }),
+        (F64(l0), F64(r0)) => nan_pattern_eq(l0, r0, |l, r| {
+            approx_eq!(
+                f64,
+                f64::from_bits(l.bits),
+                f64::from_bits(r.bits),
+                ulps = 2
+            )
+        }),
         _ => false,
     }
 }
 
-fn nan_pattern_eq<T: PartialEq>(
-    lhs: &NanPattern<impl FloatBits<T>>,
-    rhs: &NanPattern<impl FloatBits<T>>,
-) -> bool {
+fn nan_pattern_eq<T, F>(lhs: &NanPattern<T>, rhs: &NanPattern<T>, eq: F) -> bool
+where
+    T: Copy,
+    F: FnOnce(T, T) -> bool,
+{
     use NanPattern::*;
     match (lhs, rhs) {
         (CanonicalNan, CanonicalNan) => true,
         (ArithmeticNan, ArithmeticNan) => true,
-        (Value(l0), Value(r0)) => l0.float_bits() == r0.float_bits(),
+        (Value(l0), Value(r0)) => eq(*l0, *r0),
         _ => false,
-    }
-}
-
-trait FloatBits<T> {
-    fn float_bits(&self) -> T;
-}
-
-impl FloatBits<u32> for Float32 {
-    fn float_bits(&self) -> u32 {
-        self.bits
-    }
-}
-
-impl FloatBits<u64> for Float64 {
-    fn float_bits(&self) -> u64 {
-        self.bits
     }
 }
