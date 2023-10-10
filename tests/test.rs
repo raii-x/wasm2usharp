@@ -193,7 +193,14 @@ fn run_wat(mut wat: QuoteWat<'_>, dir_path: &Path) -> Child {
 
     // .NETプロジェクトをビルド
     let status = Command::new("dotnet")
-        .args(["build", dir_path.to_str().unwrap()])
+        .args([
+            "build",
+            dir_path.to_str().unwrap(),
+            "--no-restore",
+            "--nologo",
+            "-v",
+            "q",
+        ])
         .status()
         .unwrap();
     assert!(status.success());
