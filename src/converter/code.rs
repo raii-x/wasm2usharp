@@ -508,6 +508,13 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
                 self.stmts
                     .push(format!("frac = ({i_cs_ty})(absVar / {f_cs_ty}.Epsilon);"));
             }
+            self.stmts
+                .push(format!("}} else if (expoF >= {}) {{", expo_offset + 1));
+            {
+                // Log2の誤差で無限大になった場合
+                self.stmts.push(format!("expo = {expo_bit_mask};"));
+                self.stmts.push("frac = 0;".to_string());
+            }
             self.stmts.push("} else {".to_string());
             {
                 // 通常の浮動小数点数の場合
