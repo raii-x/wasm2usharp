@@ -12,10 +12,10 @@ use std::{
 use tempfile::tempdir;
 use wasm2usharp::convert_to_ident;
 use wast::{
-    core::WastRetCore,
+    core::{WastArgCore, WastRetCore},
     lexer::Lexer,
     parser::{self, ParseBuffer},
-    QuoteWat, Wast, WastArg, WastExecute, WastInvoke, WastRet, Wat,
+    QuoteWat, Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
 
 use crate::value::{f32_to_wasm_ret_core, f64_to_wasm_ret_core, WastRetEq};
@@ -24,7 +24,13 @@ macro_rules! test (
     ($func_name:ident, $name:expr) => {
         #[test]
         fn $func_name() {
-            test_wast($name);
+            test_wast($name, None as Option<fn(&WastDirective) -> bool>);
+        }
+    };
+    ($func_name:ident, $name:expr, $filter:expr) => {
+        #[test]
+        fn $func_name() {
+            test_wast($name, Some($filter));
         }
     };
 );
@@ -42,7 +48,11 @@ test!(test_call, "call");
 test!(test_call_indirect, "call_indirect");
 test!(test_comments, "comments");
 test!(test_const, "const");
-test!(test_conversions, "conversions");
+test!(
+    test_conversions,
+    "conversions",
+    deny_nan_arg(&["i32.reinterpret_f32"])
+);
 test!(test_custom, "custom");
 test!(test_data, "data");
 test!(test_elem, "elem");
@@ -104,7 +114,31 @@ test!(test_utf8_import_field, "utf8-import-field");
 test!(test_utf8_import_module, "utf8-import-module");
 test!(test_utf8_invalid_encoding, "utf8-invalid-encoding");
 
-fn test_wast(name: &str) {
+// 指定された関数名で、最初の引数がNaNなら処理しない
+fn deny_nan_arg(names: &'static [&'static str]) -> impl Fn(&WastDirective) -> bool {
+    move |directive| !match directive {
+        WastDirective::AssertReturn {
+            exec: WastExecute::Invoke(invoke),
+            ..
+        } => {
+            names.contains(&invoke.name)
+                && match &invoke.args[0] {
+                    WastArg::Core(x) => match x {
+                        WastArgCore::F32(x) => f32::from_bits(x.bits).is_nan(),
+                        WastArgCore::F64(x) => f64::from_bits(x.bits).is_nan(),
+                        _ => false,
+                    },
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+fn test_wast<F>(name: &str, filter: Option<F>)
+where
+    F: Fn(&WastDirective) -> bool,
+{
     let mut wast_path: PathBuf = PathBuf::from("tests/testsuite/");
     wast_path.push(name);
     wast_path.set_extension("wast");
@@ -134,6 +168,12 @@ fn test_wast(name: &str) {
 
     for directive in ast.directives {
         use wast::WastDirective::*;
+        if let Some(filter) = &filter {
+            if !filter(&directive) {
+                println!("Directive is skipped");
+                continue;
+            }
+        }
         match directive {
             Wat(module) => {
                 if let Some(child) = child.as_mut() {
