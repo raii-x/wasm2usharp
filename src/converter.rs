@@ -17,10 +17,11 @@ pub struct Converter<'input> {
     test: bool,
     types: Vec<FuncType>,
     funcs: Vec<Func>,
-    table: Vec<Option<u32>>,
+    table: Option<TableType>,
     memory: u32,
     globals: Vec<Global>,
-    datas: Vec<(u32, &'input [u8])>,
+    elements: Vec<Element>,
+    datas: Vec<Data<'input>>,
     code_idx: usize,
     start_func: Option<u32>,
 }
@@ -29,7 +30,9 @@ const PAGE_SIZE: u32 = 65536;
 const CLASS_NAME: &str = "Wasm2USharp";
 const W2US_PREFIX: &str = "w2us_";
 const MEMORY: &str = "w2us_memory";
+const TABLE: &str = "w2us_table";
 const DATA: &str = "w2us_data";
+const ELEMENT: &str = "w2us_element";
 const INIT: &str = "w2us_init";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
 
@@ -40,9 +43,10 @@ impl<'input> Converter<'input> {
             test,
             types: Vec::new(),
             funcs: Vec::new(),
-            table: Vec::new(),
+            table: None,
             memory: 0,
             globals: Vec::new(),
+            elements: Vec::new(),
             datas: Vec::new(),
             code_idx: 0,
             start_func: None,
@@ -146,32 +150,40 @@ impl<'input> Converter<'input> {
                     self.start_func = Some(func);
                 }
                 ElementSection(s) => {
-                    for elem in s {
+                    for (i, elem) in s.into_iter().enumerate() {
                         let elem = elem?;
 
-                        let offset = match elem.kind {
+                        let offset_expr = match elem.kind {
                             ElementKind::Active {
                                 table_index,
                                 offset_expr,
                             } => {
                                 assert!(table_index.is_none());
-                                read_i32_const_ops(&offset_expr)
+                                self.convert_const_expr(&offset_expr)
                             }
                             _ => panic!("Not supported element kind"),
                         };
 
-                        if let ElementItems::Functions(s) = elem.items {
-                            for (i, item) in s.into_iter().enumerate() {
-                                let item = item?;
-                                self.table[offset as usize + i] = Some(item);
-                            }
+                        let items = if let ElementItems::Functions(s) = elem.items {
+                            s.into_iter().collect::<Result<Vec<_>, _>>()?
                         } else {
                             panic!("Non function elements are not supported");
+                        };
+
+                        // エレメント配列
+                        write!(out_file, "uint[] {ELEMENT}{i} = new uint[] {{ ")?;
+                        for item in items.iter() {
+                            write!(out_file, "{item},")?;
                         }
+                        writeln!(out_file, " }};")?;
+
+                        self.elements.push(Element { offset_expr, items });
                     }
 
                     for (i_ty, ty) in self.types.iter().enumerate() {
                         let name = format!("{CALL_INDIRECT}{i_ty}");
+
+                        // call_indirect関数が受け取る引数リスト
                         let mut params = ty
                             .params()
                             .iter()
@@ -179,6 +191,7 @@ impl<'input> Converter<'input> {
                             .map(|(i, param)| (get_cs_ty(*param), format!("param{i}")))
                             .collect::<Vec<_>>();
 
+                        // 関数呼び出し用の引数リスト
                         let call_params = params
                             .iter()
                             .map(|(_, y)| y.as_str())
@@ -187,33 +200,31 @@ impl<'input> Converter<'input> {
 
                         params.push((get_cs_ty(ValType::I32), "index".to_string()));
 
+                        // call_indirect用の関数定義
                         writeln!(
                             out_file,
                             "{} {{",
                             func_header(&name, result_cs_ty(ty.results()), &params)
                         )?;
 
-                        writeln!(out_file, "switch (index) {{")?;
-                        for (i, i_func) in self.table.iter().enumerate() {
-                            if let Some(i_func) = i_func {
-                                let func = &self.funcs[*i_func as usize];
-                                if func.ty != *ty {
-                                    continue;
-                                }
+                        writeln!(out_file, "switch ({TABLE}[index]) {{")?;
+                        for (i, func) in self.funcs.iter().enumerate() {
+                            if func.ty != *ty {
+                                continue;
+                            }
 
-                                if ty.results().is_empty() {
-                                    writeln!(
-                                        out_file,
-                                        "case {i}: {}({}); return;",
-                                        func.name, call_params
-                                    )?;
-                                } else {
-                                    writeln!(
-                                        out_file,
-                                        "case {i}: return {}({});",
-                                        func.name, call_params
-                                    )?;
-                                }
+                            if ty.results().is_empty() {
+                                writeln!(
+                                    out_file,
+                                    "case {i}: {}({}); return;",
+                                    func.name, call_params
+                                )?;
+                            } else {
+                                writeln!(
+                                    out_file,
+                                    "case {i}: return {}({});",
+                                    func.name, call_params
+                                )?;
                             }
                         }
                         write!(out_file, "default: ")?;
@@ -231,7 +242,7 @@ impl<'input> Converter<'input> {
                 DataSection(s) => {
                     for (i, data) in s.into_iter().enumerate() {
                         let data = data?;
-                        let offset = match data.kind {
+                        let offset_expr = match data.kind {
                             DataKind::Active {
                                 memory_index,
                                 offset_expr,
@@ -239,11 +250,14 @@ impl<'input> Converter<'input> {
                                 if memory_index != 0 {
                                     panic!("Multi memory is not supported");
                                 }
-                                read_i32_const_ops(&offset_expr)
+                                self.convert_const_expr(&offset_expr)
                             }
                             DataKind::Passive => panic!("Passive data segment is not supported"),
                         };
-                        self.datas.push((offset, data.data));
+                        self.datas.push(Data {
+                            offset_expr,
+                            data: data.data,
+                        });
 
                         // データ配列
                         write!(out_file, "byte[] {DATA}{i} = new byte[] {{ ")?;
@@ -264,7 +278,7 @@ impl<'input> Converter<'input> {
             }
         }
 
-        // グローバル変数
+        // グローバル変数宣言
         for global in &self.globals {
             writeln!(
                 out_file,
@@ -274,13 +288,34 @@ impl<'input> Converter<'input> {
             )?;
         }
 
+        // テーブル宣言
+        if let Some(table) = &self.table {
+            writeln!(out_file, "uint[] {TABLE} = new uint[{}];", table.initial)?;
+        }
+
         // 初期化用関数
         writeln!(out_file, "public void {INIT}() {{")?;
-        for (i, (offset, data)) in self.datas.iter().enumerate() {
+        for global in &self.globals {
+            // グローバル変数の初期値を代入
+            if let Some(init_expr) = &global.init_expr {
+                writeln!(out_file, "{} = {init_expr};", global.name)?;
+            }
+        }
+        // テーブルに無効値を割り当て
+        writeln!(out_file, "Array.Fill({TABLE}, 0xffffffff);")?;
+        for (i, Element { offset_expr, items }) in self.elements.iter().enumerate() {
+            // テーブルへのエレメントのコピー
+            writeln!(
+                out_file,
+                "Array.Copy({ELEMENT}{i}, 0, {TABLE}, {offset_expr}, {});",
+                items.len()
+            )?;
+        }
+        for (i, Data { offset_expr, data }) in self.datas.iter().enumerate() {
             // メモリへのデータのコピー
             writeln!(
                 out_file,
-                "Array.Copy({DATA}{i}, 0, {MEMORY}, {offset}, {});",
+                "Array.Copy({DATA}{i}, 0, {MEMORY}, {offset_expr}, {});",
                 data.len()
             )?;
         }
@@ -359,8 +394,9 @@ impl<'input> Converter<'input> {
     }
 
     fn add_table(&mut self, ty: TableType) {
+        assert!(self.table.is_none());
         assert!(ty.element_type.is_func_ref());
-        self.table.resize(ty.initial as usize, None);
+        self.table = Some(ty);
     }
 
     fn add_memory(&mut self, ty: MemoryType, out_file: &mut impl Write) -> Result<()> {
@@ -381,12 +417,17 @@ impl<'input> Converter<'input> {
         init_expr: Option<ConstExpr<'input>>,
         name: Option<String>,
     ) {
-        // TODO: 初期化式を使う
         let name = match name {
             Some(x) => x,
             None => format!("{W2US_PREFIX}global{}", self.globals.len()),
         };
-        self.globals.push(Global { ty, name });
+        let init_expr = init_expr.map(|x| self.convert_const_expr(&x));
+
+        self.globals.push(Global {
+            ty,
+            name,
+            init_expr,
+        });
     }
 
     fn trap(&self, message: &str) -> String {
@@ -396,22 +437,27 @@ impl<'input> Converter<'input> {
             format!("Debug.LogError(\"{message}\");")
         }
     }
-}
 
-fn read_i32_const_ops(expr: &ConstExpr) -> u32 {
-    let mut op_iter = expr.get_operators_reader().into_iter();
-    let value = if let wasmparser::Operator::I32Const { value } = op_iter.next().unwrap().unwrap() {
+    fn convert_const_expr(&self, expr: &ConstExpr) -> String {
+        use wasmparser::Operator::*;
+        let mut op_iter = expr.get_operators_reader().into_iter();
+        let value = match op_iter.next().unwrap().unwrap() {
+            I32Const { value } => format!("{}", value as u32),
+            I64Const { value } => format!("{}", value as u64),
+            F32Const { value } => format!("{:e}f", f32::from_bits(value.bits())),
+            F64Const { value } => format!("{:e}", f64::from_bits(value.bits())),
+            GlobalGet { global_index } => self.globals[global_index as usize].name.to_string(),
+            _ => panic!("Not supported const expr operator"),
+        };
+
+        if let End = op_iter.next().unwrap().unwrap() {
+        } else {
+            panic!("Not supported const expr operator")
+        };
+        assert!(op_iter.next().is_none());
+
         value
-    } else {
-        panic!("Not supported const expr operator")
-    };
-
-    if let wasmparser::Operator::End = op_iter.next().unwrap().unwrap() {
-    } else {
-        panic!("Not supported const expr operator")
-    };
-
-    value as u32
+    }
 }
 
 struct Func {
@@ -423,6 +469,17 @@ struct Func {
 struct Global {
     name: String,
     ty: GlobalType,
+    init_expr: Option<String>,
+}
+
+struct Element {
+    offset_expr: String,
+    items: Vec<u32>,
+}
+
+struct Data<'a> {
+    offset_expr: String,
+    data: &'a [u8],
 }
 
 fn func_header(
