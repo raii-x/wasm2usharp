@@ -51,7 +51,7 @@ test!(test_const, "const");
 test!(
     test_conversions,
     "conversions",
-    deny_float_corner_case(&["i32.reinterpret_f32"])
+    deny_float_corner_case(&["i32.reinterpret_f32", "i64.reinterpret_f64"])
 );
 test!(test_custom, "custom");
 test!(test_data, "data");
@@ -129,7 +129,11 @@ fn deny_float_corner_case(names: &'static [&'static str]) -> impl Fn(&WastDirect
                                 || x.bits == 0x7f7fffff
                                 || x.bits == 0xff7fffff
                         }
-                        WastArgCore::F64(x) => f64::from_bits(x.bits).is_nan(),
+                        WastArgCore::F64(x) => {
+                            f64::from_bits(x.bits).is_nan()
+                                || x.bits == 0x7fefffffffffffff
+                                || x.bits == 0xffefffffffffffff
+                        }
                         _ => false,
                     },
                     _ => false,
