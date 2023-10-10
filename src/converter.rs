@@ -6,8 +6,8 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use wasmparser::{
-    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, Parser, RecGroup,
-    StructuralType, ValType,
+    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, MemoryType, Parser,
+    RecGroup, StructuralType, TableType, ValType,
 };
 
 use crate::converter::code::CodeConverter;
@@ -19,7 +19,7 @@ pub struct Converter<'input> {
     funcs: Vec<Func>,
     table: Vec<Option<u32>>,
     memory: u32,
-    globals: Vec<GlobalType>,
+    globals: Vec<Global>,
     datas: Vec<(u32, &'input [u8])>,
     code_idx: usize,
     start_func: Option<u32>,
@@ -82,50 +82,45 @@ impl<'input> Converter<'input> {
                 }
                 ImportSection(s) => {
                     for import in s {
+                        use wasmparser::TypeRef::*;
                         let import = import?;
-                        // println!("  Import {}::{}", import.module, import.name);
+
+                        let name = format!(
+                            "{}__{}",
+                            convert_to_ident(import.module),
+                            convert_to_ident(import.name)
+                        );
+                        match import.ty {
+                            Func(ty) => self.add_func(ty, Some(name)),
+                            Table(ty) => self.add_table(ty),
+                            Memory(ty) => self.add_memory(ty, out_file)?,
+                            Global(ty) => self.add_global(ty, None, Some(name)),
+                            Tag(_) => panic!("Tag import is not supported"),
+                        }
                     }
                 }
                 FunctionSection(s) => {
                     for func in s {
                         let func = func?;
-
-                        let name = FuncName::Index(self.funcs.len() as u32);
-                        let ty = self.types[func as usize].clone();
-                        self.funcs.push(Func { name, ty });
+                        self.add_func(func, None);
                     }
                 }
                 TableSection(s) => {
                     for table in s {
                         let table = table?;
-                        assert!(table.ty.element_type.is_func_ref());
-                        self.table.resize(table.ty.initial as usize, None);
+                        self.add_table(table.ty);
                     }
                 }
                 MemorySection(s) => {
                     for memory in s {
                         let memory = memory?;
-                        self.memory = memory.initial as u32;
-
-                        writeln!(
-                            out_file,
-                            "byte[] {MEMORY} = new byte[{}];",
-                            self.memory * PAGE_SIZE
-                        )?;
+                        self.add_memory(memory, out_file)?;
                     }
                 }
                 GlobalSection(s) => {
                     for global in s {
                         let global = global?;
-
-                        writeln!(
-                            out_file,
-                            "{} global{};",
-                            get_cs_ty(global.ty.content_type),
-                            self.globals.len()
-                        )?;
-
-                        self.globals.push(global.ty);
+                        self.add_global(global.ty, Some(global.init_expr), None);
                     }
                 }
                 ExportSection(s) => {
@@ -135,8 +130,9 @@ impl<'input> Converter<'input> {
                         let export = export?;
                         match export.kind {
                             Func => {
-                                self.funcs[export.index as usize].name =
-                                    FuncName::Exported(convert_to_ident(export.name));
+                                let func = &mut self.funcs[export.index as usize];
+                                func.name = convert_to_ident(export.name);
+                                func.export = true;
                             }
                             Table => {}
                             Memory => {}
@@ -268,6 +264,16 @@ impl<'input> Converter<'input> {
             }
         }
 
+        // グローバル変数
+        for global in &self.globals {
+            writeln!(
+                out_file,
+                "{} {};",
+                get_cs_ty(global.ty.content_type),
+                global.name
+            )?;
+        }
+
         // 初期化用関数
         writeln!(out_file, "public void {INIT}() {{")?;
         for (i, (offset, data)) in self.datas.iter().enumerate() {
@@ -339,6 +345,50 @@ impl<'input> Converter<'input> {
         Ok(())
     }
 
+    fn add_func(&mut self, ty: u32, name: Option<String>) {
+        let name = match name {
+            Some(x) => x,
+            None => format!("{W2US_PREFIX}func{}", self.funcs.len()),
+        };
+        let ty = self.types[ty as usize].clone();
+        self.funcs.push(Func {
+            name,
+            ty,
+            export: false,
+        });
+    }
+
+    fn add_table(&mut self, ty: TableType) {
+        assert!(ty.element_type.is_func_ref());
+        self.table.resize(ty.initial as usize, None);
+    }
+
+    fn add_memory(&mut self, ty: MemoryType, out_file: &mut impl Write) -> Result<()> {
+        assert_eq!(self.memory, 0);
+        self.memory = ty.initial as u32;
+
+        writeln!(
+            out_file,
+            "byte[] {MEMORY} = new byte[{}];",
+            self.memory * PAGE_SIZE
+        )?;
+        Ok(())
+    }
+
+    fn add_global(
+        &mut self,
+        ty: GlobalType,
+        init_expr: Option<ConstExpr<'input>>,
+        name: Option<String>,
+    ) {
+        // TODO: 初期化式を使う
+        let name = match name {
+            Some(x) => x,
+            None => format!("{W2US_PREFIX}global{}", self.globals.len()),
+        };
+        self.globals.push(Global { ty, name });
+    }
+
     fn trap(&self, message: &str) -> String {
         if self.test {
             format!("throw new Exception(\"{message}\");")
@@ -365,22 +415,14 @@ fn read_i32_const_ops(expr: &ConstExpr) -> u32 {
 }
 
 struct Func {
-    name: FuncName,
+    name: String,
     ty: FuncType,
+    export: bool,
 }
 
-enum FuncName {
-    Index(u32),
-    Exported(String),
-}
-
-impl fmt::Display for FuncName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Index(i) => write!(f, "{W2US_PREFIX}func{i}"),
-            Self::Exported(name) => write!(f, "{name}"),
-        }
-    }
+struct Global {
+    name: String,
+    ty: GlobalType,
 }
 
 fn func_header(

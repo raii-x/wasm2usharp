@@ -12,8 +12,7 @@ use wasmparser::{
 use crate::util::bit_mask;
 
 use super::{
-    func_header, get_cs_ty, result_cs_ty, Converter, Func, FuncName, CALL_INDIRECT, MEMORY,
-    PAGE_SIZE,
+    func_header, get_cs_ty, result_cs_ty, Converter, Func, CALL_INDIRECT, MEMORY, PAGE_SIZE,
 };
 
 macro_rules! define_single_visit_operator {
@@ -135,7 +134,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         // 関数ヘッダ
         let func_ty = self.func().ty.clone();
 
-        if let FuncName::Exported(_) = self.func().name {
+        if self.func().export {
             write!(out_file, "public ")?;
         }
 
@@ -1038,19 +1037,18 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_global_get(&mut self, global_index: u32) -> Self::Output {
-        let global = self.conv.globals[global_index as usize];
-        let var = self.new_var(global.content_type);
+        let global = &self.conv.globals[global_index as usize];
+        let var = self.new_var(global.ty.content_type);
         self.push_stack(var);
 
-        // TODO: エクスポートするグローバル変数名の対応
-        self.stmts.push(format!("{var} = global{global_index};"));
+        self.stmts.push(format!("{var} = {};", global.name));
         Ok(())
     }
 
     fn visit_global_set(&mut self, global_index: u32) -> Self::Output {
-        // TODO: エクスポートするグローバル変数名の対応
+        let global = &self.conv.globals[global_index as usize];
         let var = self.pop_stack();
-        self.stmts.push(format!("global{global_index} = {var};"));
+        self.stmts.push(format!("{} = {var};", global.name));
         Ok(())
     }
 
