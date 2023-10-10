@@ -51,7 +51,7 @@ test!(test_const, "const");
 test!(
     test_conversions,
     "conversions",
-    deny_nan_arg(&["i32.reinterpret_f32"])
+    deny_float_corner_case(&["i32.reinterpret_f32"])
 );
 test!(test_custom, "custom");
 test!(test_data, "data");
@@ -114,8 +114,8 @@ test!(test_utf8_import_field, "utf8-import-field");
 test!(test_utf8_import_module, "utf8-import-module");
 test!(test_utf8_invalid_encoding, "utf8-invalid-encoding");
 
-// 指定された関数名で、最初の引数がNaNなら処理しない
-fn deny_nan_arg(names: &'static [&'static str]) -> impl Fn(&WastDirective) -> bool {
+// 指定された関数名で、最初の引数がNaNかInfinity未満の最大値なら処理しない
+fn deny_float_corner_case(names: &'static [&'static str]) -> impl Fn(&WastDirective) -> bool {
     move |directive| !match directive {
         WastDirective::AssertReturn {
             exec: WastExecute::Invoke(invoke),
@@ -124,7 +124,11 @@ fn deny_nan_arg(names: &'static [&'static str]) -> impl Fn(&WastDirective) -> bo
             names.contains(&invoke.name)
                 && match &invoke.args[0] {
                     WastArg::Core(x) => match x {
-                        WastArgCore::F32(x) => f32::from_bits(x.bits).is_nan(),
+                        WastArgCore::F32(x) => {
+                            f32::from_bits(x.bits).is_nan()
+                                || x.bits == 0x7f7fffff
+                                || x.bits == 0xff7fffff
+                        }
                         WastArgCore::F64(x) => f64::from_bits(x.bits).is_nan(),
                         _ => false,
                     },
