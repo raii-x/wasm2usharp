@@ -301,8 +301,10 @@ impl<'input> Converter<'input> {
                 writeln!(out_file, "{} = {init_expr};", global.name)?;
             }
         }
-        // テーブルに無効値を割り当て
-        writeln!(out_file, "Array.Fill({TABLE}, 0xffffffff);")?;
+        if self.table.is_some() {
+            // テーブルに無効値を割り当て
+            writeln!(out_file, "Array.Fill({TABLE}, 0xffffffff);")?;
+        }
         for (i, Element { offset_expr, items }) in self.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
             writeln!(
