@@ -14,6 +14,7 @@ use crate::converter::code::CodeConverter;
 
 pub struct Converter<'input> {
     buf: &'input [u8],
+    class_name: &'input str,
     test: bool,
     types: Vec<FuncType>,
     funcs: Vec<Func>,
@@ -27,7 +28,6 @@ pub struct Converter<'input> {
 }
 
 const PAGE_SIZE: u32 = 65536;
-const CLASS_NAME: &str = "Wasm2USharp";
 const W2US_PREFIX: &str = "w2us_";
 const MEMORY: &str = "w2us_memory";
 const TABLE: &str = "w2us_table";
@@ -37,9 +37,10 @@ const INIT: &str = "w2us_init";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
 
 impl<'input> Converter<'input> {
-    pub fn new(buf: &'input [u8], test: bool) -> Self {
+    pub fn new(buf: &'input [u8], class_name: &'input str, test: bool) -> Self {
         Self {
             buf,
+            class_name,
             test,
             types: Vec::new(),
             funcs: Vec::new(),
@@ -60,7 +61,7 @@ impl<'input> Converter<'input> {
             writeln!(out_file, "using UnityEngine;")?;
         }
 
-        write!(out_file, "class {CLASS_NAME} ")?;
+        write!(out_file, "class {} ", self.class_name)?;
         if self.test {
             writeln!(out_file, "{{")?;
         } else {
@@ -328,11 +329,12 @@ impl<'input> Converter<'input> {
         writeln!(out_file, "}}")?;
 
         if self.test {
+            let class_name = self.class_name;
             writeln!(
                 out_file,
                 r#"static void Main(string[] programArgs)
 {{
-    var instance = new {CLASS_NAME}();
+    var instance = new {class_name}();
     instance.{INIT}();
 
     string? line;

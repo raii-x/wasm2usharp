@@ -34,7 +34,7 @@ fn main() -> ExitCode {
 
     let buf: Vec<u8> = std::fs::read(file_path).unwrap();
     validate(&buf).unwrap();
-    let mut converter = Converter::new(&buf, test);
+    let mut converter = Converter::new(&buf, "Wasm2USharp", test);
     converter.convert(&mut std::io::stdout()).unwrap();
 
     ExitCode::SUCCESS

@@ -231,7 +231,7 @@ fn run_wat(mut wat: QuoteWat<'_>, dir_path: &Path) -> Child {
     };
 
     let bytes = wat.encode().unwrap();
-    let mut conv = wasm2usharp::Converter::new(&bytes, true);
+    let mut conv = wasm2usharp::Converter::new(&bytes, "Wasm2USharp", true);
 
     {
         // Program.csファイルに書き込み
