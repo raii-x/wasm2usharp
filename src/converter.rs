@@ -390,7 +390,7 @@ impl<'input> Converter<'input> {
         }
     }
 
-    fn convert_const_expr(&self, expr: &ConstExpr) -> String {
+    fn convert_const_expr(&self, expr: &ConstExpr<'_>) -> String {
         use wasmparser::Operator::*;
         let mut op_iter = expr.get_operators_reader().into_iter();
         let value = match op_iter.next().unwrap().unwrap() {

@@ -249,7 +249,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         var_type: ValType,
         mem_type: StorageType,
         signed: bool,
-    ) -> <Self as VisitOperator>::Output {
+    ) -> <Self as VisitOperator<'_>>::Output {
         let idx = self.pop_stack();
         let var = self.new_var(var_type);
         self.push_stack(var);
@@ -311,7 +311,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         &mut self,
         memarg: MemArg,
         var_type: ValType,
-    ) -> <Self as VisitOperator>::Output {
+    ) -> <Self as VisitOperator<'_>>::Output {
         let idx = self.pop_stack();
         let i_ty = ty_f_to_i(var_type);
         let i_var = self.new_var(i_ty);
@@ -394,7 +394,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         &mut self,
         memarg: MemArg,
         mem_type: StorageType,
-    ) -> <Self as VisitOperator>::Output {
+    ) -> <Self as VisitOperator<'_>>::Output {
         let var = self.pop_stack();
         let idx = self.pop_stack();
 
@@ -434,7 +434,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         &mut self,
         memarg: MemArg,
         mem_type: ValType,
-    ) -> <Self as VisitOperator>::Output {
+    ) -> <Self as VisitOperator<'_>>::Output {
         let var = self.pop_stack();
         let idx = self.pop_stack();
         let i_ty = ty_f_to_i(mem_type);
@@ -541,7 +541,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         &mut self,
         ty: ValType,
         value: impl fmt::Display,
-    ) -> <Self as VisitOperator>::Output {
+    ) -> <Self as VisitOperator<'_>>::Output {
         let var = self.new_var(ty);
         self.push_stack(var);
 
@@ -576,7 +576,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         self.visit_const(ty, literal)
     }
 
-    fn visit_eqz(&mut self) -> <Self as VisitOperator>::Output {
+    fn visit_eqz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result = self.new_var(ValType::I32);
         self.push_stack(result);
@@ -586,7 +586,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_un_op(&mut self, ty: ValType, op: &str) -> <Self as VisitOperator>::Output {
+    fn visit_un_op(&mut self, ty: ValType, op: &str) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result = self.new_var(ty);
         self.push_stack(result);
@@ -601,7 +601,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         op: &str,
         logical: bool,
         signed: bool,
-    ) -> <Self as VisitOperator>::Output {
+    ) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
         let result = self.new_var(if logical { ValType::I32 } else { ty });
@@ -633,7 +633,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_rot_op(&mut self, ty: ValType, right: bool) -> <Self as VisitOperator>::Output {
+    fn visit_rot_op(&mut self, ty: ValType, right: bool) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
         let result = self.new_var(ty);
@@ -653,7 +653,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_clz(&mut self, ty: ValType) -> <Self as VisitOperator>::Output {
+    fn visit_clz(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result = self.new_var(ty);
         self.push_stack(result);
@@ -670,7 +670,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_ctz(&mut self, ty: ValType) -> <Self as VisitOperator>::Output {
+    fn visit_ctz(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result: Var = self.new_var(ty);
         self.push_stack(result);
@@ -691,7 +691,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_popcnt(&mut self, ty: ValType) -> <Self as VisitOperator>::Output {
+    fn visit_popcnt(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result: Var = self.new_var(ty);
         self.push_stack(result);
@@ -704,7 +704,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_math_un_op(&mut self, ty: ValType, func: &str) -> <Self as VisitOperator>::Output {
+    fn visit_math_un_op(&mut self, ty: ValType, func: &str) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result = self.new_var(ty);
         self.push_stack(result);
@@ -716,7 +716,11 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
-    fn visit_math_bin_op(&mut self, ty: ValType, func: &str) -> <Self as VisitOperator>::Output {
+    fn visit_math_bin_op(
+        &mut self,
+        ty: ValType,
+        func: &str,
+    ) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
         let result = self.new_var(ty);
@@ -733,7 +737,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         &mut self,
         result_ty: ValType,
         mid_ty: Option<&'static str>,
-    ) -> <Self as VisitOperator>::Output {
+    ) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result = self.new_var(result_ty);
         self.push_stack(result);

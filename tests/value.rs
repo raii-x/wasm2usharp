@@ -85,7 +85,7 @@ impl<'a> PartialEq for WastRetEq<'a> {
     }
 }
 
-fn wast_ret_eq(lhs: &WastRet, rhs: &WastRet) -> bool {
+fn wast_ret_eq(lhs: &WastRet<'_>, rhs: &WastRet<'_>) -> bool {
     use WastRet::*;
     match (lhs, rhs) {
         (Core(l0), Core(r0)) => wast_ret_core_eq(l0, r0),
@@ -96,7 +96,7 @@ fn wast_ret_eq(lhs: &WastRet, rhs: &WastRet) -> bool {
     }
 }
 
-fn wast_ret_core_eq(lhs: &WastRetCore, rhs: &WastRetCore) -> bool {
+fn wast_ret_core_eq(lhs: &WastRetCore<'_>, rhs: &WastRetCore<'_>) -> bool {
     use WastRetCore::*;
     match (lhs, rhs) {
         (I32(l0), I32(r0)) => l0 == r0,
