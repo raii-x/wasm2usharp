@@ -2,7 +2,7 @@ use std::{env, process::ExitCode};
 
 use wasmparser::validate;
 
-use wasm2usharp::Converter;
+use wasm2usharp::converter::Converter;
 
 fn main() -> ExitCode {
     let mut file_path = None;

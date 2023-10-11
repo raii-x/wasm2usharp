@@ -1,20 +1,17 @@
+#![warn(rust_2018_idioms)]
+
+mod cs_proj;
 mod value;
 
-extern crate wasm2usharp;
+use std::{fs::read_to_string, path::PathBuf};
 
-use std::{
-    fs::{read_to_string, File},
-    io::{BufRead, BufReader, Write},
-    path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-};
-
-use tempfile::tempdir;
-use wasm2usharp::convert_to_ident;
+use cs_proj::{CsProj, CsProjExec};
+use wasm2usharp::converter::convert_to_ident;
 use wast::{
-    core::{WastArgCore, WastRetCore},
+    core::{Module, WastArgCore, WastRetCore},
     lexer::Lexer,
     parser::{self, ParseBuffer},
+    token::Id,
     QuoteWat, Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
 
@@ -24,7 +21,7 @@ macro_rules! test (
     ($func_name:ident, $name:expr) => {
         #[test]
         fn $func_name() {
-            test_wast($name, None as Option<fn(&WastDirective) -> bool>);
+            test_wast($name, None as Option<fn(&WastDirective<'_>) -> bool>);
         }
     };
     ($func_name:ident, $name:expr, $filter:expr) => {
@@ -115,7 +112,7 @@ test!(test_utf8_import_module, "utf8-import-module");
 test!(test_utf8_invalid_encoding, "utf8-invalid-encoding");
 
 // 指定された関数名で、最初の引数がNaNかInfinity未満の最大値なら処理しない
-fn deny_float_corner_case(names: &'static [&'static str]) -> impl Fn(&WastDirective) -> bool {
+fn deny_float_corner_case(names: &'static [&'static str]) -> impl Fn(&WastDirective<'_>) -> bool {
     move |directive| !match directive {
         WastDirective::AssertReturn {
             exec: WastExecute::Invoke(invoke),
@@ -145,7 +142,7 @@ fn deny_float_corner_case(names: &'static [&'static str]) -> impl Fn(&WastDirect
 
 fn test_wast<F>(name: &str, filter: Option<F>)
 where
-    F: Fn(&WastDirective) -> bool,
+    F: Fn(&WastDirective<'_>) -> bool,
 {
     let mut wast_path: PathBuf = PathBuf::from("tests/testsuite/");
     wast_path.push(name);
@@ -163,17 +160,24 @@ where
     let buf: ParseBuffer<'_> = ParseBuffer::new_with_lexer(lexer)
         .map_err(adjust_wast)
         .unwrap();
-    let ast = parser::parse::<Wast>(&buf).map_err(adjust_wast).unwrap();
-
-    let dir = tempdir().unwrap();
-    // .NETプロジェクトを作成
-    Command::new("dotnet")
-        .args(["new", "console", "-o", dir.path().to_str().unwrap()])
-        .status()
+    let mut ast = parser::parse::<Wast<'_>>(&buf)
+        .map_err(adjust_wast)
         .unwrap();
 
-    let mut child: Option<Child> = None;
+    let mut cs_proj = CsProj::new();
 
+    // 各モジュールのクラスファイルの生成
+    for wat in ast.directives.iter_mut().filter_map(|d| match d {
+        WastDirective::Wat(wat) => Some(wat),
+        _ => None,
+    }) {
+        // Wasmとして読み込んでC#に変換
+        cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
+    }
+
+    let mut cs_proj_exec = cs_proj.run();
+
+    // モジュールの実行
     for directive in ast.directives {
         use wast::WastDirective::*;
         if let Some(filter) = &filter {
@@ -183,19 +187,17 @@ where
             }
         }
         match directive {
-            Wat(module) => {
-                if let Some(child) = child.as_mut() {
-                    child.kill().unwrap();
-                }
-                child = Some(run_wat(module, dir.path()))
-            }
+            Wat(wat) => match wat {
+                QuoteWat::Wat(wast::Wat::Module(Module { id, .. })) => cs_proj_exec.next_module(id),
+                _ => unreachable!(),
+            },
             Invoke(invoke) => {
-                invoke_func(invoke, child.as_mut().unwrap());
+                invoke_func(invoke, &mut cs_proj_exec);
             }
             AssertReturn { exec, results, .. } => match exec {
                 WastExecute::Invoke(invoke) => {
                     assert_eq!(
-                        &invoke_func(invoke, child.as_mut().unwrap()),
+                        &invoke_func(invoke, &mut cs_proj_exec),
                         &results
                             .into_iter()
                             .map(WastRetEq)
@@ -220,51 +222,20 @@ where
     }
 }
 
-fn run_wat(mut wat: QuoteWat<'_>, dir_path: &Path) -> Child {
-    println!("Running wat");
-
-    match &wat {
-        QuoteWat::Wat(Wat::Module(_)) | QuoteWat::QuoteModule(..) => (),
+fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> Option<Id<'a>> {
+    match wat {
+        QuoteWat::Wat(Wat::Module(Module { id, .. })) => *id,
+        QuoteWat::QuoteModule(..) => panic!("QuoteModule is not supported"),
         QuoteWat::Wat(Wat::Component(_)) | QuoteWat::QuoteComponent(..) => {
             panic!("component-model is not supported")
         }
-    };
-
-    let bytes = wat.encode().unwrap();
-    let mut conv = wasm2usharp::Converter::new(&bytes, "Wasm2USharp", true);
-
-    {
-        // Program.csファイルに書き込み
-        let mut cs_file = File::create(dir_path.join("Program.cs")).unwrap();
-        conv.convert(&mut cs_file).unwrap();
     }
-
-    // .NETプロジェクトをビルド
-    let status = Command::new("dotnet")
-        .args([
-            "build",
-            dir_path.to_str().unwrap(),
-            "--no-restore",
-            "--nologo",
-            "-v",
-            "q",
-        ])
-        .status()
-        .unwrap();
-    assert!(status.success());
-
-    // .NETプロジェクトを実行
-    let child = Command::new("dotnet")
-        .args(["run", "--project", dir_path.to_str().unwrap(), "--no-build"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-
-    child
 }
 
-fn invoke_func<'a>(invoke: WastInvoke, child: &mut Child) -> Vec<WastRetEq<'a>> {
+fn invoke_func<'input>(
+    invoke: WastInvoke<'input>,
+    exec: &mut CsProjExec<'input, '_>,
+) -> Vec<WastRetEq<'input>> {
     use wast::core::WastArgCore::*;
     println!("Invoking: {} {:?}", invoke.name, invoke.args);
 
@@ -285,14 +256,8 @@ fn invoke_func<'a>(invoke: WastInvoke, child: &mut Child) -> Vec<WastRetEq<'a>> 
         WastArg::Component(_) => panic!("component-model is not supported"),
     }));
 
-    let args = args.join(" ") + "\n";
-    let stdin = child.stdin.as_mut().unwrap();
-    stdin.write_all(args.as_bytes()).unwrap();
-
-    let stdout = child.stdout.as_mut().unwrap();
-    let mut stdout = BufReader::new(stdout);
-    let mut line = String::new();
-    stdout.read_line(&mut line).unwrap();
+    let args = args.join(" ");
+    let line = exec.invoke(invoke.module, args);
 
     let mut results = Vec::new();
 

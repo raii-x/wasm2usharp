@@ -33,7 +33,7 @@ const MEMORY: &str = "w2us_memory";
 const TABLE: &str = "w2us_table";
 const DATA: &str = "w2us_data";
 const ELEMENT: &str = "w2us_element";
-const INIT: &str = "w2us_init";
+pub const INIT: &str = "w2us_init";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
 
 impl<'input> Converter<'input> {
@@ -328,59 +328,7 @@ impl<'input> Converter<'input> {
         }
         writeln!(out_file, "}}")?;
 
-        if self.test {
-            let class_name = self.class_name;
-            writeln!(
-                out_file,
-                r#"static void Main(string[] programArgs)
-{{
-    var instance = new {class_name}();
-    instance.{INIT}();
-
-    string? line;
-    while ((line = Console.ReadLine()) != null) {{
-        var args = line.Split(' ');
-
-        var t = instance.GetType();
-        var mi = t.GetMethod(args[0]);
-        if (mi == null) {{
-            throw new ArgumentException($"Method '{{args[0]}}' is not found");
-        }}
-
-        object[]? parameters = null;
-        if (args.Length != 1) {{
-            parameters = new object[(args.Length - 1) / 2];
-            for (int i = 0; i < parameters.Length; i++) {{
-                int iArgs = 1 + i * 2;
-                string ty = args[iArgs];
-                string val = args[iArgs + 1];
-                parameters[i] = ty switch {{
-                    "i32" => (object)uint.Parse(val),
-                    "i64" => (object)ulong.Parse(val),
-                    "f32" => (object)BitConverter.UInt32BitsToSingle(uint.Parse(val)),
-                    "f64" => (object)BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
-                    _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
-                }};
-            }}
-        }}
-
-        var result = mi.Invoke(instance, parameters);
-        string resultStr = result switch {{
-            uint x => $"i32 {{x}}",
-            ulong x => $"i64 {{x}}",
-            float x => $"f32 {{BitConverter.SingleToUInt32Bits(x)}}",
-            double x => $"f64 {{BitConverter.DoubleToUInt64Bits(x)}}",
-            null => "",
-            _ => throw new InvalidOperationException($"Unsupported result type: '{{result.GetType()}}'"),
-        }};
-        Console.WriteLine(resultStr);
-    }}
-}}"#,
-            )?;
-        }
-
         writeln!(out_file, "}}")?;
-
         Ok(())
     }
 
