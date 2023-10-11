@@ -11,7 +11,10 @@ use wast::token::Id;
 
 pub struct CsProj<'input> {
     dir: TempDir,
+    /// このVecのインデックスがモジュールインデックスとなる
     modules: Vec<CsModule>,
+    /// モジュールIDに対して、同じIDに設定されたモジュールのインデックスが
+    /// wastでの定義順にVecに格納される
     id_to_indices: HashMap<Option<Id<'input>>, Vec<usize>>,
 }
 
@@ -167,6 +170,9 @@ struct CsModule {
 pub struct CsProjExec<'input, 'a> {
     cs_proj: &'a CsProj<'input>,
     child: Child,
+    /// 現在のIDとモジュールの対応関係。
+    /// wastのdirectiveのイテレート中に変更される。
+    /// 格納されている値はid_to_indicesの値のVecのインデックス（モジュールインデックスではない）
     id_to_index: HashMap<Option<Id<'input>>, usize>,
 }
 
@@ -179,6 +185,8 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
         }
     }
 
+    /// wastのdirectiveの2回目のイテレートでwat読み込みの際にこの関数を呼ぶことで、
+    /// IDとモジュールの対応関係が1回目のイテレートの時と同じようになる
     pub fn next_module(&mut self, module: Option<Id<'input>>) {
         self.id_to_index
             .entry(module)
@@ -186,6 +194,12 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
             .or_insert(0);
     }
 
+    /// 指定したモジュールIDのインスタンスに対して関数を実行する
+    ///
+    /// この際に渡すデータはスペース区切りで、
+    /// 1番目にモジュール番号 (この関数で追加される)、
+    /// 2番目に関数名、
+    /// 関数に渡す引数があれば、3番目以降に引数の型と10進整数でビット列を表現した引数の値を順番に渡す
     pub fn invoke(&mut self, module: Option<Id<'input>>, args: String) -> String {
         let module = *self.id_to_index.get(&module).unwrap();
         let module = &self.cs_proj.modules[module];
