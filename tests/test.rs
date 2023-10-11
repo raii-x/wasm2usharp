@@ -167,12 +167,11 @@ where
     let mut cs_proj = CsProj::new();
 
     // 各モジュールのクラスファイルの生成
-    for wat in ast.directives.iter_mut().filter_map(|d| match d {
-        WastDirective::Wat(wat) => Some(wat),
-        _ => None,
-    }) {
-        // Wasmとして読み込んでC#に変換
-        cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
+    for directive in ast.directives.iter_mut() {
+        if let WastDirective::Wat(wat) = directive {
+            // Wasmとして読み込んでC#に変換
+            cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
+        }
     }
 
     let mut cs_proj_exec = cs_proj.run();
