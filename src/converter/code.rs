@@ -633,6 +633,35 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
+    fn visit_shift_op(
+        &mut self,
+        ty: ValType,
+        op: &str,
+        signed: bool,
+    ) -> <Self as VisitOperator<'_>>::Output {
+        let rhs = self.pop_stack();
+        let lhs = self.pop_stack();
+        let result = self.new_var(ty);
+        self.push_stack(result);
+
+        let mut stmt = format!("{result} = ");
+
+        let cs_ty = get_cs_ty(ty);
+
+        if signed {
+            // 先頭の`u`を取り除く
+            let cs_ty_s = &cs_ty[1..];
+            stmt += &format!("({cs_ty})(({cs_ty_s}){lhs} {op} (int){rhs})");
+        } else {
+            stmt += &format!("({cs_ty})({lhs} {op} (int){rhs})");
+        };
+
+        stmt += ";";
+
+        self.stmts.push(stmt);
+        Ok(())
+    }
+
     fn visit_rot_op(&mut self, ty: ValType, right: bool) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
@@ -1401,15 +1430,15 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i32_shl(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "<<", false, false)
+        self.visit_shift_op(ValType::I32, "<<", false)
     }
 
     fn visit_i32_shr_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, ">>", false, true)
+        self.visit_shift_op(ValType::I32, ">>", true)
     }
 
     fn visit_i32_shr_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, ">>", false, false)
+        self.visit_shift_op(ValType::I32, ">>", false)
     }
 
     fn visit_i32_rotl(&mut self) -> Self::Output {
@@ -1473,15 +1502,15 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i64_shl(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "<<", false, false)
+        self.visit_shift_op(ValType::I64, "<<", false)
     }
 
     fn visit_i64_shr_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, ">>", false, true)
+        self.visit_shift_op(ValType::I64, ">>", true)
     }
 
     fn visit_i64_shr_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, ">>", false, false)
+        self.visit_shift_op(ValType::I64, ">>", false)
     }
 
     fn visit_i64_rotl(&mut self) -> Self::Output {
