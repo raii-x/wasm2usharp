@@ -11,9 +11,7 @@ use wasmparser::{
 
 use crate::util::bit_mask;
 
-use super::{
-    func_header, get_cs_ty, result_cs_ty, Converter, Func, CALL_INDIRECT, MEMORY, PAGE_SIZE,
-};
+use super::{func_header, get_cs_ty, result_cs_ty, Converter, Func, CALL_INDIRECT, PAGE_SIZE};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -272,14 +270,15 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let mut load = format!("{var} = ");
 
+        let memory = &self.conv.memory.as_ref().unwrap().name;
         match mem_type {
-            I8 => load += &format!("{MEMORY}[{0}+{1}];", idx, memarg.offset),
-            I16 => load += &format!("{MEMORY}[{0}+{1}] | ({2}){MEMORY}[{0}+{1}+1]<<8;", idx, memarg.offset, get_cs_ty(var_type)),
+            I8 => load += &format!("{memory}[{0}+{1}];", idx, memarg.offset),
+            I16 => load += &format!("{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8;", idx, memarg.offset, get_cs_ty(var_type)),
             Val(I32) => load += &format!(
-                "{MEMORY}[{0}+{1}] | ({2}){MEMORY}[{0}+{1}+1]<<8 | ({2}){MEMORY}[{0}+{1}+2]<<16 | ({2}){MEMORY}[{0}+{1}+3]<<24;",
+                "{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8 | ({2}){memory}[{0}+{1}+2]<<16 | ({2}){memory}[{0}+{1}+3]<<24;",
                 idx, memarg.offset, get_cs_ty(var_type)),
             Val(I64) => load += &format!(
-                "{MEMORY}[{0}+{1}] | ({2}){MEMORY}[{0}+{1}+1]<<8 | ({2}){MEMORY}[{0}+{1}+2]<<16 | ({2}){MEMORY}[{0}+{1}+3]<<24 | ({2}){MEMORY}[{0}+{1}+4]<<32 | ({2}){MEMORY}[{0}+{1}+5]<<40 | ({2}){MEMORY}[{0}+{1}+6]<<48 | ({2}){MEMORY}[{0}+{1}+7]<<56;",
+                "{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8 | ({2}){memory}[{0}+{1}+2]<<16 | ({2}){memory}[{0}+{1}+3]<<24 | ({2}){memory}[{0}+{1}+4]<<32 | ({2}){memory}[{0}+{1}+5]<<40 | ({2}){memory}[{0}+{1}+6]<<48 | ({2}){memory}[{0}+{1}+7]<<56;",
                 idx, memarg.offset, get_cs_ty(var_type)),
             _ => unreachable!(),
         }
@@ -406,23 +405,24 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
     fn int_store(&mut self, memarg: MemArg, mem_type: StorageType, idx: Var, var: Var) {
         use {StorageType::*, ValType::*};
 
+        let memory = &self.conv.memory.as_ref().unwrap().name;
         self.stmts.push(match mem_type {
-            I8 => format!("{MEMORY}[{0}+{1}]=(byte)({2}&0xff);", idx, memarg.offset, var),
+            I8 => format!("{memory}[{0}+{1}]=(byte)({2}&0xff);", idx, memarg.offset, var),
             I16 => {
                 format!(
-                    "{MEMORY}[{0}+{1}]=(byte)({2}&0xff); {MEMORY}[{0}+{1}+1]=(byte)(({2}>>8)&0xff);",
+                    "{memory}[{0}+{1}]=(byte)({2}&0xff); {memory}[{0}+{1}+1]=(byte)(({2}>>8)&0xff);",
                     idx, memarg.offset, var
                 )
             }
             Val(I32) => {
                 format!(
-                    "{MEMORY}[{0}+{1}]=(byte)({2}&0xff); {MEMORY}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {MEMORY}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {MEMORY}[{0}+{1}+3]=(byte)(({2}>>24)&0xff);",
+                    "{memory}[{0}+{1}]=(byte)({2}&0xff); {memory}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {memory}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {memory}[{0}+{1}+3]=(byte)(({2}>>24)&0xff);",
                     idx, memarg.offset, var
                 )
             }
             Val(I64) => {
                 format!(
-                    "{MEMORY}[{0}+{1}]=(byte)({2}&0xff); {MEMORY}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {MEMORY}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {MEMORY}[{0}+{1}+3]=(byte)(({2}>>24)&0xff); {MEMORY}[{0}+{1}+4]=(byte)(({2}>>32)&0xff); {MEMORY}[{0}+{1}+5]=(byte)(({2}>>40)&0xff); {MEMORY}[{0}+{1}+6]=(byte)(({2}>>48)&0xff); {MEMORY}[{0}+{1}+7]=(byte)(({2}>>56)&0xff);",
+                    "{memory}[{0}+{1}]=(byte)({2}&0xff); {memory}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {memory}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {memory}[{0}+{1}+3]=(byte)(({2}>>24)&0xff); {memory}[{0}+{1}+4]=(byte)(({2}>>32)&0xff); {memory}[{0}+{1}+5]=(byte)(({2}>>40)&0xff); {memory}[{0}+{1}+6]=(byte)(({2}>>48)&0xff); {memory}[{0}+{1}+7]=(byte)(({2}>>56)&0xff);",
                     idx, memarg.offset, var
                 )
             }
@@ -1157,9 +1157,11 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(ValType::I32);
         self.push_stack(var);
 
+        let memory = &self.conv.memory.as_ref().unwrap().name;
+
         let cs_ty = get_cs_ty(var.ty);
         self.stmts
-            .push(format!("{var} = ({cs_ty})({MEMORY}.Length / {PAGE_SIZE});"));
+            .push(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
         Ok(())
     }
 
@@ -1173,19 +1175,21 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(ValType::I32);
         self.push_stack(var);
 
+        let memory = &self.conv.memory.as_ref().unwrap().name;
+
         // 前のサイズを返す
         let cs_ty = get_cs_ty(var.ty);
         self.stmts
-            .push(format!("{var} = ({cs_ty})({MEMORY}.Length / {PAGE_SIZE});"));
+            .push(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
 
         // メモリをsizeだけ拡張
         self.stmts.push("{".to_string());
-        self.stmts.push(format!("var old = {MEMORY};"));
+        self.stmts.push(format!("var old = {memory};"));
         self.stmts.push(format!(
-            "{MEMORY} = new byte[old.Length + {size} * {PAGE_SIZE}];"
+            "{memory} = new byte[old.Length + {size} * {PAGE_SIZE}];"
         ));
         self.stmts
-            .push(format!("Array.Copy(old, {MEMORY}, old.Length);"));
+            .push(format!("Array.Copy(old, {memory}, old.Length);"));
         self.stmts.push("}".to_string());
         Ok(())
     }

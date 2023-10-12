@@ -6,8 +6,8 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use wasmparser::{
-    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, MemoryType, Parser,
-    RecGroup, StructuralType, TableType, ValType,
+    ConstExpr, DataKind, ElementItems, ElementKind, Export, FuncType, GlobalType, Import,
+    MemoryType, Parser, RecGroup, StructuralType, TableType, ValType,
 };
 
 use crate::converter::code::CodeConverter;
@@ -18,8 +18,8 @@ pub struct Converter<'input> {
     test: bool,
     types: Vec<FuncType>,
     funcs: Vec<Func>,
-    table: Option<TableType>,
-    memory: u32,
+    table: Option<Table>,
+    memory: Option<Memory>,
     globals: Vec<Global>,
     elements: Vec<Element>,
     datas: Vec<Data<'input>>,
@@ -45,7 +45,7 @@ impl<'input> Converter<'input> {
             types: Vec::new(),
             funcs: Vec::new(),
             table: None,
-            memory: 0,
+            memory: None,
             globals: Vec::new(),
             elements: Vec::new(),
             datas: Vec::new(),
@@ -54,7 +54,10 @@ impl<'input> Converter<'input> {
         }
     }
 
-    pub fn convert(&mut self, out_file: &mut impl Write) -> Result<()> {
+    pub fn convert(
+        &mut self,
+        out_file: &mut impl Write,
+    ) -> Result<(Vec<Import<'input>>, Vec<Export<'input>>)> {
         writeln!(out_file, "using System;")?;
         if !self.test {
             writeln!(out_file, "using UdonSharp;")?;
@@ -67,6 +70,9 @@ impl<'input> Converter<'input> {
         } else {
             writeln!(out_file, ": UdonSharpBehaviour {{")?;
         }
+
+        let mut imports = Vec::new();
+        let mut exports = Vec::new();
 
         for payload in Parser::new(0).parse_all(self.buf) {
             use wasmparser::Payload::*;
@@ -97,11 +103,13 @@ impl<'input> Converter<'input> {
                         );
                         match import.ty {
                             Func(ty) => self.add_func(ty, Some(name)),
-                            Table(ty) => self.add_table(ty),
-                            Memory(ty) => self.add_memory(ty, out_file)?,
+                            Table(ty) => self.add_table(ty, Some(name)),
+                            Memory(ty) => self.add_memory(ty, Some(name)),
                             Global(ty) => self.add_global(ty, None, Some(name)),
                             Tag(_) => panic!("Tag import is not supported"),
                         }
+
+                        imports.push(import);
                     }
                 }
                 FunctionSection(s) => {
@@ -113,13 +121,13 @@ impl<'input> Converter<'input> {
                 TableSection(s) => {
                     for table in s {
                         let table = table?;
-                        self.add_table(table.ty);
+                        self.add_table(table.ty, None);
                     }
                 }
                 MemorySection(s) => {
                     for memory in s {
                         let memory = memory?;
-                        self.add_memory(memory, out_file)?;
+                        self.add_memory(memory, None);
                     }
                 }
                 GlobalSection(s) => {
@@ -133,18 +141,34 @@ impl<'input> Converter<'input> {
                         use wasmparser::ExternalKind::*;
 
                         let export = export?;
+                        let name = convert_to_ident(export.name);
                         match export.kind {
                             Func => {
                                 let func = &mut self.funcs[export.index as usize];
-                                func.name = convert_to_ident(export.name);
+                                func.name = name;
                                 func.export = true;
                             }
-                            Table => {}
-                            Memory => {}
-                            Global => {}
-                            Tag => {}
+                            Table => {
+                                let table = self.table.as_mut().unwrap();
+                                table.name = name;
+                                table.export = true;
+                            }
+                            Memory => {
+                                let memory = self.memory.as_mut().unwrap();
+                                memory.name = name;
+                                memory.export = true;
+                            }
+                            Global => {
+                                let global = &mut self.globals[export.index as usize];
+                                global.name = name;
+                                global.export = true;
+                            }
+                            Tag => {
+                                panic!("Tag export is not supported");
+                            }
                         }
-                        // println!("  Export {} {:?}", export.name, export.kind);
+
+                        exports.push(export);
                     }
                 }
                 StartSection { func, .. } => {
@@ -208,7 +232,11 @@ impl<'input> Converter<'input> {
                             func_header(&name, result_cs_ty(ty.results()), &params)
                         )?;
 
-                        writeln!(out_file, "switch ({TABLE}[index]) {{")?;
+                        writeln!(
+                            out_file,
+                            "switch ({}[index]) {{",
+                            self.table.as_ref().unwrap().name
+                        )?;
                         for (i, func) in self.funcs.iter().enumerate() {
                             if func.ty != *ty {
                                 continue;
@@ -281,6 +309,9 @@ impl<'input> Converter<'input> {
 
         // グローバル変数宣言
         for global in &self.globals {
+            if global.export {
+                write!(out_file, "public ")?
+            }
             writeln!(
                 out_file,
                 "{} {};",
@@ -291,7 +322,27 @@ impl<'input> Converter<'input> {
 
         // テーブル宣言
         if let Some(table) = &self.table {
-            writeln!(out_file, "uint[] {TABLE} = new uint[{}];", table.initial)?;
+            if table.export {
+                write!(out_file, "public ")?
+            }
+            writeln!(
+                out_file,
+                "uint[] {} = new uint[{}];",
+                table.name, table.ty.initial
+            )?;
+        }
+
+        // メモリー宣言
+        if let Some(memory) = &self.memory {
+            if memory.export {
+                write!(out_file, "public ")?
+            }
+            writeln!(
+                out_file,
+                "byte[] {} = new byte[{}];",
+                memory.name,
+                memory.ty.initial * PAGE_SIZE as u64
+            )?;
         }
 
         // 初期化用関数
@@ -304,13 +355,18 @@ impl<'input> Converter<'input> {
         }
         if self.table.is_some() {
             // テーブルに無効値を割り当て
-            writeln!(out_file, "Array.Fill({TABLE}, 0xffffffff);")?;
+            writeln!(
+                out_file,
+                "Array.Fill({}, 0xffffffff);",
+                self.table.as_ref().unwrap().name
+            )?;
         }
         for (i, Element { offset_expr, items }) in self.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
             writeln!(
                 out_file,
-                "Array.Copy({ELEMENT}{i}, 0, {TABLE}, {offset_expr}, {});",
+                "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
+                self.table.as_ref().unwrap().name,
                 items.len()
             )?;
         }
@@ -318,7 +374,8 @@ impl<'input> Converter<'input> {
             // メモリへのデータのコピー
             writeln!(
                 out_file,
-                "Array.Copy({DATA}{i}, 0, {MEMORY}, {offset_expr}, {});",
+                "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
+                self.memory.as_ref().unwrap().name,
                 data.len()
             )?;
         }
@@ -329,7 +386,8 @@ impl<'input> Converter<'input> {
         writeln!(out_file, "}}")?;
 
         writeln!(out_file, "}}")?;
-        Ok(())
+
+        Ok((imports, exports))
     }
 
     fn add_func(&mut self, ty: u32, name: Option<String>) {
@@ -338,6 +396,7 @@ impl<'input> Converter<'input> {
             None => format!("{W2US_PREFIX}func{}", self.funcs.len()),
         };
         let ty = self.types[ty as usize].clone();
+
         self.funcs.push(Func {
             name,
             ty,
@@ -345,22 +404,35 @@ impl<'input> Converter<'input> {
         });
     }
 
-    fn add_table(&mut self, ty: TableType) {
+    fn add_table(&mut self, ty: TableType, name: Option<String>) {
         assert!(self.table.is_none());
         assert!(ty.element_type.is_func_ref());
-        self.table = Some(ty);
+
+        let name = match name {
+            Some(x) => x,
+            None => TABLE.to_string(),
+        };
+
+        self.table = Some(Table {
+            name,
+            ty,
+            export: false,
+        });
     }
 
-    fn add_memory(&mut self, ty: MemoryType, out_file: &mut impl Write) -> Result<()> {
-        assert_eq!(self.memory, 0);
-        self.memory = ty.initial as u32;
+    fn add_memory(&mut self, ty: MemoryType, name: Option<String>) {
+        assert!(self.memory.is_none());
 
-        writeln!(
-            out_file,
-            "byte[] {MEMORY} = new byte[{}];",
-            self.memory * PAGE_SIZE
-        )?;
-        Ok(())
+        let name = match name {
+            Some(x) => x,
+            None => MEMORY.to_string(),
+        };
+
+        self.memory = Some(Memory {
+            name,
+            ty,
+            export: false,
+        });
     }
 
     fn add_global(
@@ -379,6 +451,7 @@ impl<'input> Converter<'input> {
             ty,
             name,
             init_expr,
+            export: false,
         });
     }
 
@@ -418,10 +491,23 @@ struct Func {
     export: bool,
 }
 
+struct Table {
+    name: String,
+    ty: TableType,
+    export: bool,
+}
+
+struct Memory {
+    name: String,
+    ty: MemoryType,
+    export: bool,
+}
+
 struct Global {
     name: String,
     ty: GlobalType,
     init_expr: Option<String>,
+    export: bool,
 }
 
 struct Element {
