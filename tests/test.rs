@@ -61,7 +61,14 @@ test!(test_f64, "f64");
 test!(test_f64_bitwise, "f64_bitwise");
 test!(test_f64_cmp, "f64_cmp");
 test!(test_fac, "fac");
-test!(test_float_exprs, "float_exprs");
+test!(
+    test_float_exprs,
+    "float_exprs",
+    deny_int_nan_case(&[
+        "f32.nonarithmetic_nan_bitpattern",
+        "f64.nonarithmetic_nan_bitpattern"
+    ])
+);
 test!(test_float_literals, "float_literals");
 test!(test_float_memory, "float_memory");
 test!(test_float_misc, "float_misc");
@@ -151,6 +158,27 @@ fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Fn(&WastDirecti
                     WastArg::Core(x) => match x {
                         WastArgCore::I32(x) => *x as u32 == 0x80000000,
                         WastArgCore::I64(x) => *x as u64 == 0x8000000000000000,
+                        _ => false,
+                    },
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+// 指定された関数名で、最初の引数が整数型で、reinterpretした後にNaNになるなら処理しない
+fn deny_int_nan_case(names: &'static [&'static str]) -> impl Fn(&WastDirective<'_>) -> bool {
+    move |directive| !match directive {
+        WastDirective::AssertReturn {
+            exec: WastExecute::Invoke(invoke),
+            ..
+        } => {
+            names.contains(&invoke.name)
+                && match &invoke.args[0] {
+                    WastArg::Core(x) => match x {
+                        WastArgCore::I32(x) => (f32::from_bits(*x as u32)).is_nan(),
+                        WastArgCore::I64(x) => (f64::from_bits(*x as u64)).is_nan(),
                         _ => false,
                     },
                     _ => false,

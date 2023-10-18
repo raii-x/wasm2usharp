@@ -256,7 +256,6 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
         let module = self.get_module(module);
 
         let args = format!("{} {args}\n", module.index);
-        println!("{:?}", args);
         let stdin: &mut std::process::ChildStdin = self.child.stdin.as_mut().unwrap();
         stdin.write_all(args.as_bytes()).unwrap();
 
