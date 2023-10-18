@@ -80,23 +80,25 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         }
     }
 
-    fn func(&self) -> &Func {
+    fn func(&self) -> &'conv Func {
         &self.conv.funcs[self.code_idx]
     }
 
     pub fn convert(&mut self, body: FunctionBody<'_>, out_file: &mut impl Write) -> Result<()> {
-        for &ty in self.conv.funcs[self.code_idx].ty.params() {
+        for &ty in self.func().ty.params() {
             let _ = self.new_var(ty);
             self.local_count += 1;
         }
 
         for local in body.get_locals_reader()? {
-            let local = local?;
-            let _ = self.new_var(local.1);
-            self.local_count += 1;
+            let (count, ty) = local?;
+            for _ in 0..count {
+                self.new_var(ty);
+                self.local_count += 1;
+            }
         }
 
-        let results = self.conv.funcs[self.code_idx].ty.results();
+        let results = self.func().ty.results();
 
         // 関数の最上位のブロック
         self.visit_block(match results.len() {
