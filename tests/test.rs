@@ -117,81 +117,73 @@ test!(test_utf8_import_field, "utf8-import-field");
 test!(test_utf8_import_module, "utf8-import-module");
 test!(test_utf8_invalid_encoding, "utf8-invalid-encoding");
 
-// 指定された関数名で、最初の引数がNaNかInfinity未満の最大値なら処理しない
-fn deny_float_corner_case(names: &'static [&'static str]) -> impl Fn(&WastDirective<'_>) -> bool {
-    move |directive| !match directive {
-        WastDirective::AssertReturn {
-            exec: WastExecute::Invoke(invoke),
-            ..
-        } => {
-            names.contains(&invoke.name)
-                && match &invoke.args[0] {
-                    WastArg::Core(x) => match x {
-                        WastArgCore::F32(x) => {
-                            f32::from_bits(x.bits).is_nan()
-                                || x.bits == 0x7f7fffff
-                                || x.bits == 0xff7fffff
-                        }
-                        WastArgCore::F64(x) => {
-                            f64::from_bits(x.bits).is_nan()
-                                || x.bits == 0x7fefffffffffffff
-                                || x.bits == 0xffefffffffffffff
-                        }
-                        _ => false,
-                    },
-                    _ => false,
-                }
-        }
-        _ => false,
-    }
-}
+// traitのエイリアス
+trait Filter: Fn(&WastDirective<'_>) -> bool {}
+impl<F> Filter for F where F: Fn(&WastDirective<'_>) -> bool {}
 
-// 指定された関数名で、最初の引数が符号付き整数型の負の最大値なら処理しない
-fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Fn(&WastDirective<'_>) -> bool {
-    move |directive| !match directive {
-        WastDirective::AssertReturn {
-            exec: WastExecute::Invoke(invoke),
-            ..
-        } => {
-            names.contains(&invoke.name)
-                && match &invoke.args[0] {
-                    WastArg::Core(x) => match x {
-                        WastArgCore::I32(x) => *x as u32 == 0x80000000,
-                        WastArgCore::I64(x) => *x as u64 == 0x8000000000000000,
-                        _ => false,
-                    },
-                    _ => false,
-                }
-        }
-        _ => false,
-    }
-}
-
-// 指定された関数名で、最初の引数が整数型で、reinterpretした後にNaNになるなら処理しない
-fn deny_int_nan_case(names: &'static [&'static str]) -> impl Fn(&WastDirective<'_>) -> bool {
-    move |directive| !match directive {
-        WastDirective::AssertReturn {
-            exec: WastExecute::Invoke(invoke),
-            ..
-        } => {
-            names.contains(&invoke.name)
-                && match &invoke.args[0] {
-                    WastArg::Core(x) => match x {
-                        WastArgCore::I32(x) => (f32::from_bits(*x as u32)).is_nan(),
-                        WastArgCore::I64(x) => (f64::from_bits(*x as u64)).is_nan(),
-                        _ => false,
-                    },
-                    _ => false,
-                }
-        }
-        _ => false,
-    }
-}
-
-fn test_wast<F>(name: &str, filter: Option<F>)
+/// AssertReturnで、指定された関数名で、引数で与えられた関数の結果がfalseのものを処理しない
+fn deny_assert_return<F>(names: &'static [&'static str], filter: F) -> impl Filter
 where
-    F: Fn(&WastDirective<'_>) -> bool,
+    F: Fn(&WastInvoke<'_>) -> bool,
 {
+    move |directive| match directive {
+        WastDirective::AssertReturn {
+            exec: WastExecute::Invoke(invoke),
+            ..
+        } => !names.contains(&invoke.name) || filter(invoke),
+        _ => true,
+    }
+}
+
+// 最初の引数がNaNかInfinity未満の最大値なら処理しない
+fn deny_float_corner_case(names: &'static [&'static str]) -> impl Filter {
+    deny_assert_return(names, move |invoke| {
+        !(match &invoke.args[0] {
+            WastArg::Core(x) => match x {
+                WastArgCore::F32(x) => {
+                    f32::from_bits(x.bits).is_nan() || x.bits == 0x7f7fffff || x.bits == 0xff7fffff
+                }
+                WastArgCore::F64(x) => {
+                    f64::from_bits(x.bits).is_nan()
+                        || x.bits == 0x7fefffffffffffff
+                        || x.bits == 0xffefffffffffffff
+                }
+                _ => false,
+            },
+            _ => false,
+        })
+    })
+}
+
+// 最初の引数が符号付き整数型の負の最大値なら処理しない
+fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Filter {
+    deny_assert_return(names, move |invoke| {
+        !(match &invoke.args[0] {
+            WastArg::Core(x) => match x {
+                WastArgCore::I32(x) => *x as u32 == 0x80000000,
+                WastArgCore::I64(x) => *x as u64 == 0x8000000000000000,
+                _ => false,
+            },
+            _ => false,
+        })
+    })
+}
+
+// 最初の引数が整数型で、reinterpretした後にNaNになるなら処理しない
+fn deny_int_nan_case(names: &'static [&'static str]) -> impl Filter {
+    deny_assert_return(names, move |invoke| {
+        !(match &invoke.args[0] {
+            WastArg::Core(x) => match x {
+                WastArgCore::I32(x) => (f32::from_bits(*x as u32)).is_nan(),
+                WastArgCore::I64(x) => (f64::from_bits(*x as u64)).is_nan(),
+                _ => false,
+            },
+            _ => false,
+        })
+    })
+}
+
+fn test_wast(name: &str, filter: Option<impl Filter>) {
     let buf = read_to_string("tests/spectest.wast").unwrap();
 
     let mut wast_path: PathBuf = PathBuf::from("tests/testsuite/");
