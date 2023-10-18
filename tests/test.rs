@@ -5,13 +5,12 @@ mod value;
 
 use std::{fs::read_to_string, path::PathBuf};
 
-use cs_proj::{CsProj, CsProjExec};
+use cs_proj::{CsId, CsProj, CsProjExec};
 use wasm2usharp::converter::convert_to_ident;
 use wast::{
     core::{Module, WastArgCore, WastRetCore},
     lexer::Lexer,
     parser::{self, ParseBuffer},
-    token::Id,
     QuoteWat, Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
 
@@ -144,11 +143,13 @@ fn test_wast<F>(name: &str, filter: Option<F>)
 where
     F: Fn(&WastDirective<'_>) -> bool,
 {
+    let buf = read_to_string("tests/spectest.wast").unwrap();
+
     let mut wast_path: PathBuf = PathBuf::from("tests/testsuite/");
     wast_path.push(name);
     wast_path.set_extension("wast");
 
-    let buf = read_to_string(&wast_path).unwrap();
+    let buf = buf + &read_to_string(&wast_path).unwrap();
 
     let adjust_wast = |mut err: wast::Error| {
         err.set_path(&wast_path);
@@ -168,9 +169,15 @@ where
 
     // 各モジュールのクラスファイルの生成
     for directive in ast.directives.iter_mut() {
-        if let WastDirective::Wat(wat) = directive {
-            // Wasmとして読み込んでC#に変換
-            cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
+        match directive {
+            WastDirective::Wat(wat) => {
+                // Wasmとして読み込んでC#に変換
+                cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
+            }
+            WastDirective::Register { name, module, .. } => {
+                cs_proj.register(name.to_string(), module);
+            }
+            _ => (),
         }
     }
 
@@ -187,7 +194,9 @@ where
         }
         match directive {
             Wat(wat) => match wat {
-                QuoteWat::Wat(wast::Wat::Module(Module { id, .. })) => cs_proj_exec.next_module(id),
+                QuoteWat::Wat(wast::Wat::Module(Module { id, .. })) => {
+                    cs_proj_exec.next_module(id);
+                }
                 _ => unreachable!(),
             },
             Invoke(invoke) => {
@@ -221,7 +230,7 @@ where
     }
 }
 
-fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> Option<Id<'a>> {
+fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> CsId<'a> {
     match wat {
         QuoteWat::Wat(Wat::Module(Module { id, .. })) => *id,
         QuoteWat::QuoteModule(..) => panic!("QuoteModule is not supported"),
@@ -256,7 +265,7 @@ fn invoke_func<'input>(
     }));
 
     let args = args.join(" ");
-    let line = exec.invoke(invoke.module, args);
+    let line = exec.invoke(invoke.module, &args);
 
     let mut results = Vec::new();
 

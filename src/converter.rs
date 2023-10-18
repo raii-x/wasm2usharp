@@ -6,8 +6,8 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use wasmparser::{
-    ConstExpr, DataKind, ElementItems, ElementKind, Export, FuncType, GlobalType, Import,
-    MemoryType, Parser, RecGroup, StructuralType, TableType, ValType,
+    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, MemoryType, Parser,
+    RecGroup, StructuralType, TableType, ValType,
 };
 
 use crate::converter::code::CodeConverter;
@@ -54,10 +54,7 @@ impl<'input> Converter<'input> {
         }
     }
 
-    pub fn convert(
-        &mut self,
-        out_file: &mut impl Write,
-    ) -> Result<(Vec<Import<'input>>, Vec<Export<'input>>)> {
+    pub fn convert(&mut self, out_file: &mut impl Write) -> Result<Vec<Import<'input>>> {
         writeln!(out_file, "using System;")?;
         if !self.test {
             writeln!(out_file, "using UdonSharp;")?;
@@ -72,7 +69,6 @@ impl<'input> Converter<'input> {
         }
 
         let mut imports = Vec::new();
-        let mut exports = Vec::new();
 
         for payload in Parser::new(0).parse_all(self.buf) {
             use wasmparser::Payload::*;
@@ -96,26 +92,28 @@ impl<'input> Converter<'input> {
                         use wasmparser::TypeRef::*;
                         let import = import?;
 
-                        let name = format!(
-                            "{}__{}",
-                            convert_to_ident(import.module),
-                            convert_to_ident(import.name)
-                        );
+                        let name = convert_to_ident(import.name);
+                        let full_name = format!("{}__{}", convert_to_ident(import.module), name);
+
                         match import.ty {
-                            Func(ty) => self.add_func(ty, Some(name)),
-                            Table(ty) => self.add_table(ty, Some(name)),
-                            Memory(ty) => self.add_memory(ty, Some(name)),
-                            Global(ty) => self.add_global(ty, None, Some(name)),
+                            Func(ty) => self.add_func(out_file, ty, Some(full_name.clone()))?,
+                            Table(ty) => self.add_table(ty, Some(full_name.clone())),
+                            Memory(ty) => self.add_memory(ty, Some(full_name.clone())),
+                            Global(ty) => self.add_global(ty, None, Some(full_name.clone())),
                             Tag(_) => panic!("Tag import is not supported"),
                         }
 
-                        imports.push(import);
+                        imports.push(Import {
+                            module: import.module,
+                            name,
+                            full_name,
+                        });
                     }
                 }
                 FunctionSection(s) => {
                     for func in s {
                         let func = func?;
-                        self.add_func(func, None);
+                        self.add_func(out_file, func, None)?;
                     }
                 }
                 TableSection(s) => {
@@ -167,8 +165,6 @@ impl<'input> Converter<'input> {
                                 panic!("Tag export is not supported");
                             }
                         }
-
-                        exports.push(export);
                     }
                 }
                 StartSection { func, .. } => {
@@ -196,10 +192,22 @@ impl<'input> Converter<'input> {
                         };
 
                         // エレメント配列
-                        write!(out_file, "uint[] {ELEMENT}{i} = new uint[] {{ ")?;
+                        // テストの際、使用するテーブルを外部からインポートするモジュールの場合、
+                        // エレメント配列内にC#メソッドのデリゲートを格納する。
+                        // それ以外の場合は、uintで関数のインデックスを表す
+                        let use_delegate = self.test && self.table.as_ref().unwrap().import;
+                        let cs_ty = if use_delegate { "object" } else { "uint" };
+                        let eq = if use_delegate { "=>" } else { "=" };
+                        write!(out_file, "{cs_ty}[] {ELEMENT}{i} {eq} new {cs_ty}[] {{ ",)?;
+
                         for item in items.iter() {
-                            write!(out_file, "{item},")?;
+                            if use_delegate {
+                                write!(out_file, "{},", self.funcs[*item as usize].name)?;
+                            } else {
+                                write!(out_file, "{item},")?;
+                            }
                         }
+
                         writeln!(out_file, " }};")?;
 
                         self.elements.push(Element { offset_expr, items });
@@ -209,12 +217,7 @@ impl<'input> Converter<'input> {
                         let name = format!("{CALL_INDIRECT}{i_ty}");
 
                         // call_indirect関数が受け取る引数リスト
-                        let mut params = ty
-                            .params()
-                            .iter()
-                            .enumerate()
-                            .map(|(i, param)| (get_cs_ty(*param), format!("param{i}")))
-                            .collect::<Vec<_>>();
+                        let mut params = params_cs_ty_name(ty);
 
                         // 関数呼び出し用の引数リスト
                         let call_params = params
@@ -232,10 +235,17 @@ impl<'input> Converter<'input> {
                             func_header(&name, result_cs_ty(ty.results()), &params)
                         )?;
 
+                        let table_name = &self.table.as_ref().unwrap().name;
+
+                        if self.test {
+                            // テストの際はuintの他にdelegateが含まれることがある
+                            writeln!(out_file, "if ({table_name}[index] is uint) {{")?;
+                        }
+
                         writeln!(
                             out_file,
-                            "switch ({}[index]) {{",
-                            self.table.as_ref().unwrap().name
+                            "switch ({}{table_name}[index]) {{",
+                            if self.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
                         )?;
                         for (i, func) in self.funcs.iter().enumerate() {
                             if func.ty != *ty {
@@ -257,7 +267,7 @@ impl<'input> Converter<'input> {
                             }
                         }
                         write!(out_file, "default: ")?;
-                        write!(out_file, "{}", self.trap("invalid table index"))?;
+                        write!(out_file, "{}", self.trap("invalid table value"))?;
                         write!(out_file, "return")?;
                         if ty.results().is_empty() {
                             writeln!(out_file, ";")?;
@@ -265,6 +275,25 @@ impl<'input> Converter<'input> {
                             writeln!(out_file, " 0;")?;
                         }
                         writeln!(out_file, "}}")?;
+
+                        if self.test {
+                            writeln!(out_file, "}} else {{")?;
+                            // delegateに変換して呼び出し
+                            let del = func_delegate(ty);
+                            if ty.results().is_empty() {
+                                writeln!(
+                                    out_file,
+                                    "(({del}){table_name}[index])({call_params}); return;",
+                                )?;
+                            } else {
+                                writeln!(
+                                    out_file,
+                                    "return (({del}){table_name}[index])({call_params});",
+                                )?;
+                            }
+                            writeln!(out_file, "}}")?;
+                        }
+
                         writeln!(out_file, "}}")?;
                     }
                 }
@@ -309,32 +338,39 @@ impl<'input> Converter<'input> {
 
         // グローバル変数宣言
         for global in &self.globals {
-            if global.export {
+            if global.export || self.test && global.import {
                 write!(out_file, "public ")?
             }
-            writeln!(
-                out_file,
-                "{} {};",
-                get_cs_ty(global.ty.content_type),
-                global.name
-            )?;
+
+            let cs_ty = get_cs_ty(global.ty.content_type);
+            if self.test {
+                // テストの場合はグローバル変数は1要素の配列で表す
+                writeln!(out_file, "{cs_ty}[] {} = new {cs_ty}[1];", global.name)?;
+            } else {
+                writeln!(out_file, "{cs_ty} {};", global.name)?;
+            }
         }
 
         // テーブル宣言
         if let Some(table) = &self.table {
-            if table.export {
+            if table.export || self.test && table.import {
                 write!(out_file, "public ")?
             }
+
+            // テストの場合はuintとAction/Funcを混在させるため
+            // テーブルはobjectの配列で表す
+            let elem_cs_ty = if self.test { "object" } else { "uint" };
+
             writeln!(
                 out_file,
-                "uint[] {} = new uint[{}];",
+                "{elem_cs_ty}[] {} = new {elem_cs_ty}[{}];",
                 table.name, table.ty.initial
             )?;
         }
 
         // メモリー宣言
         if let Some(memory) = &self.memory {
-            if memory.export {
+            if memory.export || self.test && memory.import {
                 write!(out_file, "public ")?
             }
             writeln!(
@@ -348,18 +384,24 @@ impl<'input> Converter<'input> {
         // 初期化用関数
         writeln!(out_file, "public void {INIT}() {{")?;
         for global in &self.globals {
+            if global.import {
+                continue;
+            }
+
             // グローバル変数の初期値を代入
             if let Some(init_expr) = &global.init_expr {
-                writeln!(out_file, "{} = {init_expr};", global.name)?;
+                if self.test {
+                    writeln!(out_file, "{}[0] = {init_expr};", global.name)?;
+                } else {
+                    writeln!(out_file, "{} = {init_expr};", global.name)?;
+                }
             }
         }
-        if self.table.is_some() {
-            // テーブルに無効値を割り当て
-            writeln!(
-                out_file,
-                "Array.Fill({}, 0xffffffff);",
-                self.table.as_ref().unwrap().name
-            )?;
+        if let Some(table) = self.table.as_ref() {
+            if !table.import {
+                // テーブルに無効値を割り当て
+                writeln!(out_file, "Array.Fill({}, 0xffffffff);", table.name)?;
+            }
         }
         for (i, Element { offset_expr, items }) in self.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
@@ -387,27 +429,39 @@ impl<'input> Converter<'input> {
 
         writeln!(out_file, "}}")?;
 
-        Ok((imports, exports))
+        Ok(imports)
     }
 
-    fn add_func(&mut self, ty: u32, name: Option<String>) {
+    fn add_func(&mut self, out_file: &mut impl Write, ty: u32, name: Option<String>) -> Result<()> {
+        let import = name.is_some();
         let name = match name {
             Some(x) => x,
             None => format!("{W2US_PREFIX}func{}", self.funcs.len()),
         };
         let ty = self.types[ty as usize].clone();
 
+        if import {
+            // インポートされる関数なら、ActionかFunc型の変数を宣言
+            let del = func_delegate(&ty);
+            writeln!(out_file, "public {del} {name};")?;
+
+            self.code_idx += 1;
+        }
+
         self.funcs.push(Func {
             name,
             ty,
+            import,
             export: false,
         });
+        Ok(())
     }
 
     fn add_table(&mut self, ty: TableType, name: Option<String>) {
         assert!(self.table.is_none());
         assert!(ty.element_type.is_func_ref());
 
+        let import = name.is_some();
         let name = match name {
             Some(x) => x,
             None => TABLE.to_string(),
@@ -416,6 +470,7 @@ impl<'input> Converter<'input> {
         self.table = Some(Table {
             name,
             ty,
+            import,
             export: false,
         });
     }
@@ -423,6 +478,7 @@ impl<'input> Converter<'input> {
     fn add_memory(&mut self, ty: MemoryType, name: Option<String>) {
         assert!(self.memory.is_none());
 
+        let import = name.is_some();
         let name = match name {
             Some(x) => x,
             None => MEMORY.to_string(),
@@ -431,6 +487,7 @@ impl<'input> Converter<'input> {
         self.memory = Some(Memory {
             name,
             ty,
+            import,
             export: false,
         });
     }
@@ -441,6 +498,7 @@ impl<'input> Converter<'input> {
         init_expr: Option<ConstExpr<'input>>,
         name: Option<String>,
     ) {
+        let import = name.is_some();
         let name = match name {
             Some(x) => x,
             None => format!("{W2US_PREFIX}global{}", self.globals.len()),
@@ -451,6 +509,7 @@ impl<'input> Converter<'input> {
             ty,
             name,
             init_expr,
+            import,
             export: false,
         });
     }
@@ -471,7 +530,10 @@ impl<'input> Converter<'input> {
             I64Const { value } => format!("{}", value as u64),
             F32Const { value } => format!("{:e}f", f32::from_bits(value.bits())),
             F64Const { value } => format!("{:e}", f64::from_bits(value.bits())),
-            GlobalGet { global_index } => self.globals[global_index as usize].name.to_string(),
+            GlobalGet { global_index } => {
+                self.globals[global_index as usize].name.to_string()
+                    + if self.test { "[0]" } else { "" }
+            }
             _ => panic!("Not supported const expr operator"),
         };
 
@@ -485,21 +547,46 @@ impl<'input> Converter<'input> {
     }
 }
 
+/// 引数の関数型と対応するC#でのAction/Funcの型を表す文字列を取得 (テスト用)
+fn func_delegate(ty: &FuncType) -> String {
+    let cs_ty = if ty.results().is_empty() {
+        "Action".to_string()
+    } else {
+        "Func".to_string()
+    };
+
+    let params: Vec<&str> = ty
+        .params()
+        .iter()
+        .map(|&x| get_cs_ty(x))
+        .chain(ty.results().iter().map(|&x| get_cs_ty(x)))
+        .collect();
+
+    if params.is_empty() {
+        cs_ty
+    } else {
+        cs_ty + "<" + &params.join(", ") + ">"
+    }
+}
+
 struct Func {
     name: String,
     ty: FuncType,
+    import: bool,
     export: bool,
 }
 
 struct Table {
     name: String,
     ty: TableType,
+    import: bool,
     export: bool,
 }
 
 struct Memory {
     name: String,
     ty: MemoryType,
+    import: bool,
     export: bool,
 }
 
@@ -507,6 +594,7 @@ struct Global {
     name: String,
     ty: GlobalType,
     init_expr: Option<String>,
+    import: bool,
     export: bool,
 }
 
@@ -518,6 +606,12 @@ struct Element {
 struct Data<'a> {
     offset_expr: String,
     data: &'a [u8],
+}
+
+pub struct Import<'input> {
+    pub module: &'input str,
+    pub name: String,
+    pub full_name: String,
 }
 
 fn func_header(
@@ -536,6 +630,14 @@ fn func_header(
 
     header += ")";
     header
+}
+
+fn params_cs_ty_name(ty: &FuncType) -> Vec<(&'static str, String)> {
+    ty.params()
+        .iter()
+        .enumerate()
+        .map(|(i, param)| (get_cs_ty(*param), format!("param{i}")))
+        .collect::<Vec<_>>()
 }
 
 fn result_cs_ty(results: &[ValType]) -> &str {
