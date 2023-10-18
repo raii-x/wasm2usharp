@@ -696,7 +696,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let cs_ty = get_cs_ty(ty);
         // 2進で文字列化して文字数を数える
         self.stmts.push(format!(
-            "else {result} = ({cs_ty}){bits} - Convert.ToString((long){opnd}, 2).Length;",
+            "else {result} = ({cs_ty})({bits} - Convert.ToString((long){opnd}, 2).Length);",
         ));
         Ok(())
     }
