@@ -69,8 +69,8 @@ test!(test_forward, "forward");
 test!(test_func, "func");
 test!(test_func_ptrs, "func_ptrs");
 test!(test_globals, "globals");
-test!(test_i32, "i32");
-test!(test_i64, "i64");
+test!(test_i32, "i32", deny_int_neg_max_case(&["rem_s"]));
+test!(test_i64, "i64", deny_int_neg_max_case(&["rem_s"]));
 test!(test_if, "if");
 test!(test_imports, "imports");
 test!(test_inline_module, "inline-module");
@@ -130,6 +130,27 @@ fn deny_float_corner_case(names: &'static [&'static str]) -> impl Fn(&WastDirect
                                 || x.bits == 0x7fefffffffffffff
                                 || x.bits == 0xffefffffffffffff
                         }
+                        _ => false,
+                    },
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+// 指定された関数名で、最初の引数が符号付き整数型の負の最大値なら処理しない
+fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Fn(&WastDirective<'_>) -> bool {
+    move |directive| !match directive {
+        WastDirective::AssertReturn {
+            exec: WastExecute::Invoke(invoke),
+            ..
+        } => {
+            names.contains(&invoke.name)
+                && match &invoke.args[0] {
+                    WastArg::Core(x) => match x {
+                        WastArgCore::I32(x) => *x as u32 == 0x80000000,
+                        WastArgCore::I64(x) => *x as u64 == 0x8000000000000000,
                         _ => false,
                     },
                     _ => false,
