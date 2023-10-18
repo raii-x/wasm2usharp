@@ -494,6 +494,16 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts
                 .push(format!("frac = {};", 1u64 << (frac_bits - 1)));
         }
+        self.stmts
+            .push(format!("}} else if ({f_cs_ty}.IsSubnormal({f_var})) {{"));
+        {
+            // 非正規化数の場合
+            self.stmts.push(format!("sign = {f_var} > 0 ? 0u : 1u;"));
+            self.stmts.push("expo = 0;".to_string());
+            self.stmts.push(format!(
+                "frac = ({i_cs_ty})({class}.Abs({f_var}) / {f_cs_ty}.Epsilon);"
+            ));
+        }
         self.stmts.push("} else {".to_string());
         {
             self.stmts.push(format!("sign = {f_var} > 0 ? 0u : 1u;"));
@@ -502,15 +512,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             self.stmts
                 .push(format!("var expoF = {class}.Floor({class}.Log2(absVar));"));
             self.stmts
-                .push(format!("if (expoF <= {}) {{", -expo_offset));
-            {
-                // 非正規化数の場合
-                self.stmts.push("expo = 0;".to_string());
-                self.stmts
-                    .push(format!("frac = ({i_cs_ty})(absVar / {f_cs_ty}.Epsilon);"));
-            }
-            self.stmts
-                .push(format!("}} else if (expoF >= {}) {{", expo_offset + 1));
+                .push(format!("if (expoF >= {}) {{", expo_offset + 1));
             {
                 // Log2の誤差で無限大になった場合
                 self.stmts.push(format!("expo = {expo_bit_mask};"));
