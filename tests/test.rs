@@ -69,7 +69,31 @@ test!(
         "f64.nonarithmetic_nan_bitpattern"
     ])
 );
-test!(test_float_literals, "float_literals");
+test!(
+    test_float_literals,
+    "float_literals",
+    deny_assert_return(
+        &[
+            "f32.nan",
+            "f32.positive_nan",
+            "f32.plain_nan",
+            "f32.informally_known_as_plain_snan",
+            "f32.all_ones_nan",
+            "f32.misc_nan",
+            "f32.misc_positive_nan",
+            "f32.misc_negative_nan",
+            "f64.nan",
+            "f64.positive_nan",
+            "f64.plain_nan",
+            "f64.informally_known_as_plain_snan",
+            "f64.all_ones_nan",
+            "f64.misc_nan",
+            "f64.misc_positive_nan",
+            "f64.misc_negative_nan",
+        ],
+        |_| false
+    )
+);
 test!(test_float_memory, "float_memory");
 test!(test_float_misc, "float_misc");
 test!(test_forward, "forward");
