@@ -674,11 +674,11 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         if right {
             self.stmts.push(format!(
-                "{result} = ({lhs} >> {rhs}) | ({lhs} << ({bits} - {rhs}));"
+                "{result} = ({lhs} >> (int){rhs}) | ({lhs} << (int)({bits} - {rhs}));"
             ));
         } else {
             self.stmts.push(format!(
-                "{result} = ({lhs} << {rhs}) | ({lhs} >> ({bits} - {rhs}));"
+                "{result} = ({lhs} << (int){rhs}) | ({lhs} >> (int)({bits} - {rhs}));"
             ));
         }
         Ok(())
