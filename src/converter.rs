@@ -71,269 +71,7 @@ impl<'input> Converter<'input> {
         let mut imports = Vec::new();
 
         for payload in Parser::new(0).parse_all(self.buf) {
-            use wasmparser::Payload::*;
-            match payload? {
-                Version { .. } => {
-                    // println!("====== Module");
-                }
-                TypeSection(s) => {
-                    for ty in s {
-                        match ty? {
-                            RecGroup::Single(ty) => match ty.structural_type {
-                                StructuralType::Func(ty) => self.types.push(ty),
-                                _ => panic!("Non-function types are not supported"),
-                            },
-                            _ => panic!("Non-function types are not supported"),
-                        }
-                    }
-                }
-                ImportSection(s) => {
-                    for import in s {
-                        use wasmparser::TypeRef::*;
-                        let import = import?;
-
-                        let name = convert_to_ident(import.name);
-                        let full_name = format!("{}__{}", convert_to_ident(import.module), name);
-
-                        match import.ty {
-                            Func(ty) => self.add_func(out_file, ty, Some(full_name.clone()))?,
-                            Table(ty) => self.add_table(ty, Some(full_name.clone())),
-                            Memory(ty) => self.add_memory(ty, Some(full_name.clone())),
-                            Global(ty) => self.add_global(ty, None, Some(full_name.clone())),
-                            Tag(_) => panic!("Tag import is not supported"),
-                        }
-
-                        imports.push(Import {
-                            module: import.module,
-                            name,
-                            full_name,
-                        });
-                    }
-                }
-                FunctionSection(s) => {
-                    for func in s {
-                        let func = func?;
-                        self.add_func(out_file, func, None)?;
-                    }
-                }
-                TableSection(s) => {
-                    for table in s {
-                        let table = table?;
-                        self.add_table(table.ty, None);
-                    }
-                }
-                MemorySection(s) => {
-                    for memory in s {
-                        let memory = memory?;
-                        self.add_memory(memory, None);
-                    }
-                }
-                GlobalSection(s) => {
-                    for global in s {
-                        let global = global?;
-                        self.add_global(global.ty, Some(global.init_expr), None);
-                    }
-                }
-                ExportSection(s) => {
-                    for export in s {
-                        use wasmparser::ExternalKind::*;
-
-                        let export = export?;
-                        let name = convert_to_ident(export.name);
-                        match export.kind {
-                            Func => {
-                                let func = &mut self.funcs[export.index as usize];
-                                func.name = name;
-                                func.export = true;
-                            }
-                            Table => {
-                                let table = self.table.as_mut().unwrap();
-                                table.name = name;
-                                table.export = true;
-                            }
-                            Memory => {
-                                let memory = self.memory.as_mut().unwrap();
-                                memory.name = name;
-                                memory.export = true;
-                            }
-                            Global => {
-                                let global = &mut self.globals[export.index as usize];
-                                global.name = name;
-                                global.export = true;
-                            }
-                            Tag => {
-                                panic!("Tag export is not supported");
-                            }
-                        }
-                    }
-                }
-                StartSection { func, .. } => {
-                    self.start_func = Some(func);
-                }
-                ElementSection(s) => {
-                    for (i, elem) in s.into_iter().enumerate() {
-                        let elem = elem?;
-
-                        let offset_expr = match elem.kind {
-                            ElementKind::Active {
-                                table_index,
-                                offset_expr,
-                            } => {
-                                assert!(table_index.is_none());
-                                self.convert_const_expr(&offset_expr)
-                            }
-                            _ => panic!("Not supported element kind"),
-                        };
-
-                        let items = if let ElementItems::Functions(s) = elem.items {
-                            s.into_iter().collect::<Result<Vec<_>, _>>()?
-                        } else {
-                            panic!("Non function elements are not supported");
-                        };
-
-                        // エレメント配列
-                        // テストの際、使用するテーブルを外部からインポートするモジュールの場合、
-                        // エレメント配列内にC#メソッドのデリゲートを格納する。
-                        // それ以外の場合は、uintで関数のインデックスを表す
-                        let use_delegate = self.test && self.table.as_ref().unwrap().import;
-                        let cs_ty = if use_delegate { "object" } else { "uint" };
-                        let eq = if use_delegate { "=>" } else { "=" };
-                        write!(out_file, "{cs_ty}[] {ELEMENT}{i} {eq} new {cs_ty}[] {{ ",)?;
-
-                        for item in items.iter() {
-                            if use_delegate {
-                                write!(out_file, "{},", self.funcs[*item as usize].name)?;
-                            } else {
-                                write!(out_file, "{item},")?;
-                            }
-                        }
-
-                        writeln!(out_file, " }};")?;
-
-                        self.elements.push(Element { offset_expr, items });
-                    }
-
-                    for (i_ty, ty) in self.types.iter().enumerate() {
-                        let name = format!("{CALL_INDIRECT}{i_ty}");
-
-                        // call_indirect関数が受け取る引数リスト
-                        let mut params = params_cs_ty_name(ty);
-
-                        // 関数呼び出し用の引数リスト
-                        let call_params = params
-                            .iter()
-                            .map(|(_, y)| y.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-
-                        params.push((get_cs_ty(ValType::I32), "index".to_string()));
-
-                        // call_indirect用の関数定義
-                        writeln!(
-                            out_file,
-                            "{} {{",
-                            func_header(&name, result_cs_ty(ty.results()), &params)
-                        )?;
-
-                        let table_name = &self.table.as_ref().unwrap().name;
-
-                        if self.test {
-                            // テストの際はuintの他にdelegateが含まれることがある
-                            writeln!(out_file, "if ({table_name}[index] is uint) {{")?;
-                        }
-
-                        writeln!(
-                            out_file,
-                            "switch ({}{table_name}[index]) {{",
-                            if self.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
-                        )?;
-                        for (i, func) in self.funcs.iter().enumerate() {
-                            if func.ty != *ty {
-                                continue;
-                            }
-
-                            if ty.results().is_empty() {
-                                writeln!(
-                                    out_file,
-                                    "case {i}: {}({}); return;",
-                                    func.name, call_params
-                                )?;
-                            } else {
-                                writeln!(
-                                    out_file,
-                                    "case {i}: return {}({});",
-                                    func.name, call_params
-                                )?;
-                            }
-                        }
-                        write!(out_file, "default: ")?;
-                        write!(out_file, "{}", self.trap("invalid table value"))?;
-                        write!(out_file, "return")?;
-                        if ty.results().is_empty() {
-                            writeln!(out_file, ";")?;
-                        } else {
-                            writeln!(out_file, " 0;")?;
-                        }
-                        writeln!(out_file, "}}")?;
-
-                        if self.test {
-                            writeln!(out_file, "}} else {{")?;
-                            // delegateに変換して呼び出し
-                            let del = func_delegate(ty);
-                            if ty.results().is_empty() {
-                                writeln!(
-                                    out_file,
-                                    "(({del}){table_name}[index])({call_params}); return;",
-                                )?;
-                            } else {
-                                writeln!(
-                                    out_file,
-                                    "return (({del}){table_name}[index])({call_params});",
-                                )?;
-                            }
-                            writeln!(out_file, "}}")?;
-                        }
-
-                        writeln!(out_file, "}}")?;
-                    }
-                }
-                DataSection(s) => {
-                    for (i, data) in s.into_iter().enumerate() {
-                        let data = data?;
-                        let offset_expr = match data.kind {
-                            DataKind::Active {
-                                memory_index,
-                                offset_expr,
-                            } => {
-                                if memory_index != 0 {
-                                    panic!("Multi memory is not supported");
-                                }
-                                self.convert_const_expr(&offset_expr)
-                            }
-                            DataKind::Passive => panic!("Passive data segment is not supported"),
-                        };
-                        self.datas.push(Data {
-                            offset_expr,
-                            data: data.data,
-                        });
-
-                        // データ配列
-                        write!(out_file, "byte[] {DATA}{i} = new byte[] {{ ")?;
-                        for byte in data.data {
-                            write!(out_file, "{byte},")?;
-                        }
-                        writeln!(out_file, " }};")?;
-                    }
-                }
-                CodeSectionEntry(s) => {
-                    let mut code_conv = CodeConverter::new(self, self.code_idx);
-                    code_conv.convert(s, out_file)?;
-                    self.code_idx += 1;
-                }
-                _other => {
-                    // println!("found payload {:?}", _other);
-                }
-            }
+            self.convert_payload(out_file, payload?, &mut imports)?;
         }
 
         // グローバル変数宣言
@@ -381,7 +119,292 @@ impl<'input> Converter<'input> {
             )?;
         }
 
-        // 初期化用関数
+        self.write_call_indirects(out_file)?;
+
+        self.write_init_method(out_file)?;
+
+        writeln!(out_file, "}}")?;
+
+        Ok(imports)
+    }
+
+    fn convert_payload(
+        &mut self,
+        out_file: &mut impl Write,
+        payload: wasmparser::Payload<'input>,
+        imports: &mut Vec<Import<'input>>,
+    ) -> Result<()> {
+        use wasmparser::Payload::*;
+        match payload {
+            Version { .. } => {
+                // println!("====== Module");
+            }
+            TypeSection(s) => {
+                for ty in s {
+                    match ty? {
+                        RecGroup::Single(ty) => match ty.structural_type {
+                            StructuralType::Func(ty) => self.types.push(ty),
+                            _ => panic!("Non-function types are not supported"),
+                        },
+                        _ => panic!("Non-function types are not supported"),
+                    }
+                }
+            }
+            ImportSection(s) => {
+                for import in s {
+                    use wasmparser::TypeRef::*;
+                    let import = import?;
+
+                    let name = convert_to_ident(import.name);
+                    let full_name = format!("{}__{}", convert_to_ident(import.module), name);
+
+                    match import.ty {
+                        Func(ty) => self.add_func(out_file, ty, Some(full_name.clone()))?,
+                        Table(ty) => self.add_table(ty, Some(full_name.clone())),
+                        Memory(ty) => self.add_memory(ty, Some(full_name.clone())),
+                        Global(ty) => self.add_global(ty, None, Some(full_name.clone())),
+                        Tag(_) => panic!("Tag import is not supported"),
+                    }
+
+                    imports.push(Import {
+                        module: import.module,
+                        name,
+                        full_name,
+                    });
+                }
+            }
+            FunctionSection(s) => {
+                for func in s {
+                    let func = func?;
+                    self.add_func(out_file, func, None)?;
+                }
+            }
+            TableSection(s) => {
+                for table in s {
+                    let table = table?;
+                    self.add_table(table.ty, None);
+                }
+            }
+            MemorySection(s) => {
+                for memory in s {
+                    let memory = memory?;
+                    self.add_memory(memory, None);
+                }
+            }
+            GlobalSection(s) => {
+                for global in s {
+                    let global = global?;
+                    self.add_global(global.ty, Some(global.init_expr), None);
+                }
+            }
+            ExportSection(s) => {
+                for export in s {
+                    use wasmparser::ExternalKind::*;
+
+                    let export = export?;
+                    let name = convert_to_ident(export.name);
+                    match export.kind {
+                        Func => {
+                            let func = &mut self.funcs[export.index as usize];
+                            func.name = name;
+                            func.export = true;
+                        }
+                        Table => {
+                            let table = self.table.as_mut().unwrap();
+                            table.name = name;
+                            table.export = true;
+                        }
+                        Memory => {
+                            let memory = self.memory.as_mut().unwrap();
+                            memory.name = name;
+                            memory.export = true;
+                        }
+                        Global => {
+                            let global = &mut self.globals[export.index as usize];
+                            global.name = name;
+                            global.export = true;
+                        }
+                        Tag => {
+                            panic!("Tag export is not supported");
+                        }
+                    }
+                }
+            }
+            StartSection { func, .. } => {
+                self.start_func = Some(func);
+            }
+            ElementSection(s) => {
+                for (i, elem) in s.into_iter().enumerate() {
+                    let elem = elem?;
+
+                    let offset_expr = match elem.kind {
+                        ElementKind::Active {
+                            table_index,
+                            offset_expr,
+                        } => {
+                            assert!(table_index.is_none());
+                            self.convert_const_expr(&offset_expr)
+                        }
+                        _ => panic!("Not supported element kind"),
+                    };
+
+                    let items = if let ElementItems::Functions(s) = elem.items {
+                        s.into_iter().collect::<Result<Vec<_>, _>>()?
+                    } else {
+                        panic!("Non function elements are not supported");
+                    };
+
+                    // エレメント配列
+                    // テストの際、使用するテーブルを外部からインポートするモジュールの場合、
+                    // エレメント配列内にC#メソッドのデリゲートを格納する。
+                    // それ以外の場合は、uintで関数のインデックスを表す
+                    let use_delegate = self.test && self.table.as_ref().unwrap().import;
+                    let cs_ty = if use_delegate { "object" } else { "uint" };
+                    let eq = if use_delegate { "=>" } else { "=" };
+                    write!(out_file, "{cs_ty}[] {ELEMENT}{i} {eq} new {cs_ty}[] {{ ",)?;
+
+                    for item in items.iter() {
+                        if use_delegate {
+                            write!(out_file, "{},", self.funcs[*item as usize].name)?;
+                        } else {
+                            write!(out_file, "{item},")?;
+                        }
+                    }
+
+                    writeln!(out_file, " }};")?;
+
+                    self.elements.push(Element { offset_expr, items });
+                }
+            }
+            DataSection(s) => {
+                for (i, data) in s.into_iter().enumerate() {
+                    let data = data?;
+                    let offset_expr = match data.kind {
+                        DataKind::Active {
+                            memory_index,
+                            offset_expr,
+                        } => {
+                            if memory_index != 0 {
+                                panic!("Multi memory is not supported");
+                            }
+                            self.convert_const_expr(&offset_expr)
+                        }
+                        DataKind::Passive => panic!("Passive data segment is not supported"),
+                    };
+                    self.datas.push(Data {
+                        offset_expr,
+                        data: data.data,
+                    });
+
+                    // データ配列
+                    write!(out_file, "byte[] {DATA}{i} = new byte[] {{ ")?;
+                    for byte in data.data {
+                        write!(out_file, "{byte},")?;
+                    }
+                    writeln!(out_file, " }};")?;
+                }
+            }
+            CodeSectionEntry(s) => {
+                let mut code_conv = CodeConverter::new(self, self.code_idx);
+                code_conv.convert(s, out_file)?;
+                self.code_idx += 1;
+            }
+            _other => {
+                // println!("found payload {:?}", _other);
+            }
+        }
+        Ok(())
+    }
+
+    fn write_call_indirects(&self, out_file: &mut impl Write) -> Result<()> {
+        let table = match &self.table {
+            Some(x) => x,
+            None => return Ok(()), // テーブルが無ければreturn
+        };
+
+        for (i_ty, ty) in self.types.iter().enumerate() {
+            let name = format!("{CALL_INDIRECT}{i_ty}");
+
+            // call_indirect関数が受け取る引数リスト
+            let mut params = params_cs_ty_name(ty);
+
+            // 関数呼び出し用の引数リスト
+            let call_params = params
+                .iter()
+                .map(|(_, y)| y.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            params.push((get_cs_ty(ValType::I32), "index".to_string()));
+
+            // call_indirect用の関数定義
+            writeln!(
+                out_file,
+                "{} {{",
+                func_header(&name, result_cs_ty(ty.results()), &params)
+            )?;
+
+            let table_name = &table.name;
+
+            if self.test {
+                // テストの際はuintの他にdelegateが含まれることがある
+                writeln!(out_file, "if ({table_name}[index] is uint) {{")?;
+            }
+
+            writeln!(
+                out_file,
+                "switch ({}{table_name}[index]) {{",
+                if self.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
+            )?;
+            for (i, func) in self.funcs.iter().enumerate() {
+                if func.ty != *ty {
+                    continue;
+                }
+
+                if ty.results().is_empty() {
+                    writeln!(
+                        out_file,
+                        "case {i}: {}({}); return;",
+                        func.name, call_params
+                    )?;
+                } else {
+                    writeln!(out_file, "case {i}: return {}({});", func.name, call_params)?;
+                }
+            }
+            write!(out_file, "default: ")?;
+            write!(out_file, "{}", self.trap("invalid table value"))?;
+            write!(out_file, "return")?;
+            if ty.results().is_empty() {
+                writeln!(out_file, ";")?;
+            } else {
+                writeln!(out_file, " 0;")?;
+            }
+            writeln!(out_file, "}}")?;
+
+            if self.test {
+                writeln!(out_file, "}} else {{")?;
+                // delegateに変換して呼び出し
+                let del = func_delegate(ty);
+                if ty.results().is_empty() {
+                    writeln!(
+                        out_file,
+                        "(({del}){table_name}[index])({call_params}); return;",
+                    )?;
+                } else {
+                    writeln!(
+                        out_file,
+                        "return (({del}){table_name}[index])({call_params});",
+                    )?;
+                }
+                writeln!(out_file, "}}")?;
+            }
+
+            writeln!(out_file, "}}")?;
+        }
+        Ok(())
+    }
+
+    fn write_init_method(&self, out_file: &mut impl Write) -> Result<()> {
         writeln!(out_file, "public void {INIT}() {{")?;
         for global in &self.globals {
             if global.import {
@@ -426,10 +449,7 @@ impl<'input> Converter<'input> {
             writeln!(out_file, "{}();", self.funcs[start_func as usize].name)?;
         }
         writeln!(out_file, "}}")?;
-
-        writeln!(out_file, "}}")?;
-
-        Ok(imports)
+        Ok(())
     }
 
     fn add_func(&mut self, out_file: &mut impl Write, ty: u32, name: Option<String>) -> Result<()> {
