@@ -35,6 +35,7 @@ const DATA: &str = "w2us_data";
 const ELEMENT: &str = "w2us_element";
 pub const INIT: &str = "w2us_init";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
+const MAX_PARAMS: usize = 16;
 
 impl<'input> Converter<'input> {
     pub fn new(buf: &'input [u8], class_name: &'input str, test: bool) -> Self {
@@ -345,8 +346,9 @@ impl<'input> Converter<'input> {
             )?;
 
             let table_name = &table.name;
+            let use_delegate = self.test && ty.params().len() <= MAX_PARAMS;
 
-            if self.test {
+            if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
                 writeln!(out_file, "if ({table_name}[index] is uint) {{")?;
             }
@@ -381,7 +383,7 @@ impl<'input> Converter<'input> {
             }
             writeln!(out_file, "}}")?;
 
-            if self.test {
+            if use_delegate {
                 writeln!(out_file, "}} else {{")?;
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
@@ -462,8 +464,10 @@ impl<'input> Converter<'input> {
 
         if import {
             // インポートされる関数なら、ActionかFunc型の変数を宣言
-            let del = func_delegate(&ty);
-            writeln!(out_file, "public {del} {name};")?;
+            if ty.params().len() <= MAX_PARAMS {
+                let del = func_delegate(&ty);
+                writeln!(out_file, "public {del} {name};")?;
+            }
 
             self.code_idx += 1;
         }
