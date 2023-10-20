@@ -146,32 +146,57 @@ string? line;
 while ((line = Console.ReadLine()) != null) {{
     var args = line.Split(' ');
 
-    int iModule = int.Parse(args[0]);
+    string command = args[0];
+    int iModule = int.Parse(args[1]);
     var t = instances[iModule].GetType();
-    var mi = t.GetMethod(args[1]);
-    if (mi == null) {{
-        throw new ArgumentException($"Method '{{args[1]}}' is not found");
-    }}
 
-    object[]? parameters = null;
-    if (args.Length > 2) {{
-        parameters = new object[(args.Length - 2) / 2];
-        for (int i = 0; i < parameters.Length; i++) {{
-            int iArgs = 2 + i * 2;
-            string ty = args[iArgs];
-            string val = args[iArgs + 1];
-            parameters[i] = ty switch {{
-                "i32" => (object)uint.Parse(val),
-                "i64" => (object)ulong.Parse(val),
-                "f32" => (object)BitConverter.UInt32BitsToSingle(uint.Parse(val)),
-                "f64" => (object)BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
-                _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
-            }};
-        }}
-    }}
+    switch (command) {{
+        case "invoke":
+            string method = args[2];
+            var mi = t.GetMethod(method) ?? throw new ArgumentException($"Method '{{method}}' is not found");
 
-    var result = mi.Invoke(instances[iModule], parameters);
-    string resultStr = result switch {{
+            object[]? parameters = null;
+            if (args.Length > 3) {{
+                parameters = new object[(args.Length - 3) / 2];
+                for (int i = 0; i < parameters.Length; i++) {{
+                    int iArgs = 3 + i * 2;
+                    string ty = args[iArgs];
+                    string val = args[iArgs + 1];
+                    parameters[i] = ty switch {{
+                        "i32" => (object)uint.Parse(val),
+                        "i64" => (object)ulong.Parse(val),
+                        "f32" => (object)BitConverter.UInt32BitsToSingle(uint.Parse(val)),
+                        "f64" => (object)BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
+                        _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
+                    }};
+                }}
+            }}
+
+            WriteResult(mi.Invoke(instances[iModule], parameters));
+
+            break;
+
+        case "get":
+            string name = args[2];
+            var fi = t.GetField(name) ?? throw new ArgumentException($"Global variable '{{name}}' is not found");
+            var result = (Array)fi.GetValue(instances[iModule])!;
+            WriteResult(result.GetValue(0));
+
+            break;
+
+        default:
+            throw new ArgumentException($"Unsupported command: '{{command}}'");
+    }}
+}}"#,
+        ).unwrap();
+
+        writeln!(cs_file, "}}").unwrap();
+
+        writeln!(cs_file, r#"
+static void WriteResult(object? result)
+{{
+    string resultStr = result switch
+    {{
         uint x => $"i32 {{x}}",
         ulong x => $"i64 {{x}}",
         float x => $"f32 {{BitConverter.SingleToUInt32Bits(x)}}",
@@ -180,10 +205,8 @@ while ((line = Console.ReadLine()) != null) {{
         _ => throw new InvalidOperationException($"Unsupported result type: '{{result.GetType()}}'"),
     }};
     Console.WriteLine(resultStr);
-}}"#,
-        ).unwrap();
+}}"#).unwrap();
 
-        writeln!(cs_file, "}}").unwrap();
         writeln!(cs_file, "}}").unwrap();
     }
 }
@@ -238,18 +261,9 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
         }]
     }
 
-    /// 指定したモジュールIDのインスタンスに対して関数を実行する
-    ///
-    /// この際に渡すデータはスペース区切りで、
-    /// 1番目にモジュール番号 (この関数で追加される)、
-    /// 2番目に関数名、
-    /// 関数に渡す引数があれば、3番目以降に引数の型と10進整数でビット列を表現した引数の値を順番に渡す
-    pub fn invoke(&mut self, module: Option<Id<'input>>, args: &str) -> String {
-        let module = self.get_module(module);
-
-        let args = format!("{} {args}\n", module.index);
+    fn input_line(&mut self, input: &str) -> String {
         let stdin: &mut std::process::ChildStdin = self.child.stdin.as_mut().unwrap();
-        stdin.write_all(args.as_bytes()).unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
 
         let stdout = self.child.stdout.as_mut().unwrap();
         let mut stdout = BufReader::new(stdout);
@@ -257,5 +271,32 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
         stdout.read_line(&mut line).unwrap();
 
         line
+    }
+
+    /// 指定したモジュールIDのインスタンスに対して関数を実行する
+    ///
+    /// この際に渡すデータはスペース区切りで、
+    /// 1番目に "invoke" (この関数で追加される)、
+    /// 2番目にモジュール番号 (この関数で追加される)、
+    /// 3番目に関数名、
+    /// 関数に渡す引数があれば、3番目以降に引数の型と10進整数でビット列を表現した引数の値を順番に渡す
+    pub fn invoke(&mut self, module: Option<Id<'input>>, args: &str) -> String {
+        let module = self.get_module(module);
+
+        let args = format!("invoke {} {args}\n", module.index);
+        self.input_line(&args)
+    }
+
+    /// 指定したモジュールIDのインスタンスのグローバル変数を取得する
+    ///
+    /// この際に渡すデータはスペース区切りで、
+    /// 1番目に "get" (この関数で追加される)、
+    /// 2番目にモジュール番号 (この関数で追加される)、
+    /// 3番目にグローバル変数名を順番に渡す
+    pub fn get_global(&mut self, module: Option<Id<'input>>, global: &str) -> String {
+        let module = self.get_module(module);
+
+        let args = format!("get {} {global}\n", module.index);
+        self.input_line(&args)
     }
 }

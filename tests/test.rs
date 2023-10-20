@@ -268,19 +268,19 @@ fn test_wast(name: &str, filter: Option<impl Filter>) {
             Invoke(invoke) => {
                 invoke_func(invoke, &mut cs_proj_exec);
             }
-            AssertReturn { exec, results, .. } => match exec {
-                WastExecute::Invoke(invoke) => {
-                    assert_eq!(
-                        &invoke_func(invoke, &mut cs_proj_exec),
-                        &results
-                            .into_iter()
-                            .map(WastRetEq)
-                            .map(|x| x.normalize_nan())
-                            .collect::<Vec<_>>()
-                    );
-                }
-                _ => panic!(),
-            },
+            AssertReturn { exec, results, .. } => assert_eq!(
+                match exec {
+                    WastExecute::Invoke(invoke) => invoke_func(invoke, &mut cs_proj_exec),
+                    WastExecute::Get { module, global } =>
+                        get_global(module, global, &mut cs_proj_exec),
+                    _ => panic!(),
+                },
+                results
+                    .into_iter()
+                    .map(WastRetEq)
+                    .map(|x| x.normalize_nan())
+                    .collect::<Vec<_>>()
+            ),
             AssertMalformed { .. }
             | AssertInvalid { .. }
             | AssertTrap { .. }
@@ -307,7 +307,7 @@ fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> Option<Id<'a>> {
 fn invoke_func<'input>(
     invoke: WastInvoke<'input>,
     exec: &mut CsProjExec<'input, '_>,
-) -> Vec<WastRetEq<'input>> {
+) -> Vec<WastRetEq<'static>> {
     use wast::core::WastArgCore::*;
     println!("Invoking: {} {:?}", invoke.name, invoke.args);
 
@@ -331,6 +331,22 @@ fn invoke_func<'input>(
     let args = args.join(" ");
     let line = exec.invoke(invoke.module, &args);
 
+    parse_results(&line)
+}
+
+fn get_global<'input>(
+    module: Option<Id<'input>>,
+    global: &'input str,
+    exec: &mut CsProjExec<'input, '_>,
+) -> Vec<WastRetEq<'static>> {
+    println!("Get: {global}");
+
+    let line = exec.get_global(module, global);
+
+    parse_results(&line)
+}
+
+fn parse_results(line: &str) -> Vec<WastRetEq<'static>> {
     let mut results = Vec::new();
 
     // スペースで区切った1つ目が型で、2つ目が値のビットを数値で表現した文字列
