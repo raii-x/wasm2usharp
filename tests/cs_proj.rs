@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::HashMap,
     fs::File,
     io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
@@ -13,9 +13,8 @@ pub struct CsProj<'input> {
     dir: TempDir,
     /// このVecのインデックスがモジュールインデックスとなる
     modules: Vec<CsModule>,
-    /// モジュールIDに対して、同じIDに設定されたモジュールのインデックスが
-    /// wastでの定義順にVecに格納される
-    id_to_indices: HashMap<CsId<'input>, Vec<usize>>,
+    /// モジュールIDに対して設定されたモジュールインデックス
+    id_to_module: HashMap<Id<'input>, usize>,
     /// Registerされたモジュールの一覧
     /// 値はモジュールインデックス
     reg_modules: HashMap<String, usize>,
@@ -36,12 +35,12 @@ impl<'input> CsProj<'input> {
         Self {
             dir,
             modules: Vec::new(),
-            id_to_indices: HashMap::new(),
+            id_to_module: HashMap::new(),
             reg_modules: HashMap::new(),
         }
     }
 
-    pub fn add_module(&mut self, id: CsId<'input>, data: &[u8]) {
+    pub fn add_module(&mut self, id: Option<Id<'input>>, data: &[u8]) {
         let index = self.modules.len();
         let class_name = format!("{MODULE}{index}");
         let mut conv = Converter::new(data, &class_name, true);
@@ -65,18 +64,14 @@ impl<'input> CsProj<'input> {
 
         self.modules.push(CsModule { index, imports });
 
-        let indices = match self.id_to_indices.entry(id) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => v.insert(Vec::new()),
-        };
-        indices.push(index);
+        if let Some(id) = id {
+            assert!(self.id_to_module.insert(id, index).is_none());
+        }
     }
 
-    pub fn register(&mut self, name: String, module: &CsId<'_>) {
-        self.reg_modules.insert(
-            name,
-            *self.id_to_indices.get(module).unwrap().last().unwrap(),
-        );
+    pub fn register(&mut self, name: String, module: &Id<'_>) {
+        self.reg_modules
+            .insert(name, *self.id_to_module.get(module).unwrap());
     }
 
     pub fn run(&self) -> CsProjExec<'input, '_> {
@@ -213,10 +208,7 @@ struct CsImport {
 pub struct CsProjExec<'input, 'a> {
     cs_proj: &'a CsProj<'input>,
     child: Child,
-    /// 現在のIDとモジュールの対応関係。
-    /// wastのdirectiveのイテレート中に変更される。
-    /// 格納されている値はid_to_indicesの値のVecのインデックス（モジュールインデックスではない）
-    id_to_index: HashMap<CsId<'input>, usize>,
+    last_module: Option<usize>,
 }
 
 impl<'input, 'a> CsProjExec<'input, 'a> {
@@ -224,26 +216,26 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
         Self {
             cs_proj,
             child,
-            id_to_index: HashMap::new(),
+            last_module: None,
         }
     }
 
     /// wastのdirectiveの2回目のイテレートでwat読み込みの際にこの関数を呼ぶことで、
     /// IDとモジュールの対応関係が1回目のイテレートの時と同じようになる
-    pub fn next_module(&mut self, module: CsId<'input>) {
-        self.id_to_index
-            .entry(module)
-            .and_modify(|x| *x += 1)
-            .or_insert(0);
+    pub fn next_module(&mut self, module: Option<Id<'input>>) {
+        self.last_module = Some(match self.last_module {
+            Some(x) => x + 1,
+            None => 0,
+        });
 
         self.invoke(module, INIT);
     }
 
-    fn get_module(&self, module: CsId<'input>) -> &CsModule {
-        let indices = self.cs_proj.id_to_indices.get(&module).unwrap();
-        let indices_index = *self.id_to_index.get(&module).unwrap();
-        let module_index = indices[indices_index];
-        &self.cs_proj.modules[module_index]
+    fn get_module(&self, module: Option<Id<'input>>) -> &CsModule {
+        &self.cs_proj.modules[match module {
+            Some(id) => *self.cs_proj.id_to_module.get(&id).unwrap(),
+            None => self.last_module.unwrap(),
+        }]
     }
 
     /// 指定したモジュールIDのインスタンスに対して関数を実行する
@@ -252,7 +244,7 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
     /// 1番目にモジュール番号 (この関数で追加される)、
     /// 2番目に関数名、
     /// 関数に渡す引数があれば、3番目以降に引数の型と10進整数でビット列を表現した引数の値を順番に渡す
-    pub fn invoke(&mut self, module: CsId<'input>, args: &str) -> String {
+    pub fn invoke(&mut self, module: Option<Id<'input>>, args: &str) -> String {
         let module = self.get_module(module);
 
         let args = format!("{} {args}\n", module.index);
@@ -267,5 +259,3 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
         line
     }
 }
-
-pub type CsId<'a> = Option<Id<'a>>;

@@ -5,12 +5,13 @@ mod value;
 
 use std::{fs::read_to_string, path::PathBuf};
 
-use cs_proj::{CsId, CsProj, CsProjExec};
+use cs_proj::{CsProj, CsProjExec};
 use wasm2usharp::converter::convert_to_ident;
 use wast::{
     core::{Module, WastArgCore, WastRetCore},
     lexer::Lexer,
     parser::{self, ParseBuffer},
+    token::Id,
     QuoteWat, Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
 
@@ -240,7 +241,7 @@ fn test_wast(name: &str, filter: Option<impl Filter>) {
                 cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
             }
             WastDirective::Register { name, module, .. } => {
-                cs_proj.register(name.to_string(), module);
+                cs_proj.register(name.to_string(), &module.unwrap());
             }
             _ => (),
         }
@@ -288,14 +289,12 @@ fn test_wast(name: &str, filter: Option<impl Filter>) {
             | AssertException { .. } => {
                 println!("Failure case is skipped")
             }
-            Register { .. } => {
-                println!("Register is skipped")
-            }
+            Register { .. } => {}
         }
     }
 }
 
-fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> CsId<'a> {
+fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> Option<Id<'a>> {
     match wat {
         QuoteWat::Wat(Wat::Module(Module { id, .. })) => *id,
         QuoteWat::QuoteModule(..) => panic!("QuoteModule is not supported"),
