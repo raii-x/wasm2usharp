@@ -1221,19 +1221,28 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         let memory = &self.conv.memory.as_ref().unwrap().name;
 
-        // 前のサイズを返す
-        let cs_ty = get_cs_ty(var.ty);
-        self.stmts
-            .push(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
-
-        // メモリをsizeだけ拡張
-        self.stmts.push("{".to_string());
-        self.stmts.push(format!("var old = {memory};"));
         self.stmts.push(format!(
-            "{memory} = new byte[old.Length + {size} * {PAGE_SIZE}];"
+            "if ({memory}.Length / {PAGE_SIZE} + {size} >= 0x10000) {{"
         ));
-        self.stmts
-            .push(format!("Array.Copy(old, {memory}, old.Length);"));
+        {
+            // 新しいメモリサイズが最大値を超えていれば-1(uint)を返す
+            self.stmts.push(format!("{var} = 0xffffffff;"));
+        }
+        self.stmts.push("} else {".to_string());
+        {
+            // 前のサイズを返す
+            let cs_ty = get_cs_ty(var.ty);
+            self.stmts
+                .push(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
+
+            // メモリをsizeだけ拡張
+            self.stmts.push(format!("var old = {memory};"));
+            self.stmts.push(format!(
+                "{memory} = new byte[old.Length + {size} * {PAGE_SIZE}];"
+            ));
+            self.stmts
+                .push(format!("Array.Copy(old, {memory}, old.Length);"));
+        }
         self.stmts.push("}".to_string());
         Ok(())
     }
