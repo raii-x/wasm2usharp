@@ -965,6 +965,8 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_return(&mut self) -> Self::Output {
+        self.unreachable = 1;
+
         match self.func().ty.results().len() {
             0 => self.stmts.push("return;".to_string()),
             1 => {
