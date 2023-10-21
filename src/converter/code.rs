@@ -1220,9 +1220,17 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.push_stack(var);
 
         let memory = &self.conv.memory.as_ref().unwrap().name;
+        let max = self
+            .conv
+            .memory
+            .as_ref()
+            .unwrap()
+            .ty
+            .maximum
+            .unwrap_or(0x10000);
 
         self.stmts.push(format!(
-            "if ({memory}.Length / {PAGE_SIZE} + {size} >= 0x10000) {{"
+            "if ({memory}.Length / {PAGE_SIZE} + {size} > {max}) {{"
         ));
         {
             // 新しいメモリサイズが最大値を超えていれば-1(uint)を返す
