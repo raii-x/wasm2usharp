@@ -847,9 +847,9 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         }
         let block = self.new_block(blockty, true);
         let loop_var = block.loop_var.unwrap();
+        self.stmts.push(format!("{LOOP}{loop_var} = true;"));
         self.stmts.push("do {".to_string());
         self.stmts.push("do {".to_string());
-        self.stmts.push(format!("{LOOP}{} = true;", loop_var));
         Ok(())
     }
 
