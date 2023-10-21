@@ -454,6 +454,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let i_ty = i_var.ty;
         let bits = get_int_bits(i_ty);
         let frac_bits = get_frac_bits(f_ty);
+        let frac_bits_mask = bit_mask(frac_bits as u64);
         let expo_bits = bits - 1 - frac_bits;
         let expo_bit_mask = bit_mask(expo_bits as u64);
         // LSBに寄せた後のビットマスク
@@ -515,8 +516,8 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
                 .push(format!("if (expoF >= {}) {{", expo_offset + 1));
             {
                 // Log2の誤差で無限大になった場合
-                self.stmts.push(format!("expo = {expo_bit_mask};"));
-                self.stmts.push("frac = 0;".to_string());
+                self.stmts.push(format!("expo = {};", expo_bit_mask - 1));
+                self.stmts.push(format!("frac = {frac_bits_mask};"));
             }
             self.stmts.push("} else {".to_string());
             {

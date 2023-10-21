@@ -48,7 +48,7 @@ test!(test_const, "const");
 test!(
     test_conversions,
     "conversions",
-    deny_float_corner_case(&["i32.reinterpret_f32", "i64.reinterpret_f64"])
+    deny_float_nan_case(&["i32.reinterpret_f32", "i64.reinterpret_f64"])
 );
 test!(test_custom, "custom");
 test!(test_data, "data");
@@ -160,19 +160,13 @@ where
     }
 }
 
-// 最初の引数がNaNかInfinity未満の最大値なら処理しない
-fn deny_float_corner_case(names: &'static [&'static str]) -> impl Filter {
+// 最初の引数がNaNなら処理しない
+fn deny_float_nan_case(names: &'static [&'static str]) -> impl Filter {
     deny_assert_return(names, move |invoke| {
         !(match &invoke.args[0] {
             WastArg::Core(x) => match x {
-                WastArgCore::F32(x) => {
-                    f32::from_bits(x.bits).is_nan() || x.bits == 0x7f7fffff || x.bits == 0xff7fffff
-                }
-                WastArgCore::F64(x) => {
-                    f64::from_bits(x.bits).is_nan()
-                        || x.bits == 0x7fefffffffffffff
-                        || x.bits == 0xffefffffffffffff
-                }
+                WastArgCore::F32(x) => f32::from_bits(x.bits).is_nan(),
+                WastArgCore::F64(x) => f64::from_bits(x.bits).is_nan(),
                 _ => false,
             },
             _ => false,
