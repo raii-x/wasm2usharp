@@ -92,10 +92,14 @@ test!(
             "f64.misc_positive_nan",
             "f64.misc_negative_nan",
         ],
-        |_| false
+        |_, _| false
     )
 );
-test!(test_float_memory, "float_memory");
+test!(
+    test_float_memory,
+    "float_memory",
+    deny_int_result_nan_case(&["i32.load", "i64.load"])
+);
 test!(test_float_misc, "float_misc");
 test!(test_forward, "forward");
 test!(test_func, "func");
@@ -149,20 +153,21 @@ impl<F> Filter for F where F: Fn(&WastDirective<'_>) -> bool {}
 /// AssertReturnで、指定された関数名で、引数で与えられた関数の結果がfalseのものを処理しない
 fn deny_assert_return<F>(names: &'static [&'static str], filter: F) -> impl Filter
 where
-    F: Fn(&WastInvoke<'_>) -> bool,
+    F: Fn(&WastInvoke<'_>, &Vec<WastRet<'_>>) -> bool,
 {
     move |directive| match directive {
         WastDirective::AssertReturn {
             exec: WastExecute::Invoke(invoke),
+            results,
             ..
-        } => !names.contains(&invoke.name) || filter(invoke),
+        } => !names.contains(&invoke.name) || filter(invoke, results),
         _ => true,
     }
 }
 
 // 最初の引数がNaNなら処理しない
 fn deny_float_nan_case(names: &'static [&'static str]) -> impl Filter {
-    deny_assert_return(names, move |invoke| {
+    deny_assert_return(names, move |invoke, _| {
         !(match &invoke.args[0] {
             WastArg::Core(x) => match x {
                 WastArgCore::F32(x) => f32::from_bits(x.bits).is_nan(),
@@ -176,7 +181,7 @@ fn deny_float_nan_case(names: &'static [&'static str]) -> impl Filter {
 
 // 最初の引数が符号付き整数型の負の最大値なら処理しない
 fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Filter {
-    deny_assert_return(names, move |invoke| {
+    deny_assert_return(names, move |invoke, _| {
         !(match &invoke.args[0] {
             WastArg::Core(x) => match x {
                 WastArgCore::I32(x) => *x as u32 == 0x80000000,
@@ -190,11 +195,25 @@ fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Filter {
 
 // 最初の引数が整数型で、reinterpretした後にNaNになるなら処理しない
 fn deny_int_nan_case(names: &'static [&'static str]) -> impl Filter {
-    deny_assert_return(names, move |invoke| {
+    deny_assert_return(names, move |invoke, _| {
         !(match &invoke.args[0] {
             WastArg::Core(x) => match x {
                 WastArgCore::I32(x) => (f32::from_bits(*x as u32)).is_nan(),
                 WastArgCore::I64(x) => (f64::from_bits(*x as u64)).is_nan(),
+                _ => false,
+            },
+            _ => false,
+        })
+    })
+}
+
+// 最初の引数が整数型で、reinterpretした後にNaNになるなら処理しない
+fn deny_int_result_nan_case(names: &'static [&'static str]) -> impl Filter {
+    deny_assert_return(names, move |_, results| {
+        !(match &results[0] {
+            WastRet::Core(x) => match x {
+                WastRetCore::I32(x) => (f32::from_bits(*x as u32)).is_nan(),
+                WastRetCore::I64(x) => (f64::from_bits(*x as u64)).is_nan(),
                 _ => false,
             },
             _ => false,
