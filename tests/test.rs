@@ -254,7 +254,7 @@ fn test_wast(name: &str, filter: Option<impl Filter>) {
                 cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
             }
             WastDirective::Register { name, module, .. } => {
-                cs_proj.register(name.to_string(), &module.unwrap());
+                cs_proj.register(name.to_string(), module);
             }
             _ => (),
         }

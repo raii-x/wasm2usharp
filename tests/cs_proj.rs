@@ -69,9 +69,13 @@ impl<'input> CsProj<'input> {
         }
     }
 
-    pub fn register(&mut self, name: String, module: &Id<'_>) {
-        self.reg_modules
-            .insert(name, *self.id_to_module.get(module).unwrap());
+    pub fn register(&mut self, name: String, module: &Option<Id<'_>>) {
+        let module = match module {
+            Some(x) => *self.id_to_module.get(x).unwrap(),
+            None => self.modules.len() - 1,
+        };
+
+        self.reg_modules.insert(name, module);
     }
 
     pub fn run(&self) -> CsProjExec<'input, '_> {
