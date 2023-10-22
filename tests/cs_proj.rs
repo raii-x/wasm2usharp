@@ -163,8 +163,8 @@ while ((line = Console.ReadLine()) != null) {{
                     string ty = args[iArgs];
                     string val = args[iArgs + 1];
                     parameters[i] = ty switch {{
-                        "i32" => (object)uint.Parse(val),
-                        "i64" => (object)ulong.Parse(val),
+                        "i32" => (object)int.Parse(val),
+                        "i64" => (object)long.Parse(val),
                         "f32" => (object)BitConverter.UInt32BitsToSingle(uint.Parse(val)),
                         "f64" => (object)BitConverter.UInt64BitsToDouble(ulong.Parse(val)),
                         _ => throw new ArgumentException($"Unsupported parameter type: '{{ty}}'"),
@@ -196,8 +196,8 @@ static void WriteResult(object? result)
 {{
     string resultStr = result switch
     {{
-        uint x => $"i32 {{x}}",
-        ulong x => $"i64 {{x}}",
+        int x => $"i32 {{x}}",
+        long x => $"i64 {{x}}",
         float x => $"f32 {{BitConverter.SingleToUInt32Bits(x)}}",
         double x => $"f64 {{BitConverter.DoubleToUInt64Bits(x)}}",
         null => "",

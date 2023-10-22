@@ -550,8 +550,8 @@ impl<'input> Converter<'input> {
         use wasmparser::Operator::*;
         let mut op_iter = expr.get_operators_reader().into_iter();
         let value = match op_iter.next().unwrap().unwrap() {
-            I32Const { value } => format!("{}", value as u32),
-            I64Const { value } => format!("{}", value as u64),
+            I32Const { value } => format!("{}", value),
+            I64Const { value } => format!("{}", value),
             F32Const { value } => format!("{:e}f", f32::from_bits(value.bits())),
             F64Const { value } => format!("{:e}", f64::from_bits(value.bits())),
             GlobalGet { global_index } => self.globals[global_index as usize].name.to_string(),
@@ -664,8 +664,8 @@ fn result_cs_ty(results: &[ValType]) -> &str {
 
 fn get_cs_ty(ty: ValType) -> &'static str {
     match ty {
-        ValType::I32 => "uint",
-        ValType::I64 => "ulong",
+        ValType::I32 => "int",
+        ValType::I64 => "long",
         ValType::F32 => "float",
         ValType::F64 => "double",
         _ => unreachable!(),

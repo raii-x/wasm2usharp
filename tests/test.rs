@@ -329,8 +329,8 @@ fn invoke_func<'input>(
     // 2番目以降のコマンド引数に関数の引数を指定
     args.extend(invoke.args.iter().flat_map(|arg| match arg {
         WastArg::Core(arg) => match arg {
-            I32(x) => ["i32".to_string(), (*x as u32).to_string()],
-            I64(x) => ["i64".to_string(), (*x as u64).to_string()],
+            I32(x) => ["i32".to_string(), x.to_string()],
+            I64(x) => ["i64".to_string(), x.to_string()],
             F32(x) => ["f32".to_string(), x.bits.to_string()],
             F64(x) => ["f64".to_string(), x.bits.to_string()],
             V128(_) => panic!("simd is not supported"),
@@ -370,8 +370,8 @@ fn parse_results(line: &str) -> Vec<WastRetEq<'static>> {
         assert!(sp.next().is_none());
 
         results.push(match ty {
-            "i32" => WastRetCore::I32(val.parse::<u32>().unwrap() as i32),
-            "i64" => WastRetCore::I64(val.parse::<u64>().unwrap() as i64),
+            "i32" => WastRetCore::I32(val.parse::<i32>().unwrap()),
+            "i64" => WastRetCore::I64(val.parse::<i64>().unwrap()),
             "f32" => f32_to_wasm_ret_core(val.parse::<u32>().unwrap()),
             "f64" => f64_to_wasm_ret_core(val.parse::<u64>().unwrap()),
             _ => panic!("unknown return type"),
