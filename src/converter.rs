@@ -268,17 +268,19 @@ impl<'input> Converter<'input> {
                     // エレメント配列
                     // テストの際、使用するテーブルを外部からインポートするモジュールの場合、
                     // エレメント配列内にC#メソッドのデリゲートを格納する。
-                    // それ以外の場合は、uintで関数のインデックスを表す
+                    // それ以外の場合は、uintで関数のインデックス+1を表す
                     let use_delegate = self.test && self.table.as_ref().unwrap().import;
                     let cs_ty = if use_delegate { "object" } else { "uint" };
                     let eq = if use_delegate { "=>" } else { "=" };
                     write!(out_file, "{cs_ty}[] {ELEMENT}{i} {eq} new {cs_ty}[] {{ ",)?;
 
-                    for item in items.iter() {
+                    for &item in items.iter() {
                         if use_delegate {
-                            write!(out_file, "{},", self.funcs[*item as usize].name)?;
+                            write!(out_file, "{},", self.funcs[item as usize].name)?;
                         } else {
-                            write!(out_file, "{item},")?;
+                            // テーブルに格納される関数インデックスは元のインデックスに1を足したもの
+                            // (配列の初期値の0でnullを表現するため)
+                            write!(out_file, "{},", item + 1)?;
                         }
                     }
 
@@ -376,11 +378,17 @@ impl<'input> Converter<'input> {
                 if ty.results().is_empty() {
                     writeln!(
                         out_file,
-                        "case {i}: {}({}); return;",
-                        func.name, call_params
+                        "case {}: {}({call_params}); return;",
+                        i + 1,
+                        func.name
                     )?;
                 } else {
-                    writeln!(out_file, "case {i}: return {}({});", func.name, call_params)?;
+                    writeln!(
+                        out_file,
+                        "case {}: return {}({call_params});",
+                        i + 1,
+                        func.name
+                    )?;
                 }
             }
             write!(out_file, "default: ")?;
@@ -426,12 +434,6 @@ impl<'input> Converter<'input> {
             // グローバル変数の初期値を代入
             if let Some(init_expr) = &global.init_expr {
                 writeln!(out_file, "{} = {init_expr};", global.name)?;
-            }
-        }
-        if let Some(table) = self.table.as_ref() {
-            if !table.import {
-                // テーブルに無効値を割り当て
-                writeln!(out_file, "Array.Fill({}, 0xffffffff);", table.name)?;
             }
         }
         for (i, Element { offset_expr, items }) in self.elements.iter().enumerate() {
