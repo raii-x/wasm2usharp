@@ -550,8 +550,14 @@ impl<'input> Converter<'input> {
         use wasmparser::Operator::*;
         let mut op_iter = expr.get_operators_reader().into_iter();
         let value = match op_iter.next().unwrap().unwrap() {
-            I32Const { value } => format!("{}", value),
-            I64Const { value } => format!("{}", value),
+            I32Const { value } => match value {
+                i32::MIN => format!("{} - 1", i32::MIN + 1),
+                _ => format!("{}", value),
+            },
+            I64Const { value } => match value {
+                i64::MIN => format!("{} - 1", i64::MIN + 1),
+                _ => format!("{}", value),
+            },
             F32Const { value } => format!("{:e}f", f32::from_bits(value.bits())),
             F64Const { value } => format!("{:e}", f64::from_bits(value.bits())),
             GlobalGet { global_index } => self.globals[global_index as usize].name.to_string(),
