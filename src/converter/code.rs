@@ -713,16 +713,20 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         self.stmts
             .push(format!("if ({opnd} == 0) {result} = {bits};"));
         let cs_ty = get_cs_ty(ty);
+
+        // 符号付き整数の最小値のリテラルはUdonSharpではエラーとなるので
+        // `-最大値 - 1` で表現する
         let or_opnd = match ty {
             ValType::I32 => (1i32 << (bits - 1)) as i64,
             ValType::I64 => 1i64 << (bits - 1),
             _ => unreachable!(),
-        };
+        } + 1;
+
         // 1. 文字数を揃えるため、MSBだけが1の数とopndのORをとる
         // 2. 2進で文字列化する
         // 3. 最後に1が出現するインデックスを求める
         self.stmts.push(format!(
-            "else {result} = {} - ({cs_ty})Convert.ToString(({opnd} | {or_opnd}), 2).LastIndexOf('1');",
+            "else {result} = {} - ({cs_ty})Convert.ToString(({opnd} | ({or_opnd} - 1)), 2).LastIndexOf('1');",
             bits - 1,
         ));
         Ok(())
@@ -1253,11 +1257,11 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i32_const(&mut self, value: i32) -> Self::Output {
-        self.visit_const(ValType::I32, value as i32)
+        self.visit_const(ValType::I32, value)
     }
 
     fn visit_i64_const(&mut self, value: i64) -> Self::Output {
-        self.visit_const(ValType::I64, value as i64)
+        self.visit_const(ValType::I64, value)
     }
 
     fn visit_f32_const(&mut self, value: Ieee32) -> Self::Output {
