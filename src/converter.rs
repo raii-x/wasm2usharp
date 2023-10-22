@@ -55,7 +55,12 @@ impl<'input> Converter<'input> {
         }
     }
 
-    pub fn convert(&mut self, out_file: &mut impl Write) -> Result<Vec<Import<'input>>> {
+    /// import_mapはモジュール名をモジュールと対応するクラス型の名前に変換する関数
+    pub fn convert(
+        &mut self,
+        out_file: &mut impl Write,
+        import_map: impl Fn(&str) -> String,
+    ) -> Result<HashSet<&'input str>> {
         writeln!(out_file, "using System;")?;
         if !self.test {
             writeln!(out_file, "using UdonSharp;")?;
@@ -69,55 +74,64 @@ impl<'input> Converter<'input> {
             writeln!(out_file, ": UdonSharpBehaviour {{")?;
         }
 
-        let mut imports = Vec::new();
+        let mut import_modules = HashSet::new();
 
         for payload in Parser::new(0).parse_all(self.buf) {
-            self.convert_payload(out_file, payload?, &mut imports)?;
+            self.convert_payload(out_file, payload?, &mut import_modules)?;
+        }
+
+        // インポートするモジュールの宣言
+        for module in import_modules.iter() {
+            let module_ident = convert_to_ident(module);
+            writeln!(out_file, "public {} {module_ident};", import_map(module))?;
         }
 
         // グローバル変数宣言
         for global in &self.globals {
-            if global.export || self.test && global.import {
+            if global.import {
+                continue;
+            }
+
+            if global.export {
                 write!(out_file, "public ")?
             }
 
             let cs_ty = get_cs_ty(global.ty.content_type);
-            if self.test {
-                // テストの場合はグローバル変数は1要素の配列で表す
-                writeln!(out_file, "{cs_ty}[] {} = new {cs_ty}[1];", global.name)?;
-            } else {
-                writeln!(out_file, "{cs_ty} {};", global.name)?;
-            }
+            writeln!(out_file, "{cs_ty} {};", global.name)?;
         }
 
         // テーブル宣言
         if let Some(table) = &self.table {
-            if table.export || self.test && table.import {
-                write!(out_file, "public ")?
+            if !table.import {
+                if table.export {
+                    write!(out_file, "public ")?
+                }
+
+                // テストの場合はuintとAction/Funcを混在させるため
+                // テーブルはobjectの配列で表す
+                let elem_cs_ty = if self.test { "object" } else { "uint" };
+
+                writeln!(
+                    out_file,
+                    "{elem_cs_ty}[] {} = new {elem_cs_ty}[{}];",
+                    table.name, table.ty.initial
+                )?;
             }
-
-            // テストの場合はuintとAction/Funcを混在させるため
-            // テーブルはobjectの配列で表す
-            let elem_cs_ty = if self.test { "object" } else { "uint" };
-
-            writeln!(
-                out_file,
-                "{elem_cs_ty}[] {} = new {elem_cs_ty}[{}];",
-                table.name, table.ty.initial
-            )?;
         }
 
         // メモリー宣言
         if let Some(memory) = &self.memory {
-            if memory.export || self.test && memory.import {
-                write!(out_file, "public ")?
+            if !memory.import {
+                if memory.export {
+                    write!(out_file, "public ")?
+                }
+                writeln!(
+                    out_file,
+                    "byte[] {} = new byte[{}];",
+                    memory.name,
+                    memory.ty.initial * PAGE_SIZE as u64
+                )?;
             }
-            writeln!(
-                out_file,
-                "byte[] {} = new byte[{}];",
-                memory.name,
-                memory.ty.initial * PAGE_SIZE as u64
-            )?;
         }
 
         self.write_call_indirects(out_file)?;
@@ -126,14 +140,14 @@ impl<'input> Converter<'input> {
 
         writeln!(out_file, "}}")?;
 
-        Ok(imports)
+        Ok(import_modules)
     }
 
     fn convert_payload(
         &mut self,
         out_file: &mut impl Write,
         payload: wasmparser::Payload<'input>,
-        imports: &mut Vec<Import<'input>>,
+        import_modules: &mut HashSet<&'input str>,
     ) -> Result<()> {
         use wasmparser::Payload::*;
         match payload {
@@ -156,28 +170,24 @@ impl<'input> Converter<'input> {
                     use wasmparser::TypeRef::*;
                     let import = import?;
 
+                    import_modules.insert(import.module);
+
                     let name = convert_to_ident(import.name);
-                    let full_name = format!("{}__{}", convert_to_ident(import.module), name);
+                    let full_name = format!("{}.{name}", convert_to_ident(import.module));
 
                     match import.ty {
-                        Func(ty) => self.add_func(out_file, ty, Some(full_name.clone()))?,
+                        Func(ty) => self.add_func(ty, Some(full_name.clone())),
                         Table(ty) => self.add_table(ty, Some(full_name.clone())),
                         Memory(ty) => self.add_memory(ty, Some(full_name.clone())),
                         Global(ty) => self.add_global(ty, None, Some(full_name.clone())),
                         Tag(_) => panic!("Tag import is not supported"),
                     }
-
-                    imports.push(Import {
-                        module: import.module,
-                        name,
-                        full_name,
-                    });
                 }
             }
             FunctionSection(s) => {
                 for func in s {
                     let func = func?;
-                    self.add_func(out_file, func, None)?;
+                    self.add_func(func, None);
                 }
             }
             TableSection(s) => {
@@ -415,11 +425,7 @@ impl<'input> Converter<'input> {
 
             // グローバル変数の初期値を代入
             if let Some(init_expr) = &global.init_expr {
-                if self.test {
-                    writeln!(out_file, "{}[0] = {init_expr};", global.name)?;
-                } else {
-                    writeln!(out_file, "{} = {init_expr};", global.name)?;
-                }
+                writeln!(out_file, "{} = {init_expr};", global.name)?;
             }
         }
         if let Some(table) = self.table.as_ref() {
@@ -454,7 +460,7 @@ impl<'input> Converter<'input> {
         Ok(())
     }
 
-    fn add_func(&mut self, out_file: &mut impl Write, ty: u32, name: Option<String>) -> Result<()> {
+    fn add_func(&mut self, ty: u32, name: Option<String>) {
         let import = name.is_some();
         let name = match name {
             Some(x) => x,
@@ -463,22 +469,14 @@ impl<'input> Converter<'input> {
         let ty = self.types[ty as usize].clone();
 
         if import {
-            // インポートされる関数なら、ActionかFunc型の変数を宣言
-            if ty.params().len() <= MAX_PARAMS {
-                let del = func_delegate(&ty);
-                writeln!(out_file, "public {del} {name};")?;
-            }
-
             self.code_idx += 1;
         }
 
         self.funcs.push(Func {
             name,
             ty,
-            import,
             export: false,
         });
-        Ok(())
     }
 
     fn add_table(&mut self, ty: TableType, name: Option<String>) {
@@ -554,10 +552,7 @@ impl<'input> Converter<'input> {
             I64Const { value } => format!("{}", value as u64),
             F32Const { value } => format!("{:e}f", f32::from_bits(value.bits())),
             F64Const { value } => format!("{:e}", f64::from_bits(value.bits())),
-            GlobalGet { global_index } => {
-                self.globals[global_index as usize].name.to_string()
-                    + if self.test { "[0]" } else { "" }
-            }
+            GlobalGet { global_index } => self.globals[global_index as usize].name.to_string(),
             _ => panic!("Not supported const expr operator"),
         };
 
@@ -596,7 +591,6 @@ fn func_delegate(ty: &FuncType) -> String {
 struct Func {
     name: String,
     ty: FuncType,
-    import: bool,
     export: bool,
 }
 
@@ -630,12 +624,6 @@ struct Element {
 struct Data<'a> {
     offset_expr: String,
     data: &'a [u8],
-}
-
-pub struct Import<'input> {
-    pub module: &'input str,
-    pub name: String,
-    pub full_name: String,
 }
 
 fn func_header(

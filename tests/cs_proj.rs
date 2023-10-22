@@ -6,7 +6,7 @@ use std::{
 };
 
 use tempfile::{tempdir, TempDir};
-use wasm2usharp::converter::{Converter, INIT};
+use wasm2usharp::converter::{convert_to_ident, Converter, INIT};
 use wast::token::Id;
 
 pub struct CsProj<'input> {
@@ -48,17 +48,18 @@ impl<'input> CsProj<'input> {
         // クラス名.csのファイルに書き込み
         let cs_path = self.dir.path().join(format!("{class_name}.cs"));
         let mut cs_file = File::create(cs_path).unwrap();
-        let imports = conv.convert(&mut cs_file).unwrap();
+        let imports = conv
+            .convert(&mut cs_file, |module| {
+                format!("Module{}", self.reg_modules.get(module).unwrap())
+            })
+            .unwrap();
 
         // インポート宣言を変換
         let imports = imports
             .into_iter()
-            .filter_map(|import| {
-                self.reg_modules.get(import.module).map(|module| CsImport {
-                    module: *module,
-                    name: import.name,
-                    full_name: import.full_name,
-                })
+            .map(|import| CsImport {
+                module: *self.reg_modules.get(import).unwrap(),
+                name: convert_to_ident(import),
             })
             .collect();
 
@@ -132,14 +133,9 @@ impl<'input> CsProj<'input> {
             for CsImport {
                 module: im_module,
                 name,
-                full_name,
             } in &module.imports
             {
-                writeln!(
-                    cs_file,
-                    "instance{i}.{full_name} = instance{im_module}.{name};"
-                )
-                .unwrap();
+                writeln!(cs_file, "instance{i}.{name} = instance{im_module};").unwrap();
             }
 
             writeln!(cs_file, "instances[{i}] = instance{i};").unwrap();
@@ -183,8 +179,7 @@ while ((line = Console.ReadLine()) != null) {{
         case "get":
             string name = args[2];
             var fi = t.GetField(name) ?? throw new ArgumentException($"Global variable '{{name}}' is not found");
-            var result = (Array)fi.GetValue(instances[iModule])!;
-            WriteResult(result.GetValue(0));
+            WriteResult(fi.GetValue(instances[iModule])!);
 
             break;
 
@@ -229,7 +224,6 @@ struct CsModule {
 struct CsImport {
     module: usize,
     name: String,
-    full_name: String,
 }
 
 pub struct CsProjExec<'input, 'a> {

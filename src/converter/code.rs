@@ -1082,11 +1082,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(global.ty.content_type);
         self.push_stack(var);
 
-        self.stmts.push(if self.conv.test {
-            format!("{var} = {}[0];", global.name)
-        } else {
-            format!("{var} = {};", global.name)
-        });
+        self.stmts.push(format!("{var} = {};", global.name));
         Ok(())
     }
 
@@ -1094,11 +1090,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let global = &self.conv.globals[global_index as usize];
         let var = self.pop_stack();
 
-        self.stmts.push(if self.conv.test {
-            format!("{}[0] = {var};", global.name)
-        } else {
-            format!("{} = {var};", global.name)
-        });
+        self.stmts.push(format!("{} = {var};", global.name));
         Ok(())
     }
 

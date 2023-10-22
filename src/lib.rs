@@ -7,7 +7,7 @@ use std::{env, process::ExitCode};
 
 use wasmparser::validate;
 
-use converter::Converter;
+use converter::{convert_to_ident, Converter};
 
 pub fn lib_main() -> ExitCode {
     let mut file_path = None;
@@ -40,7 +40,11 @@ pub fn lib_main() -> ExitCode {
     let buf: Vec<u8> = std::fs::read(file_path).unwrap();
     validate(&buf).unwrap();
     let mut converter = Converter::new(&buf, "Wasm2USharp", test);
-    converter.convert(&mut std::io::stdout()).unwrap();
+    converter
+        .convert(&mut std::io::stdout(), |module| {
+            format!("class_{}", convert_to_ident(module))
+        })
+        .unwrap();
 
     ExitCode::SUCCESS
 }
