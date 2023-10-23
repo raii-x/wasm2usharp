@@ -3,52 +3,46 @@
 pub mod converter;
 pub mod util;
 
-use std::{env, process::ExitCode};
+use std::{
+    fs,
+    io::{BufWriter, Write},
+    process::ExitCode,
+};
 
+use clap::Parser;
 use wasmparser::validate;
 
 use converter::{convert_to_ident, Converter};
 
+#[derive(Parser, Debug)]
+struct Args {
+    /// Input file
+    input: String,
+    /// Write output to file
+    #[arg(short)]
+    output: Option<String>,
+    /// Convert to C# for test
+    #[arg(long)]
+    test: bool,
+}
+
 pub fn lib_main() -> ExitCode {
-    let mut file_path = None;
-    let mut test = false;
+    let args = Args::parse();
 
-    let args = env::args().collect::<Vec<_>>();
-    for arg in &args[1..] {
-        match arg.as_str() {
-            "--test" => test = true,
-            _ => match file_path {
-                Some(_) => {
-                    // 入力ファイルが2個以上指定されている場合はエラー
-                    show_usage(&args[0]);
-                    return ExitCode::FAILURE;
-                }
-                None => file_path = Some(arg),
-            },
-        }
-    }
-
-    let file_path = match file_path {
-        Some(x) => x,
-        None => {
-            // 入力ファイルが指定されていない場合はエラー
-            show_usage(&args[0]);
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let buf: Vec<u8> = std::fs::read(file_path).unwrap();
+    let buf: Vec<u8> = std::fs::read(args.input).unwrap();
     validate(&buf).unwrap();
-    let mut converter = Converter::new(&buf, "Wasm2USharp", test);
+    let mut converter = Converter::new(&buf, "Wasm2USharp", args.test);
+
+    let mut out_file = BufWriter::new(match args.output {
+        Some(x) => Box::new(fs::File::create(x).unwrap()) as Box<dyn Write>,
+        None => Box::new(std::io::stdout()) as Box<dyn Write>,
+    });
+
     converter
-        .convert(&mut std::io::stdout(), |module| {
+        .convert(&mut out_file, |module| {
             format!("class_{}", convert_to_ident(module))
         })
         .unwrap();
 
     ExitCode::SUCCESS
-}
-
-fn show_usage(program: &str) {
-    println!("Usage: {} [--test] file", program);
 }
