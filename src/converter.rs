@@ -93,7 +93,7 @@ impl<'input> Converter<'input> {
             }
 
             if global.export {
-                write!(out_file, "public ")?
+                write!(out_file, "[NonSerialized] public ")?
             }
 
             let cs_ty = get_cs_ty(global.ty.content_type);
@@ -104,7 +104,7 @@ impl<'input> Converter<'input> {
         if let Some(table) = &self.table {
             if !table.import {
                 if table.export {
-                    write!(out_file, "public ")?
+                    write!(out_file, "[NonSerialized] public ")?
                 }
 
                 // テストの場合はuintとAction/Funcを混在させるため
@@ -123,7 +123,7 @@ impl<'input> Converter<'input> {
         if let Some(memory) = &self.memory {
             if !memory.import {
                 if memory.export {
-                    write!(out_file, "public ")?
+                    write!(out_file, "[NonSerialized] public ")?
                 }
                 writeln!(
                     out_file,
