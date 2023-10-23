@@ -462,11 +462,18 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let f_cs_ty = get_cs_ty(f_ty);
         let i_cs_ty = get_cs_ty(i_ty);
         let class = self.math_class(f_ty);
+        let subnormal_bound = match f_ty {
+            ValType::F32 => "1.1754944e-38f",
+            ValType::F64 => "2.2250738585072014e-308",
+            _ => unreachable!(),
+        };
 
         self.stmts.push("{".to_string());
         self.stmts.push(format!("{i_cs_ty} sign;"));
         self.stmts.push(format!("{i_cs_ty} expo;"));
         self.stmts.push(format!("{i_cs_ty} frac;"));
+        self.stmts
+            .push(format!("var absVar = {class}.Abs({f_var});"));
 
         self.stmts.push(format!("if ({f_var} == 0) {{"));
         {
@@ -495,7 +502,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
                 .push(format!("frac = {};", 1u64 << (frac_bits - 1)));
         }
         self.stmts
-            .push(format!("}} else if ({f_cs_ty}.IsSubnormal({f_var})) {{"));
+            .push(format!("}} else if (absVar < {subnormal_bound}) {{",));
         {
             // 非正規化数の場合
             self.stmts.push(format!("sign = {f_var} > 0 ? 0 : 1;"));
@@ -507,8 +514,6 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         self.stmts.push("} else {".to_string());
         {
             self.stmts.push(format!("sign = {f_var} > 0 ? 0 : 1;"));
-            self.stmts
-                .push(format!("var absVar = {class}.Abs({f_var});"));
             self.stmts
                 .push(format!("var expoF = {class}.Floor({class}.Log2(absVar));"));
             self.stmts
