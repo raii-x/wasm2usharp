@@ -67,7 +67,7 @@ impl<'input> Converter<'input> {
             writeln!(out_file, "using UnityEngine;")?;
         }
 
-        write!(out_file, "class {} ", self.class_name)?;
+        write!(out_file, "public class {} ", self.class_name)?;
         if self.test {
             writeln!(out_file, "{{")?;
         } else {
