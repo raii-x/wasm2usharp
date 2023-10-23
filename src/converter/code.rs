@@ -780,6 +780,19 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
+    fn visit_copysign_op(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
+        let rhs = self.pop_stack();
+        let lhs = self.pop_stack();
+        let result = self.new_var(ty);
+        self.push_stack(result);
+
+        self.stmts.push(format!(
+            "{result} = {0}.Abs({lhs}) * (({rhs} == 0 ? 1 / {rhs} : {rhs}) > 0 ? 1 : -1);",
+            self.math_class(ty)
+        ));
+        Ok(())
+    }
+
     fn visit_cast(
         &mut self,
         result_ty: ValType,
@@ -1619,7 +1632,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_f32_copysign(&mut self) -> Self::Output {
-        self.visit_math_bin_op(ValType::F32, "CopySign")
+        self.visit_copysign_op(ValType::F32)
     }
 
     fn visit_f64_abs(&mut self) -> Self::Output {
@@ -1675,7 +1688,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_f64_copysign(&mut self) -> Self::Output {
-        self.visit_math_bin_op(ValType::F64, "CopySign")
+        self.visit_copysign_op(ValType::F64)
     }
 
     fn visit_i32_wrap_i64(&mut self) -> Self::Output {

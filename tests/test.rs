@@ -48,7 +48,7 @@ test!(test_const, "const");
 test!(
     test_conversions,
     "conversions",
-    deny_float_nan_case(&["i32.reinterpret_f32", "i64.reinterpret_f64"])
+    deny_float_nan_case(0, &["i32.reinterpret_f32", "i64.reinterpret_f64"])
 );
 test!(test_custom, "custom");
 test!(test_data, "data");
@@ -56,10 +56,18 @@ test!(test_elem, "elem");
 test!(test_endianness, "endianness");
 test!(test_exports, "exports");
 test!(test_f32, "f32");
-test!(test_f32_bitwise, "f32_bitwise");
+test!(
+    test_f32_bitwise,
+    "f32_bitwise",
+    deny_float_nan_case(1, &["copysign"])
+);
 test!(test_f32_cmp, "f32_cmp");
 test!(test_f64, "f64");
-test!(test_f64_bitwise, "f64_bitwise");
+test!(
+    test_f64_bitwise,
+    "f64_bitwise",
+    deny_float_nan_case(1, &["copysign"])
+);
 test!(test_f64_cmp, "f64_cmp");
 test!(test_fac, "fac");
 test!(
@@ -165,10 +173,10 @@ where
     }
 }
 
-// 最初の引数がNaNなら処理しない
-fn deny_float_nan_case(names: &'static [&'static str]) -> impl Filter {
+// indexで指定された引数がNaNなら処理しない
+fn deny_float_nan_case(index: usize, names: &'static [&'static str]) -> impl Filter {
     deny_assert_return(names, move |invoke, _| {
-        !(match &invoke.args[0] {
+        !(match &invoke.args[index] {
             WastArg::Core(x) => match x {
                 WastArgCore::F32(x) => f32::from_bits(x.bits).is_nan(),
                 WastArgCore::F64(x) => f64::from_bits(x.bits).is_nan(),
