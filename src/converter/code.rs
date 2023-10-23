@@ -641,6 +641,31 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         Ok(())
     }
 
+    fn visit_rem_op(&mut self, ty: ValType, signed: bool) -> <Self as VisitOperator<'_>>::Output {
+        let rhs = self.pop_stack();
+        let lhs = self.pop_stack();
+        let result = self.new_var(ty);
+        self.push_stack(result);
+
+        if signed {
+            self.stmts
+                .push(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
+        } else {
+            let cs_ty = get_cs_ty(ty);
+            let cs_ty_u = "u".to_string() + cs_ty;
+
+            self.stmts.push("{".to_string());
+            self.stmts.push(format!("var lhs_u = ({cs_ty_u}){lhs};"));
+            self.stmts.push(format!("var rhs_u = ({cs_ty_u}){rhs};"));
+            self.stmts.push(format!(
+                "{result} = ({cs_ty})(lhs_u - lhs_u / rhs_u * rhs_u);"
+            ));
+            self.stmts.push("}".to_string());
+        };
+
+        Ok(())
+    }
+
     fn visit_shift_op(
         &mut self,
         ty: ValType,
@@ -1472,7 +1497,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i32_rem_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "%", false, false)
+        self.visit_rem_op(ValType::I32, false)
     }
 
     fn visit_i32_and(&mut self) -> Self::Output {
@@ -1540,11 +1565,11 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     }
 
     fn visit_i64_rem_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "%", false, true)
+        self.visit_rem_op(ValType::I64, true)
     }
 
     fn visit_i64_rem_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "%", false, false)
+        self.visit_rem_op(ValType::I64, false)
     }
 
     fn visit_i64_and(&mut self) -> Self::Output {
