@@ -514,8 +514,9 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         self.stmts.push("} else {".to_string());
         {
             self.stmts.push(format!("sign = {f_var} > 0 ? 0 : 1;"));
-            self.stmts
-                .push(format!("var expoF = {class}.Floor({class}.Log2(absVar));"));
+            self.stmts.push(format!(
+                "var expoF = {class}.Floor({class}.Log(absVar, 2));"
+            ));
             self.stmts
                 .push(format!("if (expoF >= {}) {{", expo_offset + 1));
             {
