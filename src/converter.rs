@@ -10,20 +10,19 @@ use wasmparser::{
     RecGroup, StructuralType, TableType, ValType,
 };
 
-use crate::converter::code::CodeConverter;
+use self::code::{Code, CodeConverter};
 
-pub struct Converter<'input> {
+struct Module<'input> {
     buf: &'input [u8],
     class_name: &'input str,
     test: bool,
     types: Vec<FuncType>,
-    funcs: Vec<Func>,
+    funcs: Vec<(Func, Option<Code>)>,
     table: Option<Table>,
     memory: Option<Memory>,
     globals: Vec<Global>,
     elements: Vec<Element>,
     datas: Vec<Data<'input>>,
-    code_idx: usize,
     start_func: Option<u32>,
 }
 
@@ -37,8 +36,8 @@ pub const INIT: &str = "w2us_init";
 const CALL_INDIRECT: &str = "w2us_call_indirect";
 const MAX_PARAMS: usize = 16;
 
-impl<'input> Converter<'input> {
-    pub fn new(buf: &'input [u8], class_name: &'input str, test: bool) -> Self {
+impl<'input> Module<'input> {
+    fn new(buf: &'input [u8], class_name: &'input str, test: bool) -> Self {
         Self {
             buf,
             class_name,
@@ -50,25 +49,38 @@ impl<'input> Converter<'input> {
             globals: Vec::new(),
             elements: Vec::new(),
             datas: Vec::new(),
-            code_idx: 0,
             start_func: None,
+        }
+    }
+}
+
+struct Converter<'input, 'module> {
+    module: &'module mut Module<'input>,
+    code_idx: usize,
+}
+
+impl<'input, 'module> Converter<'input, 'module> {
+    fn new(module: &'module mut Module<'input>) -> Self {
+        Self {
+            module,
+            code_idx: 0,
         }
     }
 
     /// import_mapはモジュール名をモジュールと対応するクラス型の名前に変換する関数
-    pub fn convert(
+    fn convert(
         &mut self,
         out_file: &mut impl Write,
         import_map: impl Fn(&str) -> String,
     ) -> Result<HashSet<&'input str>> {
         writeln!(out_file, "using System;")?;
-        if !self.test {
+        if !self.module.test {
             writeln!(out_file, "using UdonSharp;")?;
             writeln!(out_file, "using UnityEngine;")?;
         }
 
-        write!(out_file, "public class {} ", self.class_name)?;
-        if self.test {
+        write!(out_file, "public class {} ", self.module.class_name)?;
+        if self.module.test {
             writeln!(out_file, "{{")?;
         } else {
             writeln!(out_file, ": UdonSharpBehaviour {{")?;
@@ -76,7 +88,7 @@ impl<'input> Converter<'input> {
 
         let mut import_modules = HashSet::new();
 
-        for payload in Parser::new(0).parse_all(self.buf) {
+        for payload in Parser::new(0).parse_all(self.module.buf) {
             self.convert_payload(out_file, payload?, &mut import_modules)?;
         }
 
@@ -87,7 +99,7 @@ impl<'input> Converter<'input> {
         }
 
         // グローバル変数宣言
-        for global in &self.globals {
+        for global in &self.module.globals {
             if global.import {
                 continue;
             }
@@ -101,7 +113,7 @@ impl<'input> Converter<'input> {
         }
 
         // テーブル宣言
-        if let Some(table) = &self.table {
+        if let Some(table) = &self.module.table {
             if !table.import {
                 if table.export {
                     write!(out_file, "[NonSerialized] public ")?
@@ -109,7 +121,7 @@ impl<'input> Converter<'input> {
 
                 // テストの場合はuintとAction/Funcを混在させるため
                 // テーブルはobjectの配列で表す
-                let elem_cs_ty = if self.test { "object" } else { "uint" };
+                let elem_cs_ty = if self.module.test { "object" } else { "uint" };
 
                 writeln!(
                     out_file,
@@ -120,7 +132,7 @@ impl<'input> Converter<'input> {
         }
 
         // メモリー宣言
-        if let Some(memory) = &self.memory {
+        if let Some(memory) = &self.module.memory {
             if !memory.import {
                 if memory.export {
                     write!(out_file, "[NonSerialized] public ")?
@@ -158,7 +170,7 @@ impl<'input> Converter<'input> {
                 for ty in s {
                     match ty? {
                         RecGroup::Single(ty) => match ty.structural_type {
-                            StructuralType::Func(ty) => self.types.push(ty),
+                            StructuralType::Func(ty) => self.module.types.push(ty),
                             _ => panic!("Non-function types are not supported"),
                         },
                         _ => panic!("Non-function types are not supported"),
@@ -216,22 +228,22 @@ impl<'input> Converter<'input> {
                     let name = convert_to_ident(export.name);
                     match export.kind {
                         Func => {
-                            let func = &mut self.funcs[export.index as usize];
-                            func.name = name;
-                            func.export = true;
+                            let func = &mut self.module.funcs[export.index as usize];
+                            func.0.name = name;
+                            func.0.export = true;
                         }
                         Table => {
-                            let table = self.table.as_mut().unwrap();
+                            let table = self.module.table.as_mut().unwrap();
                             table.name = name;
                             table.export = true;
                         }
                         Memory => {
-                            let memory = self.memory.as_mut().unwrap();
+                            let memory = self.module.memory.as_mut().unwrap();
                             memory.name = name;
                             memory.export = true;
                         }
                         Global => {
-                            let global = &mut self.globals[export.index as usize];
+                            let global = &mut self.module.globals[export.index as usize];
                             global.name = name;
                             global.export = true;
                         }
@@ -242,7 +254,7 @@ impl<'input> Converter<'input> {
                 }
             }
             StartSection { func, .. } => {
-                self.start_func = Some(func);
+                self.module.start_func = Some(func);
             }
             ElementSection(s) => {
                 for (i, elem) in s.into_iter().enumerate() {
@@ -269,14 +281,15 @@ impl<'input> Converter<'input> {
                     // テストの際、使用するテーブルを外部からインポートするモジュールの場合、
                     // エレメント配列内にC#メソッドのデリゲートを格納する。
                     // それ以外の場合は、uintで関数のインデックス+1を表す
-                    let use_delegate = self.test && self.table.as_ref().unwrap().import;
+                    let use_delegate =
+                        self.module.test && self.module.table.as_ref().unwrap().import;
                     let cs_ty = if use_delegate { "object" } else { "uint" };
                     let eq = if use_delegate { "=>" } else { "=" };
                     write!(out_file, "{cs_ty}[] {ELEMENT}{i} {eq} new {cs_ty}[] {{ ",)?;
 
                     for &item in items.iter() {
                         if use_delegate {
-                            write!(out_file, "{},", self.funcs[item as usize].name)?;
+                            write!(out_file, "{},", self.module.funcs[item as usize].0.name)?;
                         } else {
                             // テーブルに格納される関数インデックスは元のインデックスに1を足したもの
                             // (配列の初期値の0でnullを表現するため)
@@ -286,7 +299,7 @@ impl<'input> Converter<'input> {
 
                     writeln!(out_file, " }};")?;
 
-                    self.elements.push(Element { offset_expr, items });
+                    self.module.elements.push(Element { offset_expr, items });
                 }
             }
             DataSection(s) => {
@@ -304,7 +317,7 @@ impl<'input> Converter<'input> {
                         }
                         DataKind::Passive => panic!("Passive data segment is not supported"),
                     };
-                    self.datas.push(Data {
+                    self.module.datas.push(Data {
                         offset_expr,
                         data: data.data,
                     });
@@ -318,8 +331,9 @@ impl<'input> Converter<'input> {
                 }
             }
             CodeSectionEntry(s) => {
-                let mut code_conv = CodeConverter::new(self, self.code_idx);
-                code_conv.convert(s, out_file)?;
+                let code_conv = CodeConverter::new(self.module, self.code_idx);
+                let code = code_conv.convert(s, out_file)?;
+                self.module.funcs[self.code_idx].1 = Some(code);
                 self.code_idx += 1;
             }
             _other => {
@@ -330,12 +344,12 @@ impl<'input> Converter<'input> {
     }
 
     fn write_call_indirects(&self, out_file: &mut impl Write) -> Result<()> {
-        let table = match &self.table {
+        let table = match &self.module.table {
             Some(x) => x,
             None => return Ok(()), // テーブルが無ければreturn
         };
 
-        for (i_ty, ty) in self.types.iter().enumerate() {
+        for (i_ty, ty) in self.module.types.iter().enumerate() {
             let name = format!("{CALL_INDIRECT}{i_ty}");
 
             // call_indirect関数が受け取る引数リスト
@@ -358,7 +372,7 @@ impl<'input> Converter<'input> {
             )?;
 
             let table_name = &table.name;
-            let use_delegate = self.test && ty.params().len() <= MAX_PARAMS;
+            let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
@@ -368,10 +382,10 @@ impl<'input> Converter<'input> {
             writeln!(
                 out_file,
                 "switch ({}{table_name}[index]) {{",
-                if self.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
+                if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
             )?;
-            for (i, func) in self.funcs.iter().enumerate() {
-                if func.ty != *ty {
+            for (i, func) in self.module.funcs.iter().enumerate() {
+                if func.0.ty != *ty {
                     continue;
                 }
 
@@ -380,19 +394,19 @@ impl<'input> Converter<'input> {
                         out_file,
                         "case {}: {}({call_params}); return;",
                         i + 1,
-                        func.name
+                        func.0.name
                     )?;
                 } else {
                     writeln!(
                         out_file,
                         "case {}: return {}({call_params});",
                         i + 1,
-                        func.name
+                        func.0.name
                     )?;
                 }
             }
             write!(out_file, "default: ")?;
-            write!(out_file, "{}", self.trap("invalid table value"))?;
+            write!(out_file, "{}", trap(self.module, "invalid table value"))?;
             write!(out_file, "return")?;
             if ty.results().is_empty() {
                 writeln!(out_file, ";")?;
@@ -426,7 +440,7 @@ impl<'input> Converter<'input> {
 
     fn write_init_method(&self, out_file: &mut impl Write) -> Result<()> {
         writeln!(out_file, "public void {INIT}() {{")?;
-        for global in &self.globals {
+        for global in &self.module.globals {
             if global.import {
                 continue;
             }
@@ -436,27 +450,31 @@ impl<'input> Converter<'input> {
                 writeln!(out_file, "{} = {init_expr};", global.name)?;
             }
         }
-        for (i, Element { offset_expr, items }) in self.elements.iter().enumerate() {
+        for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
             writeln!(
                 out_file,
                 "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
-                self.table.as_ref().unwrap().name,
+                self.module.table.as_ref().unwrap().name,
                 items.len()
             )?;
         }
-        for (i, Data { offset_expr, data }) in self.datas.iter().enumerate() {
+        for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
             // メモリへのデータのコピー
             writeln!(
                 out_file,
                 "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
-                self.memory.as_ref().unwrap().name,
+                self.module.memory.as_ref().unwrap().name,
                 data.len()
             )?;
         }
-        if let Some(start_func) = self.start_func {
+        if let Some(start_func) = self.module.start_func {
             // start関数の呼び出し
-            writeln!(out_file, "{}();", self.funcs[start_func as usize].name)?;
+            writeln!(
+                out_file,
+                "{}();",
+                self.module.funcs[start_func as usize].0.name
+            )?;
         }
         writeln!(out_file, "}}")?;
         Ok(())
@@ -466,23 +484,26 @@ impl<'input> Converter<'input> {
         let import = name.is_some();
         let name = match name {
             Some(x) => x,
-            None => format!("{W2US_PREFIX}func{}", self.funcs.len()),
+            None => format!("{W2US_PREFIX}func{}", self.module.funcs.len()),
         };
-        let ty = self.types[ty as usize].clone();
+        let ty = self.module.types[ty as usize].clone();
 
         if import {
             self.code_idx += 1;
         }
 
-        self.funcs.push(Func {
-            name,
-            ty,
-            export: false,
-        });
+        self.module.funcs.push((
+            Func {
+                name,
+                ty,
+                export: false,
+            },
+            None,
+        ));
     }
 
     fn add_table(&mut self, ty: TableType, name: Option<String>) {
-        assert!(self.table.is_none());
+        assert!(self.module.table.is_none());
         assert!(ty.element_type.is_func_ref());
 
         let import = name.is_some();
@@ -491,7 +512,7 @@ impl<'input> Converter<'input> {
             None => TABLE.to_string(),
         };
 
-        self.table = Some(Table {
+        self.module.table = Some(Table {
             name,
             ty,
             import,
@@ -500,7 +521,7 @@ impl<'input> Converter<'input> {
     }
 
     fn add_memory(&mut self, ty: MemoryType, name: Option<String>) {
-        assert!(self.memory.is_none());
+        assert!(self.module.memory.is_none());
 
         let import = name.is_some();
         let name = match name {
@@ -508,7 +529,7 @@ impl<'input> Converter<'input> {
             None => MEMORY.to_string(),
         };
 
-        self.memory = Some(Memory {
+        self.module.memory = Some(Memory {
             name,
             ty,
             import,
@@ -525,25 +546,17 @@ impl<'input> Converter<'input> {
         let import = name.is_some();
         let name = match name {
             Some(x) => x,
-            None => format!("{W2US_PREFIX}global{}", self.globals.len()),
+            None => format!("{W2US_PREFIX}global{}", self.module.globals.len()),
         };
         let init_expr = init_expr.map(|x| self.convert_const_expr(&x));
 
-        self.globals.push(Global {
+        self.module.globals.push(Global {
             ty,
             name,
             init_expr,
             import,
             export: false,
         });
-    }
-
-    fn trap(&self, message: &str) -> String {
-        if self.test {
-            format!("throw new Exception(\"{message}\");")
-        } else {
-            format!("Debug.LogError(\"{message}\");")
-        }
     }
 
     fn convert_const_expr(&self, expr: &ConstExpr<'_>) -> String {
@@ -560,7 +573,9 @@ impl<'input> Converter<'input> {
             },
             F32Const { value } => format!("{:e}f", f32::from_bits(value.bits())),
             F64Const { value } => format!("{:e}", f64::from_bits(value.bits())),
-            GlobalGet { global_index } => self.globals[global_index as usize].name.to_string(),
+            GlobalGet { global_index } => {
+                self.module.globals[global_index as usize].name.to_string()
+            }
             _ => panic!("Not supported const expr operator"),
         };
 
@@ -771,4 +786,24 @@ pub fn convert_to_ident(name: &str) -> String {
     let ident = RE.replace_all(name, "_");
 
     prefix.to_string() + ident.as_ref()
+}
+
+fn trap(module: &Module<'_>, message: &str) -> String {
+    if module.test {
+        format!("throw new Exception(\"{message}\");")
+    } else {
+        format!("Debug.LogError(\"{message}\");")
+    }
+}
+
+pub fn convert<'input>(
+    buf: &'input [u8],
+    class_name: &'input str,
+    test: bool,
+    out_file: &mut impl Write,
+    import_map: impl Fn(&str) -> String,
+) -> Result<HashSet<&'input str>> {
+    let mut module = Module::new(buf, class_name, test);
+    let mut conv = Converter::new(&mut module);
+    conv.convert(out_file, import_map)
 }

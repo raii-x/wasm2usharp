@@ -6,7 +6,7 @@ use std::{
 };
 
 use tempfile::{tempdir, TempDir};
-use wasm2usharp::converter::{convert_to_ident, Converter, INIT};
+use wasm2usharp::converter::{convert, convert_to_ident, INIT};
 use wast::token::Id;
 
 pub struct CsProj<'input> {
@@ -43,16 +43,14 @@ impl<'input> CsProj<'input> {
     pub fn add_module(&mut self, id: Option<Id<'input>>, data: &[u8]) {
         let index = self.modules.len();
         let class_name = format!("{MODULE}{index}");
-        let mut conv = Converter::new(data, &class_name, true);
 
         // クラス名.csのファイルに書き込み
         let cs_path = self.dir.path().join(format!("{class_name}.cs"));
         let mut cs_file = File::create(cs_path).unwrap();
-        let imports = conv
-            .convert(&mut cs_file, |module| {
-                format!("Module{}", self.reg_modules.get(module).unwrap())
-            })
-            .unwrap();
+        let imports = convert(data, &class_name, true, &mut cs_file, |module| {
+            format!("Module{}", self.reg_modules.get(module).unwrap())
+        })
+        .unwrap();
 
         // インポート宣言を変換
         let imports = imports

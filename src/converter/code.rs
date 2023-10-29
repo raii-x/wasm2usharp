@@ -11,7 +11,7 @@ use wasmparser::{
 
 use crate::util::bit_mask;
 
-use super::{func_header, get_cs_ty, result_cs_ty, Converter, Func, CALL_INDIRECT, PAGE_SIZE};
+use super::{func_header, get_cs_ty, result_cs_ty, trap, Func, Module, CALL_INDIRECT, PAGE_SIZE};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -30,13 +30,17 @@ macro_rules! define_visit_operator {
     }
 }
 
-pub struct CodeConverter<'input, 'conv> {
-    conv: &'conv Converter<'input>,
+pub struct Code {
+    pub stmts: Vec<String>,
+}
+
+pub struct CodeConverter<'input, 'module> {
+    module: &'module Module<'input>,
     code_idx: usize,
     blocks: Vec<Block>,
     vars: Vec<Var>,
     local_count: u32,
-    stmts: Vec<String>,
+    code: Code,
     /// brの後など、到達不可能なコードの処理時に1加算。
     /// unreachableが1以上の場合のブロックの出現ごとに1加算。
     /// ブロックの終了時に1減算。
@@ -66,25 +70,29 @@ impl fmt::Display for Var {
 const BREAK_DEPTH: &str = "w2us_break_depth";
 const LOOP: &str = "w2us_loop";
 
-impl<'input, 'conv> CodeConverter<'input, 'conv> {
-    pub fn new(conv: &'conv Converter<'input>, code_idx: usize) -> Self {
+impl<'input, 'module> CodeConverter<'input, 'module> {
+    pub(super) fn new(module: &'module Module<'input>, code_idx: usize) -> Self {
         Self {
-            conv,
+            module,
             code_idx,
             blocks: Vec::new(),
             vars: Vec::new(),
             local_count: 0,
-            stmts: Vec::new(),
+            code: Code { stmts: Vec::new() },
             unreachable: 0,
             loop_var_count: 0,
         }
     }
 
-    fn func(&self) -> &'conv Func {
-        &self.conv.funcs[self.code_idx]
+    fn func(&self) -> &'module Func {
+        &self.module.funcs[self.code_idx].0
     }
 
-    pub fn convert(&mut self, body: FunctionBody<'_>, out_file: &mut impl Write) -> Result<()> {
+    fn push_stmt(&mut self, stmt: String) {
+        self.code.stmts.push(stmt);
+    }
+
+    pub fn convert(mut self, body: FunctionBody<'_>, out_file: &mut impl Write) -> Result<Code> {
         for &ty in self.func().ty.params() {
             let _ = self.new_var(ty);
             self.local_count += 1;
@@ -122,12 +130,12 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         }
 
         if let Some(res) = result_var {
-            self.stmts.push(format!("return {res};"));
+            self.push_stmt(format!("return {res};"));
         }
 
         self.write(out_file)?;
 
-        Ok(())
+        Ok(self.code)
     }
 
     fn write(&self, out_file: &mut impl Write) -> Result<()> {
@@ -165,7 +173,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         }
 
         // 本体
-        for stmt in &self.stmts {
+        for stmt in &self.code.stmts {
             writeln!(out_file, "{stmt}")?;
         }
 
@@ -219,15 +227,14 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         if let Some(result) = upper_block.result {
             let current_block = &self.blocks[self.blocks.len() - 1];
             let rhs = current_block.stack.last().unwrap();
-            self.stmts.push(format!("{result} = {rhs};"));
+            self.push_stmt(format!("{result} = {rhs};"));
         }
     }
 
     /// relative_depthが0より大きければBREAK_DEPTHに代入する処理を追加する
     fn set_break_depth(&mut self, relative_depth: u32) {
         if relative_depth > 0 {
-            self.stmts
-                .push(format!("{BREAK_DEPTH} = {relative_depth};"));
+            self.push_stmt(format!("{BREAK_DEPTH} = {relative_depth};"));
         }
     }
 
@@ -272,7 +279,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let mut load = format!("{var} = ");
 
-        let memory = &self.conv.memory.as_ref().unwrap().name;
+        let memory = &self.module.memory.as_ref().unwrap().name;
         match mem_type {
             I8 => load += &format!("{memory}[{0}+{1}];", idx, memarg.offset),
             I16 => load += &format!("{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8;", idx, memarg.offset, get_cs_ty(var_type)),
@@ -284,7 +291,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
                 idx, memarg.offset, get_cs_ty(var_type)),
             _ => unreachable!(),
         }
-        self.stmts.push(load);
+        self.push_stmt(load);
 
         if signed {
             let mut sign;
@@ -304,7 +311,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
                 _ => unreachable!(),
             }
 
-            self.stmts.push(sign);
+            self.push_stmt(sign);
         }
     }
 
@@ -338,57 +345,54 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let cs_ty = get_cs_ty(f_ty);
         let class = self.math_class(f_ty);
 
-        self.stmts.push("{".to_string());
+        self.push_stmt("{".to_string());
 
         // ビット列の各データを抽出
-        self.stmts
-            .push(format!("var sign = ({i_var} >> {}) & 1;", bits - 1));
-        self.stmts.push(format!(
+        self.push_stmt(format!("var sign = ({i_var} >> {}) & 1;", bits - 1));
+        self.push_stmt(format!(
             "var expo = ({i_var} >> {frac_bits}) & {expo_bit_mask};",
         ));
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "var frac = {i_var} & {};",
             bit_mask(frac_bits as u64)
         ));
 
         let sign = format!("(1 - ({cs_ty})sign * 2)");
 
-        self.stmts.push("if (expo == 0) {".to_string());
+        self.push_stmt("if (expo == 0) {".to_string());
         {
-            self.stmts.push("if (frac == 0) {".to_string());
+            self.push_stmt("if (frac == 0) {".to_string());
             // 0の場合
-            self.stmts.push(format!("{f_var} = sign == 0 ? 0f : -0f;"));
-            self.stmts.push("} else {".to_string());
+            self.push_stmt(format!("{f_var} = sign == 0 ? 0f : -0f;"));
+            self.push_stmt("} else {".to_string());
             // 非正規化数の場合
-            self.stmts.push(format!(
+            self.push_stmt(format!(
                 "{f_var} = ({cs_ty})frac * {cs_ty}.Epsilon * {sign};"
             ));
-            self.stmts.push("}".to_string());
+            self.push_stmt("}".to_string());
         }
-        self.stmts
-            .push(format!("}} else if (expo == {expo_bit_mask}) {{"));
+        self.push_stmt(format!("}} else if (expo == {expo_bit_mask}) {{"));
         {
-            self.stmts.push("if (frac == 0) {".to_string());
+            self.push_stmt("if (frac == 0) {".to_string());
             // 無限大の場合
-            self.stmts.push(format!(
+            self.push_stmt(format!(
                 "{f_var} = sign == 0 ? {cs_ty}.PositiveInfinity : {cs_ty}.NegativeInfinity;"
             ));
-            self.stmts.push("} else {".to_string());
+            self.push_stmt("} else {".to_string());
             // NaNの場合
-            self.stmts.push(format!("{f_var} = {cs_ty}.NaN;"));
-            self.stmts.push("}".to_string());
+            self.push_stmt(format!("{f_var} = {cs_ty}.NaN;"));
+            self.push_stmt("}".to_string());
         }
-        self.stmts.push("} else {".to_string());
+        self.push_stmt("} else {".to_string());
         {
             // 浮動小数点数の変数に代入
             let expo = format!("{class}.Pow(2, (int)expo - {})", expo_offset);
             let frac = format!("(({cs_ty})frac / {} + 1)", 1u64 << frac_bits);
-            self.stmts
-                .push(format!("{f_var} = {frac} * {expo} * {sign};"));
+            self.push_stmt(format!("{f_var} = {frac} * {expo} * {sign};"));
         }
-        self.stmts.push("}".to_string());
+        self.push_stmt("}".to_string());
 
-        self.stmts.push("}".to_string());
+        self.push_stmt("}".to_string());
     }
 
     fn visit_int_store(
@@ -407,8 +411,8 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
     fn int_store(&mut self, memarg: MemArg, mem_type: StorageType, idx: Var, var: Var) {
         use {StorageType::*, ValType::*};
 
-        let memory = &self.conv.memory.as_ref().unwrap().name;
-        self.stmts.push(match mem_type {
+        let memory = &self.module.memory.as_ref().unwrap().name;
+        self.push_stmt(match mem_type {
             I8 => format!("{memory}[{0}+{1}]=(byte)({2}&0xff);", idx, memarg.offset, var),
             I16 => {
                 format!(
@@ -468,83 +472,76 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
             _ => unreachable!(),
         };
 
-        self.stmts.push("{".to_string());
-        self.stmts.push(format!("{i_cs_ty} sign;"));
-        self.stmts.push(format!("{i_cs_ty} expo;"));
-        self.stmts.push(format!("{i_cs_ty} frac;"));
-        self.stmts
-            .push(format!("var absVar = {class}.Abs({f_var});"));
+        self.push_stmt("{".to_string());
+        self.push_stmt(format!("{i_cs_ty} sign;"));
+        self.push_stmt(format!("{i_cs_ty} expo;"));
+        self.push_stmt(format!("{i_cs_ty} frac;"));
+        self.push_stmt(format!("var absVar = {class}.Abs({f_var});"));
 
-        self.stmts.push(format!("if ({f_var} == 0) {{"));
+        self.push_stmt(format!("if ({f_var} == 0) {{"));
         {
             // 0の場合
             // 1/0を計算することで+0と-0を区別
-            self.stmts.push(format!("sign = 1 / {f_var} > 0 ? 0 : 1;"));
-            self.stmts.push("expo = 0;".to_string());
-            self.stmts.push("frac = 0;".to_string());
+            self.push_stmt(format!("sign = 1 / {f_var} > 0 ? 0 : 1;"));
+            self.push_stmt("expo = 0;".to_string());
+            self.push_stmt("frac = 0;".to_string());
         }
-        self.stmts
-            .push(format!("}} else if ({f_cs_ty}.IsInfinity({f_var})) {{"));
+        self.push_stmt(format!("}} else if ({f_cs_ty}.IsInfinity({f_var})) {{"));
         {
             // 無限大の場合
-            self.stmts.push(format!("sign = {f_var} > 0 ? 0 : 1;"));
-            self.stmts.push(format!("expo = {expo_bit_mask};"));
-            self.stmts.push("frac = 0;".to_string());
+            self.push_stmt(format!("sign = {f_var} > 0 ? 0 : 1;"));
+            self.push_stmt(format!("expo = {expo_bit_mask};"));
+            self.push_stmt("frac = 0;".to_string());
         }
-        self.stmts
-            .push(format!("}} else if ({f_cs_ty}.IsNaN({f_var})) {{"));
+        self.push_stmt(format!("}} else if ({f_cs_ty}.IsNaN({f_var})) {{"));
         {
             // NaNの場合
-            self.stmts.push("sign = 1;".to_string());
-            self.stmts.push(format!("expo = {expo_bit_mask};"));
+            self.push_stmt("sign = 1;".to_string());
+            self.push_stmt(format!("expo = {expo_bit_mask};"));
             // MSBだけが1
-            self.stmts
-                .push(format!("frac = {};", 1u64 << (frac_bits - 1)));
+            self.push_stmt(format!("frac = {};", 1u64 << (frac_bits - 1)));
         }
-        self.stmts
-            .push(format!("}} else if (absVar < {subnormal_bound}) {{",));
+        self.push_stmt(format!("}} else if (absVar < {subnormal_bound}) {{",));
         {
             // 非正規化数の場合
-            self.stmts.push(format!("sign = {f_var} > 0 ? 0 : 1;"));
-            self.stmts.push("expo = 0;".to_string());
-            self.stmts.push(format!(
+            self.push_stmt(format!("sign = {f_var} > 0 ? 0 : 1;"));
+            self.push_stmt("expo = 0;".to_string());
+            self.push_stmt(format!(
                 "frac = ({i_cs_ty})({class}.Abs({f_var}) / {f_cs_ty}.Epsilon);"
             ));
         }
-        self.stmts.push("} else {".to_string());
+        self.push_stmt("} else {".to_string());
         {
-            self.stmts.push(format!("sign = {f_var} > 0 ? 0 : 1;"));
-            self.stmts.push(format!(
+            self.push_stmt(format!("sign = {f_var} > 0 ? 0 : 1;"));
+            self.push_stmt(format!(
                 "var expoF = {class}.Floor({class}.Log(absVar, 2));"
             ));
-            self.stmts
-                .push(format!("if (expoF >= {}) {{", expo_offset + 1));
+            self.push_stmt(format!("if (expoF >= {}) {{", expo_offset + 1));
             {
                 // Log2の誤差で無限大になった場合
-                self.stmts.push(format!("expo = {};", expo_bit_mask - 1));
-                self.stmts.push(format!("frac = {frac_bits_mask};"));
+                self.push_stmt(format!("expo = {};", expo_bit_mask - 1));
+                self.push_stmt(format!("frac = {frac_bits_mask};"));
             }
-            self.stmts.push("} else {".to_string());
+            self.push_stmt("} else {".to_string());
             {
                 // 通常の浮動小数点数の場合
-                self.stmts
-                    .push(format!("expo = ({i_cs_ty})expoF + {expo_offset};"));
-                self.stmts.push(format!(
+                self.push_stmt(format!("expo = ({i_cs_ty})expoF + {expo_offset};"));
+                self.push_stmt(format!(
                     "frac = ({i_cs_ty})((absVar / {class}.Pow(2, expoF) - 1) * {});",
                     1u64 << frac_bits
                 ));
             }
-            self.stmts.push("}".to_string());
+            self.push_stmt("}".to_string());
         }
-        self.stmts.push("}".to_string());
+        self.push_stmt("}".to_string());
 
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "{i_var} = (sign << {}) | (expo << {}) | frac;",
             bits - 1,
             frac_bits
         ));
 
-        self.stmts.push("}".to_string());
+        self.push_stmt("}".to_string());
     }
 
     fn visit_const(
@@ -555,7 +552,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let var = self.new_var(ty);
         self.push_stack(var);
 
-        self.stmts.push(format!("{var} = {value};"));
+        self.push_stmt(format!("{var} = {value};"));
         Ok(())
     }
 
@@ -591,7 +588,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result = self.new_var(ValType::I32);
         self.push_stack(result);
 
-        self.stmts.push(format!("{result} = {opnd} == 0 ? 1 : 0;"));
+        self.push_stmt(format!("{result} = {opnd} == 0 ? 1 : 0;"));
         Ok(())
     }
 
@@ -600,7 +597,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result = self.new_var(ty);
         self.push_stack(result);
 
-        self.stmts.push(format!("{result} = {op}{opnd};"));
+        self.push_stmt(format!("{result} = {op}{opnd};"));
         Ok(())
     }
 
@@ -637,7 +634,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         stmt += ";";
 
-        self.stmts.push(stmt);
+        self.push_stmt(stmt);
         Ok(())
     }
 
@@ -648,19 +645,18 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         self.push_stack(result);
 
         if signed {
-            self.stmts
-                .push(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
+            self.push_stmt(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
         } else {
             let cs_ty = get_cs_ty(ty);
             let cs_ty_u = "u".to_string() + cs_ty;
 
-            self.stmts.push("{".to_string());
-            self.stmts.push(format!("var lhs_u = ({cs_ty_u}){lhs};"));
-            self.stmts.push(format!("var rhs_u = ({cs_ty_u}){rhs};"));
-            self.stmts.push(format!(
+            self.push_stmt("{".to_string());
+            self.push_stmt(format!("var lhs_u = ({cs_ty_u}){lhs};"));
+            self.push_stmt(format!("var rhs_u = ({cs_ty_u}){rhs};"));
+            self.push_stmt(format!(
                 "{result} = ({cs_ty})(lhs_u - lhs_u / rhs_u * rhs_u);"
             ));
-            self.stmts.push("}".to_string());
+            self.push_stmt("}".to_string());
         };
 
         Ok(())
@@ -690,7 +686,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         stmt += ";";
 
-        self.stmts.push(stmt);
+        self.push_stmt(stmt);
         Ok(())
     }
 
@@ -706,11 +702,11 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let cs_ty_u = "u".to_string() + cs_ty;
 
         if right {
-            self.stmts.push(format!(
+            self.push_stmt(format!(
                 "{result} = ({cs_ty})(({cs_ty_u}){lhs} >> (int){rhs}) | ({lhs} << (int)({bits} - {rhs}));"
             ));
         } else {
-            self.stmts.push(format!(
+            self.push_stmt(format!(
                 "{result} = ({lhs} << (int){rhs}) | ({cs_ty})(({cs_ty_u}){lhs} >> (int)({bits} - {rhs}));"
             ));
         }
@@ -724,11 +720,10 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let bits = get_int_bits(ty);
 
-        self.stmts
-            .push(format!("if ({opnd} == 0) {result} = {bits};"));
+        self.push_stmt(format!("if ({opnd} == 0) {result} = {bits};"));
         let cs_ty = get_cs_ty(ty);
         // 2進で文字列化して文字数を数える
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "else {result} = ({cs_ty})({bits} - Convert.ToString({opnd}, 2).Length);",
         ));
         Ok(())
@@ -741,8 +736,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let bits = get_int_bits(ty);
 
-        self.stmts
-            .push(format!("if ({opnd} == 0) {result} = {bits};"));
+        self.push_stmt(format!("if ({opnd} == 0) {result} = {bits};"));
         let cs_ty = get_cs_ty(ty);
 
         // 符号付き整数の最小値のリテラルはUdonSharpではエラーとなるので
@@ -756,7 +750,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         // 1. 文字数を揃えるため、MSBだけが1の数とopndのORをとる
         // 2. 2進で文字列化する
         // 3. 最後に1が出現するインデックスを求める
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "else {result} = {} - ({cs_ty})Convert.ToString(({opnd} | ({or_opnd} - 1)), 2).LastIndexOf('1');",
             bits - 1,
         ));
@@ -770,7 +764,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let cs_ty = get_cs_ty(ty);
         // 2進で文字列化して、0を除去した後の文字数を数える
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "{result} = ({cs_ty})Convert.ToString({opnd}, 2).Replace(\"0\", \"\").Length;"
         ));
         Ok(())
@@ -781,7 +775,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result = self.new_var(ty);
         self.push_stack(result);
 
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "{result} = {}.{func}({opnd});",
             self.math_class(ty)
         ));
@@ -798,7 +792,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result = self.new_var(ty);
         self.push_stack(result);
 
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "{result} = {}.{func}({lhs}, {rhs});",
             self.math_class(ty)
         ));
@@ -811,7 +805,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
         let result = self.new_var(ty);
         self.push_stack(result);
 
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "{result} = {0}.Abs({lhs}) * (({rhs} == 0 ? 1 / {rhs} : {rhs}) > 0 ? 1 : -1);",
             self.math_class(ty)
         ));
@@ -829,7 +823,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
 
         let result_cs_ty = get_cs_ty(result_ty);
 
-        self.stmts.push(match mid_ty {
+        self.push_stmt(match mid_ty {
             Some(cast_ty) => format!("{result} = ({result_cs_ty})({cast_ty}){opnd};"),
             None => format!("{result} = ({result_cs_ty}){opnd};"),
         });
@@ -853,7 +847,7 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
     fn math_class(&self, ty: ValType) -> &'static str {
         match ty {
             ValType::F32 => {
-                if self.conv.test {
+                if self.module.test {
                     "MathF"
                 } else {
                     "Mathf"
@@ -865,19 +859,19 @@ impl<'input, 'conv> CodeConverter<'input, 'conv> {
     }
 }
 
-impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
+impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     type Output = Result<()>;
 
     for_each_operator!(define_visit_operator);
 
     fn visit_unreachable(&mut self) -> Self::Output {
         self.unreachable = 1;
-        self.stmts.push(self.conv.trap("unreachable"));
+        self.push_stmt(trap(self.module, "unreachable"));
         Ok(())
     }
 
     fn visit_nop(&mut self) -> Self::Output {
-        self.stmts.push("// nop".to_string());
+        self.push_stmt("// nop".to_string());
         Ok(())
     }
 
@@ -887,7 +881,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
             return Ok(());
         }
         self.new_block(blockty, false);
-        self.stmts.push("do {".to_string());
+        self.push_stmt("do {".to_string());
         Ok(())
     }
 
@@ -898,9 +892,9 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         }
         let block = self.new_block(blockty, true);
         let loop_var = block.loop_var.unwrap();
-        self.stmts.push(format!("{LOOP}{loop_var} = true;"));
-        self.stmts.push("do {".to_string());
-        self.stmts.push("do {".to_string());
+        self.push_stmt(format!("{LOOP}{loop_var} = true;"));
+        self.push_stmt("do {".to_string());
+        self.push_stmt("do {".to_string());
         Ok(())
     }
 
@@ -911,7 +905,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         }
         let var = self.pop_stack();
         self.new_block(blockty, false);
-        self.stmts.push(format!("do if ({var} != 0) {{"));
+        self.push_stmt(format!("do if ({var} != 0) {{"));
         Ok(())
     }
 
@@ -924,7 +918,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         self.blocks.last_mut().unwrap().stack.clear();
 
-        self.stmts.push("} else {".to_string());
+        self.push_stmt("} else {".to_string());
         Ok(())
     }
 
@@ -942,13 +936,13 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         match block.loop_var {
             Some(loop_var) => {
-                self.stmts.push(format!("{LOOP}{} = false;", loop_var));
-                self.stmts.push("} while (false);".to_string());
-                self.stmts.push(format!("if ({BREAK_DEPTH} > 0) break;"));
-                self.stmts.push(format!("}} while ({LOOP}{});", loop_var));
+                self.push_stmt(format!("{LOOP}{} = false;", loop_var));
+                self.push_stmt("} while (false);".to_string());
+                self.push_stmt(format!("if ({BREAK_DEPTH} > 0) break;"));
+                self.push_stmt(format!("}} while ({LOOP}{});", loop_var));
             }
             None => {
-                self.stmts.push("} while (false);".to_string());
+                self.push_stmt("} while (false);".to_string());
             }
         }
 
@@ -959,7 +953,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
             }
 
             // 多重break
-            self.stmts.push(format!(
+            self.push_stmt(format!(
                 "if ({BREAK_DEPTH} > 0) {{ {BREAK_DEPTH}--; break; }}"
             ));
         }
@@ -972,20 +966,20 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.set_break_depth(relative_depth);
         self.unreachable = 1;
 
-        self.stmts.push("break;".to_string());
+        self.push_stmt("break;".to_string());
         Ok(())
     }
 
     fn visit_br_if(&mut self, relative_depth: u32) -> Self::Output {
         let var = self.pop_stack();
-        self.stmts.push(format!("if ({var} != 0) {{"));
+        self.push_stmt(format!("if ({var} != 0) {{"));
 
         self.block_result(relative_depth, true);
         self.set_break_depth(relative_depth);
 
-        self.stmts.push("break;".to_string());
+        self.push_stmt("break;".to_string());
 
-        self.stmts.push("}".to_string());
+        self.push_stmt("}".to_string());
         Ok(())
     }
 
@@ -993,24 +987,24 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.unreachable = 1;
         let var = self.pop_stack();
 
-        self.stmts.push(format!("switch ({var}) {{"));
+        self.push_stmt(format!("switch ({var}) {{"));
 
         for (i, target) in targets.targets().enumerate() {
             let target = target?;
 
-            self.stmts.push(format!("case {i}:"));
+            self.push_stmt(format!("case {i}:"));
             self.block_result(target, true);
             self.set_break_depth(target);
-            self.stmts.push("break;".to_string());
+            self.push_stmt("break;".to_string());
         }
 
-        self.stmts.push("default:".to_string());
+        self.push_stmt("default:".to_string());
         self.block_result(targets.default(), true);
         self.set_break_depth(targets.default());
-        self.stmts.push("break;".to_string());
+        self.push_stmt("break;".to_string());
 
-        self.stmts.push("}".to_string());
-        self.stmts.push("break;".to_string());
+        self.push_stmt("}".to_string());
+        self.push_stmt("break;".to_string());
 
         Ok(())
     }
@@ -1019,10 +1013,10 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         self.unreachable = 1;
 
         match self.func().ty.results().len() {
-            0 => self.stmts.push("return;".to_string()),
+            0 => self.push_stmt("return;".to_string()),
             1 => {
                 let var = self.last_stack();
-                self.stmts.push(format!("return {var};"))
+                self.push_stmt(format!("return {var};"))
             }
             _ => {
                 panic!("Multiple return values are not supported")
@@ -1034,7 +1028,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
     fn visit_call(&mut self, function_index: u32) -> Self::Output {
         let mut call = String::new();
 
-        let func = &self.conv.funcs[function_index as usize];
+        let func = &self.module.funcs[function_index as usize].0;
 
         let params: Vec<Var> = func.ty.params().iter().map(|_| self.pop_stack()).collect();
 
@@ -1050,7 +1044,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         call += ");";
 
-        self.stmts.push(call);
+        self.push_stmt(call);
         Ok(())
     }
 
@@ -1065,7 +1059,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         let mut call = String::new();
 
-        let ty = self.conv.types[type_index as usize].clone();
+        let ty = self.module.types[type_index as usize].clone();
 
         let params: Vec<Var> = (0..ty.params().len() + 1)
             .map(|_| self.pop_stack())
@@ -1083,7 +1077,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
 
         call += ");";
 
-        self.stmts.push(call);
+        self.push_stmt(call);
         Ok(())
     }
 
@@ -1100,8 +1094,7 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let select = self.new_var(val1.ty);
         self.push_stack(select);
 
-        self.stmts
-            .push(format!("{select} = {c} != 0 ? {val1} : {val2};"));
+        self.push_stmt(format!("{select} = {c} != 0 ? {val1} : {val2};"));
 
         Ok(())
     }
@@ -1111,37 +1104,37 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(local.ty);
         self.push_stack(var);
 
-        self.stmts.push(format!("{var} = {local};"));
+        self.push_stmt(format!("{var} = {local};"));
         Ok(())
     }
 
     fn visit_local_set(&mut self, local_index: u32) -> Self::Output {
         let local = self.vars[local_index as usize];
         let var = self.pop_stack();
-        self.stmts.push(format!("{local} = {var};"));
+        self.push_stmt(format!("{local} = {var};"));
         Ok(())
     }
 
     fn visit_local_tee(&mut self, local_index: u32) -> Self::Output {
         let local = self.vars[local_index as usize];
-        self.stmts.push(format!("{local} = {};", self.last_stack()));
+        self.push_stmt(format!("{local} = {};", self.last_stack()));
         Ok(())
     }
 
     fn visit_global_get(&mut self, global_index: u32) -> Self::Output {
-        let global = &self.conv.globals[global_index as usize];
+        let global = &self.module.globals[global_index as usize];
         let var = self.new_var(global.ty.content_type);
         self.push_stack(var);
 
-        self.stmts.push(format!("{var} = {};", global.name));
+        self.push_stmt(format!("{var} = {};", global.name));
         Ok(())
     }
 
     fn visit_global_set(&mut self, global_index: u32) -> Self::Output {
-        let global = &self.conv.globals[global_index as usize];
+        let global = &self.module.globals[global_index as usize];
         let var = self.pop_stack();
 
-        self.stmts.push(format!("{} = {var};", global.name));
+        self.push_stmt(format!("{} = {var};", global.name));
         Ok(())
     }
 
@@ -1246,11 +1239,10 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(ValType::I32);
         self.push_stack(var);
 
-        let memory = &self.conv.memory.as_ref().unwrap().name;
+        let memory = &self.module.memory.as_ref().unwrap().name;
 
         let cs_ty = get_cs_ty(var.ty);
-        self.stmts
-            .push(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
+        self.push_stmt(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
         Ok(())
     }
 
@@ -1264,9 +1256,9 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
         let var = self.new_var(ValType::I32);
         self.push_stack(var);
 
-        let memory = &self.conv.memory.as_ref().unwrap().name;
+        let memory = &self.module.memory.as_ref().unwrap().name;
         let max = self
-            .conv
+            .module
             .memory
             .as_ref()
             .unwrap()
@@ -1274,29 +1266,27 @@ impl<'a, 'input, 'conv> VisitOperator<'a> for CodeConverter<'input, 'conv> {
             .maximum
             .unwrap_or(0x10000);
 
-        self.stmts.push(format!(
+        self.push_stmt(format!(
             "if ({memory}.Length / {PAGE_SIZE} + {size} > {max}) {{"
         ));
         {
             // 新しいメモリサイズが最大値を超えていれば-1を返す
-            self.stmts.push(format!("{var} = -1;"));
+            self.push_stmt(format!("{var} = -1;"));
         }
-        self.stmts.push("} else {".to_string());
+        self.push_stmt("} else {".to_string());
         {
             // 前のサイズを返す
             let cs_ty = get_cs_ty(var.ty);
-            self.stmts
-                .push(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
+            self.push_stmt(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
 
             // メモリをsizeだけ拡張
-            self.stmts.push(format!("var old = {memory};"));
-            self.stmts.push(format!(
+            self.push_stmt(format!("var old = {memory};"));
+            self.push_stmt(format!(
                 "{memory} = new byte[old.Length + {size} * {PAGE_SIZE}];"
             ));
-            self.stmts
-                .push(format!("Array.Copy(old, {memory}, old.Length);"));
+            self.push_stmt(format!("Array.Copy(old, {memory}, old.Length);"));
         }
-        self.stmts.push("}".to_string());
+        self.push_stmt("}".to_string());
         Ok(())
     }
 

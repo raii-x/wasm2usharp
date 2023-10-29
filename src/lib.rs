@@ -13,7 +13,7 @@ use std::{
 use clap::Parser;
 use wasmparser::validate;
 
-use converter::{convert_to_ident, Converter};
+use converter::{convert, convert_to_ident};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -37,18 +37,16 @@ pub fn lib_main() -> ExitCode {
 
     let buf: Vec<u8> = std::fs::read(args.input).unwrap();
     validate(&buf).unwrap();
-    let mut converter = Converter::new(&buf, class_name, args.test);
 
     let mut out_file = BufWriter::new(match &args.output {
         Some(x) => Box::new(fs::File::create(x).unwrap()) as Box<dyn Write>,
         None => Box::new(std::io::stdout()) as Box<dyn Write>,
     });
 
-    converter
-        .convert(&mut out_file, |module| {
-            format!("class_{}", convert_to_ident(module))
-        })
-        .unwrap();
+    convert(&buf, class_name, args.test, &mut out_file, |module| {
+        format!("class_{}", convert_to_ident(module))
+    })
+    .unwrap();
 
     ExitCode::SUCCESS
 }
