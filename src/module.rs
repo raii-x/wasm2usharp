@@ -1,4 +1,4 @@
-mod code;
+mod func;
 
 use std::{collections::HashSet, fmt, io::Write};
 
@@ -10,7 +10,7 @@ use wasmparser::{
     RecGroup, StructuralType, TableType, ValType,
 };
 
-use self::code::{CodeConverter, Func, FuncHeader};
+use self::func::{CodeConverter, Func, FuncHeader};
 
 struct Module<'input> {
     buf: &'input [u8],
