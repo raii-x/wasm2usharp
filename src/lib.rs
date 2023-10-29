@@ -1,6 +1,6 @@
 #![warn(rust_2018_idioms)]
 
-pub mod converter;
+pub mod module;
 pub mod util;
 
 use std::{
@@ -13,7 +13,7 @@ use std::{
 use clap::Parser;
 use wasmparser::validate;
 
-use converter::{convert, convert_to_ident};
+use module::{convert, convert_to_ident};
 
 #[derive(Parser, Debug)]
 struct Args {

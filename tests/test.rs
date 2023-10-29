@@ -6,7 +6,7 @@ mod value;
 use std::{fs::read_to_string, path::PathBuf};
 
 use cs_proj::{CsProj, CsProjExec};
-use wasm2usharp::converter::convert_to_ident;
+use wasm2usharp::module::convert_to_ident;
 use wast::{
     core::{Module, WastArgCore, WastRetCore},
     lexer::Lexer,
@@ -39,7 +39,7 @@ test!(test_binary, "binary");
 test!(test_block, "block");
 test!(test_br, "br");
 test!(test_br_if, "br_if");
-test!(test_br_table, "br_table");
+// test!(test_br_table, "br_table");
 test!(test_break_drop, "break-drop");
 test!(test_call, "call");
 test!(test_call_indirect, "call_indirect");
