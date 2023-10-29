@@ -11,7 +11,7 @@ use wasmparser::{
 
 use crate::util::bit_mask;
 
-use super::{func_header, get_cs_ty, result_cs_ty, trap, Func, Module, CALL_INDIRECT, PAGE_SIZE};
+use super::{func_header, get_cs_ty, result_cs_ty, trap, Module, CALL_INDIRECT, PAGE_SIZE};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -30,22 +30,91 @@ macro_rules! define_visit_operator {
     }
 }
 
+pub struct Func {
+    pub header: FuncHeader,
+    pub code: Option<Code>,
+}
+
+impl Func {
+    pub fn write(&self, out_file: &mut impl Write) -> Result<()> {
+        // 関数ヘッダ
+        let func_ty = self.header.ty.clone();
+
+        if self.header.export {
+            write!(out_file, "public ")?;
+        }
+
+        let code = self.code.as_ref().unwrap();
+
+        let params: Vec<(&str, &Var)> = func_ty
+            .params()
+            .iter()
+            .map(|&ty| get_cs_ty(ty))
+            .zip(code.vars.iter())
+            .collect();
+        write!(
+            out_file,
+            "{}",
+            func_header(&self.header.name, result_cs_ty(func_ty.results()), &params)
+        )?;
+
+        writeln!(out_file, " {{")?;
+
+        writeln!(out_file, "int {BREAK_DEPTH} = 0;")?;
+
+        // ループ変数
+        for i in 0..code.loop_var_count {
+            writeln!(out_file, "bool {LOOP}{i};")?;
+        }
+
+        // 一時変数
+        for var in code.vars.iter().skip(func_ty.params().len()) {
+            writeln!(out_file, "{} {var} = 0;", get_cs_ty(var.ty))?;
+        }
+
+        // 本体
+        for stmt in &code.stmts {
+            writeln!(out_file, "{stmt}")?;
+        }
+
+        writeln!(out_file, "}}")?;
+
+        Ok(())
+    }
+}
+
+pub struct FuncHeader {
+    pub name: String,
+    pub ty: FuncType,
+    pub export: bool,
+}
+
 pub struct Code {
-    pub stmts: Vec<String>,
+    stmts: Vec<String>,
+    vars: Vec<Var>,
+    loop_var_count: usize,
+}
+
+impl Code {
+    fn new() -> Self {
+        Self {
+            stmts: Vec::new(),
+            vars: Vec::new(),
+            loop_var_count: 0,
+        }
+    }
 }
 
 pub struct CodeConverter<'input, 'module> {
     module: &'module Module<'input>,
     code_idx: usize,
     blocks: Vec<Block>,
-    vars: Vec<Var>,
     local_count: u32,
     code: Code,
     /// brの後など、到達不可能なコードの処理時に1加算。
     /// unreachableが1以上の場合のブロックの出現ごとに1加算。
     /// ブロックの終了時に1減算。
     unreachable: i32,
-    loop_var_count: usize,
 }
 
 #[derive(Debug)]
@@ -76,24 +145,22 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             module,
             code_idx,
             blocks: Vec::new(),
-            vars: Vec::new(),
             local_count: 0,
-            code: Code { stmts: Vec::new() },
+            code: Code::new(),
             unreachable: 0,
-            loop_var_count: 0,
         }
     }
 
-    fn func(&self) -> &'module Func {
-        &self.module.funcs[self.code_idx].0
+    fn header(&self) -> &'module FuncHeader {
+        &self.module.funcs[self.code_idx].header
     }
 
     fn push_stmt(&mut self, stmt: String) {
         self.code.stmts.push(stmt);
     }
 
-    pub fn convert(mut self, body: FunctionBody<'_>, out_file: &mut impl Write) -> Result<Code> {
-        for &ty in self.func().ty.params() {
+    pub fn convert(mut self, body: FunctionBody<'_>) -> Result<Code> {
+        for &ty in self.header().ty.params() {
             let _ = self.new_var(ty);
             self.local_count += 1;
         }
@@ -106,7 +173,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             }
         }
 
-        let results = self.func().ty.results();
+        let results = self.header().ty.results();
 
         // 関数の最上位のブロック
         self.visit_block(match results.len() {
@@ -133,61 +200,15 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             self.push_stmt(format!("return {res};"));
         }
 
-        self.write(out_file)?;
-
         Ok(self.code)
-    }
-
-    fn write(&self, out_file: &mut impl Write) -> Result<()> {
-        // 関数ヘッダ
-        let func_ty = self.func().ty.clone();
-
-        if self.func().export {
-            write!(out_file, "public ")?;
-        }
-
-        let params: Vec<(&str, &Var)> = func_ty
-            .params()
-            .iter()
-            .map(|&ty| get_cs_ty(ty))
-            .zip(self.vars.iter())
-            .collect();
-        write!(
-            out_file,
-            "{}",
-            func_header(&self.func().name, result_cs_ty(func_ty.results()), &params)
-        )?;
-
-        writeln!(out_file, " {{")?;
-
-        writeln!(out_file, "int {BREAK_DEPTH} = 0;")?;
-
-        // ループ変数
-        for i in 0..self.loop_var_count {
-            writeln!(out_file, "bool {LOOP}{i};")?;
-        }
-
-        // 一時変数
-        for var in self.vars.iter().skip(func_ty.params().len()) {
-            writeln!(out_file, "{} {var} = 0;", get_cs_ty(var.ty))?;
-        }
-
-        // 本体
-        for stmt in &self.code.stmts {
-            writeln!(out_file, "{stmt}")?;
-        }
-
-        writeln!(out_file, "}}")?;
-
-        Ok(())
     }
 
     fn new_var(&mut self, ty: ValType) -> Var {
         let var = Var {
-            index: self.vars.len(),
+            index: self.code.vars.len(),
             ty,
         };
-        self.vars.push(var);
+        self.code.vars.push(var);
         var
     }
 
@@ -200,8 +221,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         let loop_var = if is_loop {
             Some({
-                self.loop_var_count += 1;
-                self.loop_var_count - 1
+                self.code.loop_var_count += 1;
+                self.code.loop_var_count - 1
             })
         } else {
             None
@@ -1012,7 +1033,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_return(&mut self) -> Self::Output {
         self.unreachable = 1;
 
-        match self.func().ty.results().len() {
+        match self.header().ty.results().len() {
             0 => self.push_stmt("return;".to_string()),
             1 => {
                 let var = self.last_stack();
@@ -1028,7 +1049,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_call(&mut self, function_index: u32) -> Self::Output {
         let mut call = String::new();
 
-        let func = &self.module.funcs[function_index as usize].0;
+        let func = &self.module.funcs[function_index as usize].header;
 
         let params: Vec<Var> = func.ty.params().iter().map(|_| self.pop_stack()).collect();
 
@@ -1100,7 +1121,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_local_get(&mut self, local_index: u32) -> Self::Output {
-        let local = self.vars[local_index as usize];
+        let local = self.code.vars[local_index as usize];
         let var = self.new_var(local.ty);
         self.push_stack(var);
 
@@ -1109,14 +1130,14 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_local_set(&mut self, local_index: u32) -> Self::Output {
-        let local = self.vars[local_index as usize];
+        let local = self.code.vars[local_index as usize];
         let var = self.pop_stack();
         self.push_stmt(format!("{local} = {var};"));
         Ok(())
     }
 
     fn visit_local_tee(&mut self, local_index: u32) -> Self::Output {
-        let local = self.vars[local_index as usize];
+        let local = self.code.vars[local_index as usize];
         self.push_stmt(format!("{local} = {};", self.last_stack()));
         Ok(())
     }

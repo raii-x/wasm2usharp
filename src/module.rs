@@ -10,14 +10,14 @@ use wasmparser::{
     RecGroup, StructuralType, TableType, ValType,
 };
 
-use self::code::{Code, CodeConverter};
+use self::code::{CodeConverter, Func, FuncHeader};
 
 struct Module<'input> {
     buf: &'input [u8],
     class_name: &'input str,
     test: bool,
     types: Vec<FuncType>,
-    funcs: Vec<(Func, Option<Code>)>,
+    funcs: Vec<Func>,
     table: Option<Table>,
     memory: Option<Memory>,
     globals: Vec<Global>,
@@ -229,8 +229,8 @@ impl<'input, 'module> Converter<'input, 'module> {
                     match export.kind {
                         Func => {
                             let func = &mut self.module.funcs[export.index as usize];
-                            func.0.name = name;
-                            func.0.export = true;
+                            func.header.name = name;
+                            func.header.export = true;
                         }
                         Table => {
                             let table = self.module.table.as_mut().unwrap();
@@ -289,7 +289,11 @@ impl<'input, 'module> Converter<'input, 'module> {
 
                     for &item in items.iter() {
                         if use_delegate {
-                            write!(out_file, "{},", self.module.funcs[item as usize].0.name)?;
+                            write!(
+                                out_file,
+                                "{},",
+                                self.module.funcs[item as usize].header.name
+                            )?;
                         } else {
                             // テーブルに格納される関数インデックスは元のインデックスに1を足したもの
                             // (配列の初期値の0でnullを表現するため)
@@ -332,8 +336,12 @@ impl<'input, 'module> Converter<'input, 'module> {
             }
             CodeSectionEntry(s) => {
                 let code_conv = CodeConverter::new(self.module, self.code_idx);
-                let code = code_conv.convert(s, out_file)?;
-                self.module.funcs[self.code_idx].1 = Some(code);
+                let code = code_conv.convert(s)?;
+
+                let func = &mut self.module.funcs[self.code_idx];
+                func.code = Some(code);
+                func.write(out_file)?;
+
                 self.code_idx += 1;
             }
             _other => {
@@ -385,7 +393,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
             )?;
             for (i, func) in self.module.funcs.iter().enumerate() {
-                if func.0.ty != *ty {
+                if func.header.ty != *ty {
                     continue;
                 }
 
@@ -394,14 +402,14 @@ impl<'input, 'module> Converter<'input, 'module> {
                         out_file,
                         "case {}: {}({call_params}); return;",
                         i + 1,
-                        func.0.name
+                        func.header.name
                     )?;
                 } else {
                     writeln!(
                         out_file,
                         "case {}: return {}({call_params});",
                         i + 1,
-                        func.0.name
+                        func.header.name
                     )?;
                 }
             }
@@ -473,7 +481,7 @@ impl<'input, 'module> Converter<'input, 'module> {
             writeln!(
                 out_file,
                 "{}();",
-                self.module.funcs[start_func as usize].0.name
+                self.module.funcs[start_func as usize].header.name
             )?;
         }
         writeln!(out_file, "}}")?;
@@ -492,14 +500,14 @@ impl<'input, 'module> Converter<'input, 'module> {
             self.code_idx += 1;
         }
 
-        self.module.funcs.push((
-            Func {
+        self.module.funcs.push(Func {
+            header: FuncHeader {
                 name,
                 ty,
                 export: false,
             },
-            None,
-        ));
+            code: None,
+        });
     }
 
     fn add_table(&mut self, ty: TableType, name: Option<String>) {
@@ -609,12 +617,6 @@ fn func_delegate(ty: &FuncType) -> String {
     } else {
         cs_ty + "<" + &params.join(", ") + ">"
     }
-}
-
-struct Func {
-    name: String,
-    ty: FuncType,
-    export: bool,
 }
 
 struct Table {
