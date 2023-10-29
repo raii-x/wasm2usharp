@@ -32,6 +32,16 @@ macro_rules! test (
     };
 );
 
+macro_rules! test_ignore {
+    ($func_name:ident, $name:expr) => {
+        #[test]
+        #[ignore]
+        fn $func_name() {
+            test_wast($name, None as Option<fn(&WastDirective<'_>) -> bool>);
+        }
+    };
+}
+
 test!(test_address, "address");
 test!(test_align, "align");
 test!(test_binary_leb128, "binary-leb128");
@@ -39,7 +49,7 @@ test!(test_binary, "binary");
 test!(test_block, "block");
 test!(test_br, "br");
 test!(test_br_if, "br_if");
-// test!(test_br_table, "br_table");
+test_ignore!(test_br_table, "br_table");
 test!(test_break_drop, "break-drop");
 test!(test_call, "call");
 test!(test_call_indirect, "call_indirect");
