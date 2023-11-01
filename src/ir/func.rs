@@ -1,8 +1,5 @@
 use std::fmt;
 
-use std::io::Write;
-
-use anyhow::Result;
 use wasmparser::{FuncType, ValType};
 
 use super::{func_header, get_cs_ty, result_cs_ty, BREAK_DEPTH, LOOP};
@@ -12,13 +9,13 @@ pub struct Func {
     pub code: Option<Code>,
 }
 
-impl Func {
-    pub fn write(&self, out_file: &mut impl Write) -> Result<()> {
+impl fmt::Display for Func {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 関数ヘッダ
         let func_ty = self.header.ty.clone();
 
         if self.header.export {
-            write!(out_file, "public ")?;
+            write!(f, "public ")?;
         }
 
         let code = self.code.as_ref().unwrap();
@@ -30,31 +27,31 @@ impl Func {
             .zip(code.vars.iter())
             .collect();
         write!(
-            out_file,
+            f,
             "{}",
             func_header(&self.header.name, result_cs_ty(func_ty.results()), &params)
         )?;
 
-        writeln!(out_file, " {{")?;
+        writeln!(f, " {{")?;
 
-        writeln!(out_file, "int {BREAK_DEPTH} = 0;")?;
+        writeln!(f, "int {BREAK_DEPTH} = 0;")?;
 
         // ループ変数
         for i in 0..code.loop_var_count {
-            writeln!(out_file, "bool {LOOP}{i};")?;
+            writeln!(f, "bool {LOOP}{i};")?;
         }
 
         // 一時変数
         for var in code.vars.iter().skip(func_ty.params().len()) {
-            writeln!(out_file, "{} {var} = 0;", get_cs_ty(var.ty))?;
+            writeln!(f, "{} {var} = 0;", get_cs_ty(var.ty))?;
         }
 
         // 本体
         for stmt in &code.stmts {
-            writeln!(out_file, "{stmt}")?;
+            writeln!(f, "{stmt}")?;
         }
 
-        writeln!(out_file, "}}")?;
+        writeln!(f, "}}")?;
 
         Ok(())
     }

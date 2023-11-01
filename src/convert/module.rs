@@ -305,7 +305,7 @@ impl<'input, 'module> Converter<'input, 'module> {
 
                 let func = &mut self.module.funcs[self.code_idx];
                 func.code = Some(code);
-                func.write(out_file)?;
+                write!(out_file, "{}", func)?;
 
                 self.code_idx += 1;
             }
