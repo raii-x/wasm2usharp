@@ -1,66 +1,31 @@
-mod func;
-
-use std::{collections::HashSet, fmt, io::Write};
+use std::{collections::HashSet, io::Write};
 
 use anyhow::Result;
-use once_cell::sync::Lazy;
-use regex::Regex;
 use wasmparser::{
     ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, MemoryType, Parser,
     RecGroup, StructuralType, TableType, ValType,
 };
 
-use self::func::{CodeConverter, Func, FuncHeader};
+use crate::{
+    convert::code::CodeConverter,
+    ir::{
+        func::{Func, FuncHeader},
+        func_header, get_cs_ty,
+        module::{Data, Element, Global, Memory, Module, Table},
+        result_cs_ty, CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE,
+        W2US_PREFIX,
+    },
+};
 
-struct Module<'input> {
-    buf: &'input [u8],
-    class_name: &'input str,
-    test: bool,
-    types: Vec<FuncType>,
-    funcs: Vec<Func>,
-    table: Option<Table>,
-    memory: Option<Memory>,
-    globals: Vec<Global>,
-    elements: Vec<Element>,
-    datas: Vec<Data<'input>>,
-    start_func: Option<u32>,
-}
+use super::{convert_to_ident, trap};
 
-const PAGE_SIZE: u32 = 65536;
-const W2US_PREFIX: &str = "w2us_";
-const MEMORY: &str = "w2us_memory";
-const TABLE: &str = "w2us_table";
-const DATA: &str = "w2us_data";
-const ELEMENT: &str = "w2us_element";
-pub const INIT: &str = "w2us_init";
-const CALL_INDIRECT: &str = "w2us_call_indirect";
-const MAX_PARAMS: usize = 16;
-
-impl<'input> Module<'input> {
-    fn new(buf: &'input [u8], class_name: &'input str, test: bool) -> Self {
-        Self {
-            buf,
-            class_name,
-            test,
-            types: Vec::new(),
-            funcs: Vec::new(),
-            table: None,
-            memory: None,
-            globals: Vec::new(),
-            elements: Vec::new(),
-            datas: Vec::new(),
-            start_func: None,
-        }
-    }
-}
-
-struct Converter<'input, 'module> {
+pub struct Converter<'input, 'module> {
     module: &'module mut Module<'input>,
     code_idx: usize,
 }
 
 impl<'input, 'module> Converter<'input, 'module> {
-    fn new(module: &'module mut Module<'input>) -> Self {
+    pub fn new(module: &'module mut Module<'input>) -> Self {
         Self {
             module,
             code_idx: 0,
@@ -68,7 +33,7 @@ impl<'input, 'module> Converter<'input, 'module> {
     }
 
     /// import_mapはモジュール名をモジュールと対応するクラス型の名前に変換する関数
-    fn convert(
+    pub fn convert(
         &mut self,
         out_file: &mut impl Write,
         import_map: impl Fn(&str) -> String,
@@ -619,193 +584,10 @@ fn func_delegate(ty: &FuncType) -> String {
     }
 }
 
-struct Table {
-    name: String,
-    ty: TableType,
-    import: bool,
-    export: bool,
-}
-
-struct Memory {
-    name: String,
-    ty: MemoryType,
-    import: bool,
-    export: bool,
-}
-
-struct Global {
-    name: String,
-    ty: GlobalType,
-    init_expr: Option<String>,
-    import: bool,
-    export: bool,
-}
-
-struct Element {
-    offset_expr: String,
-    items: Vec<u32>,
-}
-
-struct Data<'a> {
-    offset_expr: String,
-    data: &'a [u8],
-}
-
-fn func_header(
-    name: impl fmt::Display,
-    result: impl fmt::Display,
-    params: &[(impl fmt::Display, impl fmt::Display)],
-) -> String {
-    let mut header = format!("{result} {name}(");
-
-    for (i, param) in params.iter().enumerate() {
-        if i != 0 {
-            header += ", ";
-        }
-        header += &format!("{} {}", param.0, param.1);
-    }
-
-    header += ")";
-    header
-}
-
 fn params_cs_ty_name(ty: &FuncType) -> Vec<(&'static str, String)> {
     ty.params()
         .iter()
         .enumerate()
         .map(|(i, param)| (get_cs_ty(*param), format!("param{i}")))
         .collect::<Vec<_>>()
-}
-
-fn result_cs_ty(results: &[ValType]) -> &str {
-    match results.len() {
-        0 => "void",
-        1 => get_cs_ty(results[0]),
-        _ => unreachable!(),
-    }
-}
-
-fn get_cs_ty(ty: ValType) -> &'static str {
-    match ty {
-        ValType::I32 => "int",
-        ValType::I64 => "long",
-        ValType::F32 => "float",
-        ValType::F64 => "double",
-        _ => unreachable!(),
-    }
-}
-
-pub fn convert_to_ident(name: &str) -> String {
-    static KEYWORDS: Lazy<HashSet<&str>> = Lazy::new(|| {
-        HashSet::from([
-            "abstract",
-            "as",
-            "base",
-            "bool",
-            "break",
-            "byte",
-            "case",
-            "catch",
-            "char",
-            "checked",
-            "class",
-            "const",
-            "continue",
-            "decimal",
-            "default",
-            "delegate",
-            "do",
-            "double",
-            "else",
-            "enum",
-            "event",
-            "explicit",
-            "extern",
-            "false",
-            "finally",
-            "fixed",
-            "float",
-            "for",
-            "foreach",
-            "goto",
-            "if",
-            "implicit",
-            "in",
-            "int",
-            "interface",
-            "internal",
-            "is",
-            "lock",
-            "long",
-            "namespace",
-            "new",
-            "null",
-            "object",
-            "operator",
-            "out",
-            "override",
-            "params",
-            "private",
-            "protected",
-            "public",
-            "readonly",
-            "ref",
-            "return",
-            "sbyte",
-            "sealed",
-            "short",
-            "sizeof",
-            "stackalloc",
-            "static",
-            "string",
-            "struct",
-            "switch",
-            "this",
-            "throw",
-            "true",
-            "try",
-            "typeof",
-            "uint",
-            "ulong",
-            "unchecked",
-            "unsafe",
-            "ushort",
-            "using",
-            "virtual",
-            "void",
-            "volatile",
-            "while",
-        ])
-    });
-
-    let prefix = if name.chars().next().unwrap().is_ascii_digit() || KEYWORDS.contains(name) {
-        "_"
-    } else {
-        ""
-    };
-
-    static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\W").unwrap());
-    let ident = RE.replace_all(name, "_");
-
-    prefix.to_string() + ident.as_ref()
-}
-
-fn trap(module: &Module<'_>, message: &str) -> String {
-    if module.test {
-        format!("throw new Exception(\"{message}\");")
-    } else {
-        format!("Debug.LogError(\"{message}\");")
-    }
-}
-
-pub fn convert<'input>(
-    buf: &'input [u8],
-    class_name: &'input str,
-    test: bool,
-    out_file: &mut impl Write,
-    import_map: impl Fn(&str) -> String,
-) -> Result<HashSet<&'input str>> {
-    let mut module = Module::new(buf, class_name, test);
-    let mut conv = Converter::new(&mut module);
-    conv.convert(out_file, import_map)
 }

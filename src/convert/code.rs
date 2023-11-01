@@ -1,7 +1,5 @@
 use std::fmt;
 
-use std::io::Write;
-
 use anyhow::Result;
 use num_traits::float::Float;
 use wasmparser::{
@@ -9,9 +7,17 @@ use wasmparser::{
     StorageType, ValType, VisitOperator,
 };
 
-use crate::util::bit_mask;
+use crate::{
+    ir::{
+        func::{Code, FuncHeader, Var},
+        get_cs_ty,
+        module::Module,
+        BREAK_DEPTH, CALL_INDIRECT, LOOP, PAGE_SIZE,
+    },
+    util::bit_mask,
+};
 
-use super::{func_header, get_cs_ty, result_cs_ty, trap, Module, CALL_INDIRECT, PAGE_SIZE};
+use super::trap;
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -27,81 +33,6 @@ macro_rules! define_visit_operator {
         $(
             define_single_visit_operator!(@$proposal $op $({ $($arg: $argty),* })? => $visit);
         )*
-    }
-}
-
-pub struct Func {
-    pub header: FuncHeader,
-    pub code: Option<Code>,
-}
-
-impl Func {
-    pub fn write(&self, out_file: &mut impl Write) -> Result<()> {
-        // 関数ヘッダ
-        let func_ty = self.header.ty.clone();
-
-        if self.header.export {
-            write!(out_file, "public ")?;
-        }
-
-        let code = self.code.as_ref().unwrap();
-
-        let params: Vec<(&str, &Var)> = func_ty
-            .params()
-            .iter()
-            .map(|&ty| get_cs_ty(ty))
-            .zip(code.vars.iter())
-            .collect();
-        write!(
-            out_file,
-            "{}",
-            func_header(&self.header.name, result_cs_ty(func_ty.results()), &params)
-        )?;
-
-        writeln!(out_file, " {{")?;
-
-        writeln!(out_file, "int {BREAK_DEPTH} = 0;")?;
-
-        // ループ変数
-        for i in 0..code.loop_var_count {
-            writeln!(out_file, "bool {LOOP}{i};")?;
-        }
-
-        // 一時変数
-        for var in code.vars.iter().skip(func_ty.params().len()) {
-            writeln!(out_file, "{} {var} = 0;", get_cs_ty(var.ty))?;
-        }
-
-        // 本体
-        for stmt in &code.stmts {
-            writeln!(out_file, "{stmt}")?;
-        }
-
-        writeln!(out_file, "}}")?;
-
-        Ok(())
-    }
-}
-
-pub struct FuncHeader {
-    pub name: String,
-    pub ty: FuncType,
-    pub export: bool,
-}
-
-pub struct Code {
-    stmts: Vec<String>,
-    vars: Vec<Var>,
-    loop_var_count: usize,
-}
-
-impl Code {
-    fn new() -> Self {
-        Self {
-            stmts: Vec::new(),
-            vars: Vec::new(),
-            loop_var_count: 0,
-        }
     }
 }
 
@@ -123,21 +54,6 @@ struct Block {
     result: Option<Var>,
     loop_var: Option<usize>,
 }
-
-#[derive(Debug, Clone, Copy)]
-struct Var {
-    index: usize,
-    ty: ValType,
-}
-
-impl fmt::Display for Var {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "var{}", self.index)
-    }
-}
-
-const BREAK_DEPTH: &str = "w2us_break_depth";
-const LOOP: &str = "w2us_loop";
 
 impl<'input, 'module> CodeConverter<'input, 'module> {
     pub(super) fn new(module: &'module Module<'input>, code_idx: usize) -> Self {

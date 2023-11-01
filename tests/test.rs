@@ -6,7 +6,7 @@ mod value;
 use std::{fs::read_to_string, path::PathBuf};
 
 use cs_proj::{CsProj, CsProjExec};
-use wasm2usharp::module::convert_to_ident;
+use wasm2usharp::convert::convert_to_ident;
 use wast::{
     core::{Module, WastArgCore, WastRetCore},
     lexer::Lexer,
