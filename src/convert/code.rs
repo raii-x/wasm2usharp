@@ -77,14 +77,14 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     pub fn convert(mut self, body: FunctionBody<'_>) -> Result<Code> {
         for &ty in self.header().ty.params() {
-            let _ = self.new_var(ty);
+            let _ = self.code.new_var(ty);
             self.local_count += 1;
         }
 
         for local in body.get_locals_reader()? {
             let (count, ty) = local?;
             for _ in 0..count {
-                self.new_var(ty);
+                self.code.new_var(ty);
                 self.local_count += 1;
             }
         }
@@ -119,19 +119,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(self.code)
     }
 
-    fn new_var(&mut self, ty: ValType) -> Var {
-        let var = Var {
-            index: self.code.vars.len(),
-            ty,
-        };
-        self.code.vars.push(var);
-        var
-    }
-
     fn new_block(&mut self, blockty: BlockType, is_loop: bool) -> &Block {
         let result = match blockty {
             BlockType::Empty => None,
-            BlockType::Type(ty) => Some(self.new_var(ty)),
+            BlockType::Type(ty) => Some(self.code.new_var(ty)),
             BlockType::FuncType(..) => panic!("func type blocks are not supported"),
         };
 
@@ -195,7 +186,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         signed: bool,
     ) -> <Self as VisitOperator<'_>>::Output {
         let idx = self.pop_stack();
-        let var = self.new_var(var_type);
+        let var = self.code.new_var(var_type);
         self.push_stack(var);
 
         self.int_load(memarg, var_type, mem_type, signed, idx, var);
@@ -259,9 +250,9 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     ) -> <Self as VisitOperator<'_>>::Output {
         let idx = self.pop_stack();
         let i_ty = ty_f_to_i(var_type);
-        let i_var = self.new_var(i_ty);
+        let i_var = self.code.new_var(i_ty);
 
-        let var = self.new_var(var_type);
+        let var = self.code.new_var(var_type);
         self.push_stack(var);
 
         self.int_load(memarg, i_ty, StorageType::Val(i_ty), false, idx, i_var);
@@ -381,7 +372,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let var = self.pop_stack();
         let idx = self.pop_stack();
         let i_ty = ty_f_to_i(mem_type);
-        let i_var = self.new_var(i_ty);
+        let i_var = self.code.new_var(i_ty);
 
         self.float_to_bits(var, i_var);
 
@@ -486,7 +477,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         ty: ValType,
         value: impl fmt::Display,
     ) -> <Self as VisitOperator<'_>>::Output {
-        let var = self.new_var(ty);
+        let var = self.code.new_var(ty);
         self.push_stack(var);
 
         self.push_stmt(format!("{var} = {value};"));
@@ -522,7 +513,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_eqz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ValType::I32);
+        let result = self.code.new_var(ValType::I32);
         self.push_stack(result);
 
         self.push_stmt(format!("{result} = {opnd} == 0 ? 1 : 0;"));
@@ -531,7 +522,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_un_op(&mut self, ty: ValType, op: &str) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         self.push_stmt(format!("{result} = {op}{opnd};"));
@@ -547,7 +538,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     ) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.new_var(if logical { ValType::I32 } else { ty });
+        let result = self.code.new_var(if logical { ValType::I32 } else { ty });
         self.push_stack(result);
 
         let mut stmt = format!("{result} = ");
@@ -578,7 +569,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_rem_op(&mut self, ty: ValType, signed: bool) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         if signed {
@@ -607,7 +598,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     ) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         let mut stmt = format!("{result} = ");
@@ -630,7 +621,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_rot_op(&mut self, ty: ValType, right: bool) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         let bits = get_int_bits(ty);
@@ -652,7 +643,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_clz(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         let bits = get_int_bits(ty);
@@ -668,7 +659,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_ctz(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result: Var = self.new_var(ty);
+        let result: Var = self.code.new_var(ty);
         self.push_stack(result);
 
         let bits = get_int_bits(ty);
@@ -696,7 +687,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_popcnt(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result: Var = self.new_var(ty);
+        let result: Var = self.code.new_var(ty);
         self.push_stack(result);
 
         let cs_ty = get_cs_ty(ty);
@@ -709,7 +700,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_math_un_op(&mut self, ty: ValType, func: &str) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         self.push_stmt(format!(
@@ -726,7 +717,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     ) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         self.push_stmt(format!(
@@ -739,7 +730,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_copysign_op(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.new_var(ty);
+        let result = self.code.new_var(ty);
         self.push_stack(result);
 
         self.push_stmt(format!(
@@ -755,7 +746,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         mid_ty: Option<&'static str>,
     ) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(result_ty);
+        let result = self.code.new_var(result_ty);
         self.push_stack(result);
 
         let result_cs_ty = get_cs_ty(result_ty);
@@ -771,7 +762,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         match ty.results().len() {
             0 => {}
             1 => {
-                let var = self.new_var(ty.results()[0]);
+                let var = self.code.new_var(ty.results()[0]);
                 *stmt += &format!("{var} = ");
                 self.push_stack(var);
             }
@@ -1028,7 +1019,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let val2 = self.pop_stack();
         let val1 = self.pop_stack();
 
-        let select = self.new_var(val1.ty);
+        let select = self.code.new_var(val1.ty);
         self.push_stack(select);
 
         self.push_stmt(format!("{select} = {c} != 0 ? {val1} : {val2};"));
@@ -1038,7 +1029,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_local_get(&mut self, local_index: u32) -> Self::Output {
         let local = self.code.vars[local_index as usize];
-        let var = self.new_var(local.ty);
+        let var = self.code.new_var(local.ty);
         self.push_stack(var);
 
         self.push_stmt(format!("{var} = {local};"));
@@ -1060,7 +1051,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_global_get(&mut self, global_index: u32) -> Self::Output {
         let global = &self.module.globals[global_index as usize];
-        let var = self.new_var(global.ty.content_type);
+        let var = self.code.new_var(global.ty.content_type);
         self.push_stack(var);
 
         self.push_stmt(format!("{var} = {};", global.name));
@@ -1173,7 +1164,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         }
         assert!(mem_byte == 0);
 
-        let var = self.new_var(ValType::I32);
+        let var = self.code.new_var(ValType::I32);
         self.push_stack(var);
 
         let memory = &self.module.memory.as_ref().unwrap().name;
@@ -1190,7 +1181,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         assert!(mem_byte == 0);
 
         let size = self.pop_stack();
-        let var = self.new_var(ValType::I32);
+        let var = self.code.new_var(ValType::I32);
         self.push_stack(var);
 
         let memory = &self.module.memory.as_ref().unwrap().name;
@@ -1729,7 +1720,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_i32_reinterpret_f32(&mut self) -> Self::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ValType::I32);
+        let result = self.code.new_var(ValType::I32);
         self.push_stack(result);
 
         self.float_to_bits(opnd, result);
@@ -1738,7 +1729,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_i64_reinterpret_f64(&mut self) -> Self::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ValType::I64);
+        let result = self.code.new_var(ValType::I64);
         self.push_stack(result);
 
         self.float_to_bits(opnd, result);
@@ -1747,7 +1738,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_f32_reinterpret_i32(&mut self) -> Self::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ValType::F32);
+        let result = self.code.new_var(ValType::F32);
         self.push_stack(result);
 
         self.bits_to_float(opnd, result);
@@ -1756,7 +1747,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_f64_reinterpret_i64(&mut self) -> Self::Output {
         let opnd = self.pop_stack();
-        let result = self.new_var(ValType::F64);
+        let result = self.code.new_var(ValType::F64);
         self.push_stack(result);
 
         self.bits_to_float(opnd, result);

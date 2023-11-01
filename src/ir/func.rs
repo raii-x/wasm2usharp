@@ -81,6 +81,15 @@ impl Code {
             loop_var_count: 0,
         }
     }
+
+    pub fn new_var(&mut self, ty: ValType) -> Var {
+        let var = Var {
+            index: self.vars.len(),
+            ty,
+        };
+        self.vars.push(var);
+        var
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
