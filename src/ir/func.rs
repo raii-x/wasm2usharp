@@ -47,8 +47,8 @@ impl fmt::Display for Func {
         }
 
         // 本体
-        for stmt in &code.stmts {
-            writeln!(f, "{stmt}")?;
+        for instr in &code.instrs {
+            writeln!(f, "{instr}")?;
         }
 
         writeln!(f, "}}")?;
@@ -64,7 +64,7 @@ pub struct FuncHeader {
 }
 
 pub struct Code {
-    pub stmts: Vec<String>,
+    pub instrs: Vec<Instr>,
     pub vars: Vec<Var>,
     pub loop_var_count: usize,
 }
@@ -72,7 +72,7 @@ pub struct Code {
 impl Code {
     pub fn new(header: &FuncHeader) -> Self {
         let mut this = Self {
-            stmts: Vec::new(),
+            instrs: Vec::new(),
             vars: Vec::new(),
             loop_var_count: 0,
         };
@@ -103,5 +103,18 @@ pub struct Var {
 impl fmt::Display for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "var{}", self.index)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Instr {
+    Line(String),
+}
+
+impl fmt::Display for Instr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Line(x) => write!(f, "{}", x),
+        }
     }
 }

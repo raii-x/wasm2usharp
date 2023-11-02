@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::{
     convert::code::CodeConverter,
     ir::{
-        func::{Code, Func, FuncHeader},
+        func::{Code, Func, FuncHeader, Instr},
         get_cs_ty,
         module::{Data, Element, Global, Memory, Module, Table},
         trap, CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, TABLE, W2US_PREFIX,
@@ -354,14 +354,15 @@ impl<'input, 'module> Converter<'input, 'module> {
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
-                code.stmts
-                    .push(format!("if ({table_name}[{index_var}] is uint) {{"));
+                code.instrs.push(Instr::Line(format!(
+                    "if ({table_name}[{index_var}] is uint) {{"
+                )));
             }
 
-            code.stmts.push(format!(
+            code.instrs.push(Instr::Line(format!(
                 "switch ({}{table_name}[{index_var}]) {{",
                 if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
-            ));
+            )));
 
             // 関数呼び出し用の引数リスト
             let call_params = code.vars[0..code.vars.len() - 1]
@@ -375,41 +376,46 @@ impl<'input, 'module> Converter<'input, 'module> {
                     continue;
                 }
 
-                code.stmts.push(format!("case {}:", i + 1));
+                code.instrs.push(Instr::Line(format!("case {}:", i + 1)));
                 if ty.results().is_empty() {
-                    code.stmts
-                        .push(format!("{}({call_params}); return;", func.header.name));
+                    code.instrs.push(Instr::Line(format!(
+                        "{}({call_params}); return;",
+                        func.header.name
+                    )));
                 } else {
-                    code.stmts
-                        .push(format!("return {}({call_params});", func.header.name));
+                    code.instrs.push(Instr::Line(format!(
+                        "return {}({call_params});",
+                        func.header.name
+                    )));
                 }
             }
 
-            code.stmts.push("default:".to_string());
-            code.stmts.push(trap(self.module, "invalid table value"));
+            code.instrs.push(Instr::Line("default:".to_string()));
+            code.instrs
+                .push(Instr::Line(trap(self.module, "invalid table value")));
             if ty.results().is_empty() {
-                code.stmts.push("return;".to_string());
+                code.instrs.push(Instr::Line("return;".to_string()));
             } else {
-                code.stmts.push("return 0;".to_string());
+                code.instrs.push(Instr::Line("return 0;".to_string()));
             }
 
-            code.stmts.push("}".to_string());
+            code.instrs.push(Instr::Line("}".to_string()));
 
             if use_delegate {
-                code.stmts.push("} else {".to_string());
+                code.instrs.push(Instr::Line("} else {".to_string()));
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
 
                 if ty.results().is_empty() {
-                    code.stmts.push(format!(
+                    code.instrs.push(Instr::Line(format!(
                         "(({del}){table_name}[{index_var}])({call_params}); return;",
-                    ));
+                    )));
                 } else {
-                    code.stmts.push(format!(
+                    code.instrs.push(Instr::Line(format!(
                         "return (({del}){table_name}[{index_var}])({call_params});",
-                    ));
+                    )));
                 }
-                code.stmts.push("}".to_string());
+                code.instrs.push(Instr::Line("}".to_string()));
             }
 
             self.module.funcs.push(Func {
@@ -435,31 +441,32 @@ impl<'input, 'module> Converter<'input, 'module> {
 
             // グローバル変数の初期値を代入
             if let Some(init_expr) = &global.init_expr {
-                code.stmts.push(format!("{} = {init_expr};", global.name));
+                code.instrs
+                    .push(Instr::Line(format!("{} = {init_expr};", global.name)));
             }
         }
         for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
-            code.stmts.push(format!(
+            code.instrs.push(Instr::Line(format!(
                 "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
                 self.module.table.as_ref().unwrap().name,
                 items.len()
-            ));
+            )));
         }
         for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
             // メモリへのデータのコピー
-            code.stmts.push(format!(
+            code.instrs.push(Instr::Line(format!(
                 "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
                 self.module.memory.as_ref().unwrap().name,
                 data.len()
-            ));
+            )));
         }
         if let Some(start_func) = self.module.start_func {
             // start関数の呼び出し
-            code.stmts.push(format!(
+            code.instrs.push(Instr::Line(format!(
                 "{}();",
                 self.module.funcs[start_func as usize].header.name
-            ));
+            )));
         }
 
         self.module.funcs.push(Func {
