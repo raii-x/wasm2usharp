@@ -948,7 +948,9 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_call(&mut self, function_index: u32) -> Self::Output {
         let mut call = String::new();
 
-        let func = &self.module.funcs[function_index as usize].borrow().header;
+        let func = &self.module.wasm_funcs[function_index as usize]
+            .borrow()
+            .header;
 
         let params: Vec<Var> = func.ty.params().iter().map(|_| self.pop_stack()).collect();
 

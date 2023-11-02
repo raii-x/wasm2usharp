@@ -10,7 +10,12 @@ pub struct Module<'input> {
     pub class_name: &'input str,
     pub test: bool,
     pub types: Vec<FuncType>,
-    pub funcs: Vec<Rc<RefCell<Func>>>,
+    /// 出力のU#に含まれる全ての関数
+    pub all_funcs: Vec<Rc<RefCell<Func>>>,
+    /// 元のwasmに存在した関数
+    pub wasm_funcs: Vec<Rc<RefCell<Func>>>,
+    /// call_indirect命令に対応する関数
+    pub call_indirects: Vec<Rc<RefCell<Func>>>,
     pub table: Option<Table>,
     pub memory: Option<Memory>,
     pub globals: Vec<Global>,
@@ -27,7 +32,9 @@ impl<'input> Module<'input> {
             class_name,
             test,
             types: Vec::new(),
-            funcs: Vec::new(),
+            all_funcs: Vec::new(),
+            wasm_funcs: Vec::new(),
+            call_indirects: Vec::new(),
             table: None,
             memory: None,
             globals: Vec::new(),
@@ -66,7 +73,11 @@ impl<'input> fmt::Display for Module<'input> {
 
             for &item in elem.items.iter() {
                 if use_delegate {
-                    write!(f, "{},", self.funcs[item as usize].borrow().header.name)?;
+                    write!(
+                        f,
+                        "{},",
+                        self.wasm_funcs[item as usize].borrow().header.name
+                    )?;
                 } else {
                     // テーブルに格納される関数インデックスは元のインデックスに1を足したもの
                     // (配列の初期値の0でnullを表現するため)
@@ -78,7 +89,7 @@ impl<'input> fmt::Display for Module<'input> {
         }
 
         // コード
-        for func in &self.funcs {
+        for func in &self.all_funcs {
             let func = func.borrow();
             if func.code.is_some() {
                 write!(f, "{}", func)?;

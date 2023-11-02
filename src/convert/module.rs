@@ -83,7 +83,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                         .or_insert(import_map(import.module));
 
                     match import.ty {
-                        Func(ty) => self.add_func(ty, Some(full_name.clone())),
+                        Func(ty) => self.add_wasm_func(ty, Some(full_name.clone())),
                         Table(ty) => self.add_table(ty, Some(full_name.clone())),
                         Memory(ty) => self.add_memory(ty, Some(full_name.clone())),
                         Global(ty) => self.add_global(ty, None, Some(full_name.clone())),
@@ -94,7 +94,7 @@ impl<'input, 'module> Converter<'input, 'module> {
             FunctionSection(s) => {
                 for func in s {
                     let func = func?;
-                    self.add_func(func, None);
+                    self.add_wasm_func(func, None);
                 }
             }
             TableSection(s) => {
@@ -123,7 +123,8 @@ impl<'input, 'module> Converter<'input, 'module> {
                     let name = convert_to_ident(export.name);
                     match export.kind {
                         Func => {
-                            let mut func = self.module.funcs[export.index as usize].borrow_mut();
+                            let mut func =
+                                self.module.wasm_funcs[export.index as usize].borrow_mut();
                             func.header.name = name;
                             func.header.export = true;
                         }
@@ -149,7 +150,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 }
             }
             StartSection { func, .. } => {
-                self.module.start_func = Some(Rc::clone(&self.module.funcs[func as usize]));
+                self.module.start_func = Some(Rc::clone(&self.module.wasm_funcs[func as usize]));
             }
             ElementSection(s) => {
                 for elem in s.into_iter() {
@@ -197,7 +198,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 }
             }
             CodeSectionEntry(s) => {
-                let func = &self.module.funcs[self.code_idx];
+                let func = &self.module.wasm_funcs[self.code_idx];
                 let code = {
                     let code_conv = CodeConverter::new(self.module, Rc::clone(func));
                     code_conv.convert(s)?
@@ -215,11 +216,11 @@ impl<'input, 'module> Converter<'input, 'module> {
         Ok(())
     }
 
-    fn add_func(&mut self, ty: u32, name: Option<String>) {
+    fn add_wasm_func(&mut self, ty: u32, name: Option<String>) {
         let import = name.is_some();
         let name = match name {
             Some(x) => x,
-            None => format!("{W2US_PREFIX}func{}", self.module.funcs.len()),
+            None => format!("{W2US_PREFIX}func{}", self.module.wasm_funcs.len()),
         };
         let ty = self.module.types[ty as usize].clone();
 
@@ -227,14 +228,17 @@ impl<'input, 'module> Converter<'input, 'module> {
             self.code_idx += 1;
         }
 
-        self.module.funcs.push(Rc::new(RefCell::new(Func {
+        let func = Rc::new(RefCell::new(Func {
             header: FuncHeader {
                 name,
                 ty,
                 export: false,
             },
             code: None,
-        })));
+        }));
+
+        self.module.wasm_funcs.push(Rc::clone(&func));
+        self.module.all_funcs.push(func);
     }
 
     fn add_table(&mut self, ty: TableType, name: Option<String>) {
@@ -374,7 +378,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 .collect::<Vec<_>>()
                 .join(", ");
 
-            for (i, func) in self.module.funcs.iter().enumerate() {
+            for (i, func) in self.module.wasm_funcs.iter().enumerate() {
                 let func = func.borrow();
                 if func.header.ty != *ty {
                     continue;
@@ -422,7 +426,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 code.instrs.push(Instr::Line("}".to_string()));
             }
 
-            self.module.funcs.push(Rc::new(RefCell::new(Func {
+            self.module.all_funcs.push(Rc::new(RefCell::new(Func {
                 header,
                 code: Some(code),
             })));
@@ -473,7 +477,7 @@ impl<'input, 'module> Converter<'input, 'module> {
             )));
         }
 
-        self.module.funcs.push(Rc::new(RefCell::new(Func {
+        self.module.all_funcs.push(Rc::new(RefCell::new(Func {
             header,
             code: Some(code),
         })));
