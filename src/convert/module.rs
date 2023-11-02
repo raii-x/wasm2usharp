@@ -149,7 +149,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 }
             }
             StartSection { func, .. } => {
-                self.module.start_func = Some(func);
+                self.module.start_func = Some(Rc::clone(&self.module.funcs[func as usize]));
             }
             ElementSection(s) => {
                 for elem in s.into_iter() {
@@ -465,11 +465,11 @@ impl<'input, 'module> Converter<'input, 'module> {
                 data.len()
             )));
         }
-        if let Some(start_func) = self.module.start_func {
+        if let Some(start_func) = &self.module.start_func {
             // start関数の呼び出し
             code.instrs.push(Instr::Line(format!(
                 "{}();",
-                self.module.funcs[start_func as usize].borrow().header.name
+                start_func.borrow().header.name
             )));
         }
 

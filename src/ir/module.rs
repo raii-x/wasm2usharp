@@ -16,7 +16,7 @@ pub struct Module<'input> {
     pub globals: Vec<Global>,
     pub elements: Vec<Element>,
     pub datas: Vec<Data<'input>>,
-    pub start_func: Option<u32>,
+    pub start_func: Option<Rc<RefCell<Func>>>,
     pub import_modules: HashMap<String, String>,
 }
 
