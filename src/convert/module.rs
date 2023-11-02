@@ -1,17 +1,18 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, iter::once};
 
 use anyhow::Result;
 use wasmparser::{
-    ConstExpr, DataKind, ElementItems, ElementKind, GlobalType, MemoryType, Parser, RecGroup,
-    StructuralType, TableType,
+    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, MemoryType, Parser,
+    RecGroup, StructuralType, TableType, ValType,
 };
 
 use crate::{
     convert::code::CodeConverter,
     ir::{
-        func::{Func, FuncHeader},
+        func::{Code, Func, FuncHeader},
+        get_cs_ty,
         module::{Data, Element, Global, Memory, Module, Table},
-        MEMORY, TABLE, W2US_PREFIX,
+        trap, CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, TABLE, W2US_PREFIX,
     },
 };
 
@@ -37,6 +38,9 @@ impl<'input, 'module> Converter<'input, 'module> {
         for payload in Parser::new(0).parse_all(self.module.buf) {
             self.convert_payload(payload?, &mut import_modules, &import_map)?;
         }
+
+        self.add_call_indirects();
+        self.add_init_method();
 
         Ok(import_modules)
     }
@@ -314,5 +318,175 @@ impl<'input, 'module> Converter<'input, 'module> {
         assert!(op_iter.next().is_none());
 
         value
+    }
+
+    fn add_call_indirects(&mut self) {
+        let table = match &self.module.table {
+            Some(x) => x,
+            None => return, // テーブルが無ければreturn
+        };
+
+        for (i_ty, ty) in self.module.types.iter().enumerate() {
+            let name = format!("{CALL_INDIRECT}{i_ty}");
+
+            let call_ind_ty = FuncType::new(
+                ty.params()
+                    .iter()
+                    .copied()
+                    .chain(once(ValType::I32))
+                    .collect::<Vec<_>>(),
+                ty.results().to_vec(),
+            );
+
+            // call_indirect用の関数定義
+            let header = FuncHeader {
+                name,
+                ty: call_ind_ty,
+                export: false,
+            };
+
+            let mut code = Code::new(&header);
+
+            let table_name = &table.name;
+            let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
+
+            let index_var = *code.vars.last().unwrap();
+
+            if use_delegate {
+                // テストの際はuintの他にdelegateが含まれることがある
+                code.stmts
+                    .push(format!("if ({table_name}[{index_var}] is uint) {{"));
+            }
+
+            code.stmts.push(format!(
+                "switch ({}{table_name}[{index_var}]) {{",
+                if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
+            ));
+
+            // 関数呼び出し用の引数リスト
+            let call_params = code.vars[0..code.vars.len() - 1]
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            for (i, func) in self.module.funcs.iter().enumerate() {
+                if func.header.ty != *ty {
+                    continue;
+                }
+
+                code.stmts.push(format!("case {}:", i + 1));
+                if ty.results().is_empty() {
+                    code.stmts
+                        .push(format!("{}({call_params}); return;", func.header.name));
+                } else {
+                    code.stmts
+                        .push(format!("return {}({call_params});", func.header.name));
+                }
+            }
+
+            code.stmts.push("default:".to_string());
+            code.stmts.push(trap(self.module, "invalid table value"));
+            if ty.results().is_empty() {
+                code.stmts.push("return;".to_string());
+            } else {
+                code.stmts.push("return 0;".to_string());
+            }
+
+            code.stmts.push("}".to_string());
+
+            if use_delegate {
+                code.stmts.push("} else {".to_string());
+                // delegateに変換して呼び出し
+                let del = func_delegate(ty);
+
+                if ty.results().is_empty() {
+                    code.stmts.push(format!(
+                        "(({del}){table_name}[{index_var}])({call_params}); return;",
+                    ));
+                } else {
+                    code.stmts.push(format!(
+                        "return (({del}){table_name}[{index_var}])({call_params});",
+                    ));
+                }
+                code.stmts.push("}".to_string());
+            }
+
+            self.module.funcs.push(Func {
+                header,
+                code: Some(code),
+            });
+        }
+    }
+
+    fn add_init_method(&mut self) {
+        let header = FuncHeader {
+            name: INIT.to_string(),
+            ty: FuncType::new(vec![], vec![]),
+            export: true,
+        };
+
+        let mut code = Code::new(&header);
+
+        for global in &self.module.globals {
+            if global.import {
+                continue;
+            }
+
+            // グローバル変数の初期値を代入
+            if let Some(init_expr) = &global.init_expr {
+                code.stmts.push(format!("{} = {init_expr};", global.name));
+            }
+        }
+        for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
+            // テーブルへのエレメントのコピー
+            code.stmts.push(format!(
+                "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
+                self.module.table.as_ref().unwrap().name,
+                items.len()
+            ));
+        }
+        for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
+            // メモリへのデータのコピー
+            code.stmts.push(format!(
+                "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
+                self.module.memory.as_ref().unwrap().name,
+                data.len()
+            ));
+        }
+        if let Some(start_func) = self.module.start_func {
+            // start関数の呼び出し
+            code.stmts.push(format!(
+                "{}();",
+                self.module.funcs[start_func as usize].header.name
+            ));
+        }
+
+        self.module.funcs.push(Func {
+            header,
+            code: Some(code),
+        });
+    }
+}
+
+/// 引数の関数型と対応するC#でのAction/Funcの型を表す文字列を取得 (テスト用)
+fn func_delegate(ty: &FuncType) -> String {
+    let cs_ty = if ty.results().is_empty() {
+        "Action".to_string()
+    } else {
+        "Func".to_string()
+    };
+
+    let params: Vec<&str> = ty
+        .params()
+        .iter()
+        .map(|&x| get_cs_ty(x))
+        .chain(ty.results().iter().map(|&x| get_cs_ty(x)))
+        .collect();
+
+    if params.is_empty() {
+        cs_ty
+    } else {
+        cs_ty + "<" + &params.join(", ") + ">"
     }
 }

@@ -38,7 +38,6 @@ pub struct CodeConverter<'input, 'module> {
     module: &'module Module<'input>,
     code_idx: usize,
     blocks: Vec<Block>,
-    local_count: u32,
     code: Code,
     /// brの後など、到達不可能なコードの処理時に1加算。
     /// unreachableが1以上の場合のブロックの出現ごとに1加算。
@@ -59,8 +58,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             module,
             code_idx,
             blocks: Vec::new(),
-            local_count: 0,
-            code: Code::new(),
+            code: Code::new(&module.funcs[code_idx].header),
             unreachable: 0,
         }
     }
@@ -74,16 +72,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     }
 
     pub fn convert(mut self, body: FunctionBody<'_>) -> Result<Code> {
-        for &ty in self.header().ty.params() {
-            let _ = self.code.new_var(ty);
-            self.local_count += 1;
-        }
-
         for local in body.get_locals_reader()? {
             let (count, ty) = local?;
             for _ in 0..count {
                 self.code.new_var(ty);
-                self.local_count += 1;
             }
         }
 

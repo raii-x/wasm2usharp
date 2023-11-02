@@ -1,12 +1,9 @@
 use core::fmt;
 use std::collections::HashMap;
 
-use wasmparser::{FuncType, GlobalType, MemoryType, TableType, ValType};
+use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
-use super::{
-    func::Func, func_header, get_cs_ty, result_cs_ty, trap, CALL_INDIRECT, DATA, ELEMENT, INIT,
-    MAX_PARAMS, PAGE_SIZE,
-};
+use super::{func::Func, get_cs_ty, DATA, ELEMENT, PAGE_SIZE};
 
 pub struct Module<'input> {
     pub buf: &'input [u8],
@@ -39,143 +36,6 @@ impl<'input> Module<'input> {
             start_func: None,
             import_modules: HashMap::new(),
         }
-    }
-
-    fn write_call_indirects(&self, out_file: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let table = match &self.table {
-            Some(x) => x,
-            None => return Ok(()), // テーブルが無ければreturn
-        };
-
-        for (i_ty, ty) in self.types.iter().enumerate() {
-            let name = format!("{CALL_INDIRECT}{i_ty}");
-
-            // call_indirect関数が受け取る引数リスト
-            let mut params = params_cs_ty_name(ty);
-
-            // 関数呼び出し用の引数リスト
-            let call_params = params
-                .iter()
-                .map(|(_, y)| y.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            params.push((get_cs_ty(ValType::I32), "index".to_string()));
-
-            // call_indirect用の関数定義
-            writeln!(
-                out_file,
-                "{} {{",
-                func_header(&name, result_cs_ty(ty.results()), &params)
-            )?;
-
-            let table_name = &table.name;
-            let use_delegate = self.test && ty.params().len() <= MAX_PARAMS;
-
-            if use_delegate {
-                // テストの際はuintの他にdelegateが含まれることがある
-                writeln!(out_file, "if ({table_name}[index] is uint) {{")?;
-            }
-
-            writeln!(
-                out_file,
-                "switch ({}{table_name}[index]) {{",
-                if self.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
-            )?;
-            for (i, func) in self.funcs.iter().enumerate() {
-                if func.header.ty != *ty {
-                    continue;
-                }
-
-                if ty.results().is_empty() {
-                    writeln!(
-                        out_file,
-                        "case {}: {}({call_params}); return;",
-                        i + 1,
-                        func.header.name
-                    )?;
-                } else {
-                    writeln!(
-                        out_file,
-                        "case {}: return {}({call_params});",
-                        i + 1,
-                        func.header.name
-                    )?;
-                }
-            }
-            write!(out_file, "default: ")?;
-            write!(out_file, "{}", trap(self, "invalid table value"))?;
-            write!(out_file, "return")?;
-            if ty.results().is_empty() {
-                writeln!(out_file, ";")?;
-            } else {
-                writeln!(out_file, " 0;")?;
-            }
-            writeln!(out_file, "}}")?;
-
-            if use_delegate {
-                writeln!(out_file, "}} else {{")?;
-                // delegateに変換して呼び出し
-                let del = func_delegate(ty);
-                if ty.results().is_empty() {
-                    writeln!(
-                        out_file,
-                        "(({del}){table_name}[index])({call_params}); return;",
-                    )?;
-                } else {
-                    writeln!(
-                        out_file,
-                        "return (({del}){table_name}[index])({call_params});",
-                    )?;
-                }
-                writeln!(out_file, "}}")?;
-            }
-
-            writeln!(out_file, "}}")?;
-        }
-        Ok(())
-    }
-
-    fn write_init_method(&self, out_file: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(out_file, "public void {INIT}() {{")?;
-        for global in &self.globals {
-            if global.import {
-                continue;
-            }
-
-            // グローバル変数の初期値を代入
-            if let Some(init_expr) = &global.init_expr {
-                writeln!(out_file, "{} = {init_expr};", global.name)?;
-            }
-        }
-        for (i, Element { offset_expr, items }) in self.elements.iter().enumerate() {
-            // テーブルへのエレメントのコピー
-            writeln!(
-                out_file,
-                "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
-                self.table.as_ref().unwrap().name,
-                items.len()
-            )?;
-        }
-        for (i, Data { offset_expr, data }) in self.datas.iter().enumerate() {
-            // メモリへのデータのコピー
-            writeln!(
-                out_file,
-                "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
-                self.memory.as_ref().unwrap().name,
-                data.len()
-            )?;
-        }
-        if let Some(start_func) = self.start_func {
-            // start関数の呼び出し
-            writeln!(
-                out_file,
-                "{}();",
-                self.funcs[start_func as usize].header.name
-            )?;
-        }
-        writeln!(out_file, "}}")?;
-        Ok(())
     }
 }
 
@@ -286,44 +146,10 @@ impl<'input> fmt::Display for Module<'input> {
             }
         }
 
-        self.write_call_indirects(f)?;
-
-        self.write_init_method(f)?;
-
         writeln!(f, "}}")?;
 
         Ok(())
     }
-}
-
-/// 引数の関数型と対応するC#でのAction/Funcの型を表す文字列を取得 (テスト用)
-fn func_delegate(ty: &FuncType) -> String {
-    let cs_ty = if ty.results().is_empty() {
-        "Action".to_string()
-    } else {
-        "Func".to_string()
-    };
-
-    let params: Vec<&str> = ty
-        .params()
-        .iter()
-        .map(|&x| get_cs_ty(x))
-        .chain(ty.results().iter().map(|&x| get_cs_ty(x)))
-        .collect();
-
-    if params.is_empty() {
-        cs_ty
-    } else {
-        cs_ty + "<" + &params.join(", ") + ">"
-    }
-}
-
-fn params_cs_ty_name(ty: &FuncType) -> Vec<(&'static str, String)> {
-    ty.params()
-        .iter()
-        .enumerate()
-        .map(|(i, param)| (get_cs_ty(*param), format!("param{i}")))
-        .collect::<Vec<_>>()
 }
 
 pub struct Table {

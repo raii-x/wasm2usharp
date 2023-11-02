@@ -70,13 +70,18 @@ pub struct Code {
 }
 
 impl Code {
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        Self {
+    pub fn new(header: &FuncHeader) -> Self {
+        let mut this = Self {
             stmts: Vec::new(),
             vars: Vec::new(),
             loop_var_count: 0,
+        };
+
+        for &ty in header.ty.params() {
+            this.new_var(ty);
         }
+
+        this
     }
 
     pub fn new_var(&mut self, ty: ValType) -> Var {
