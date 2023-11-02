@@ -12,12 +12,10 @@ use crate::{
         func::{Code, FuncHeader, Var},
         get_cs_ty,
         module::Module,
-        BREAK_DEPTH, CALL_INDIRECT, LOOP, PAGE_SIZE,
+        trap, BREAK_DEPTH, CALL_INDIRECT, LOOP, PAGE_SIZE,
     },
     util::bit_mask,
 };
-
-use super::trap;
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};

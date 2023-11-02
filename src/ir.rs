@@ -2,6 +2,8 @@ use std::fmt;
 
 use wasmparser::ValType;
 
+use self::module::Module;
+
 pub mod func;
 pub mod module;
 
@@ -50,5 +52,13 @@ pub fn result_cs_ty(results: &[ValType]) -> &str {
         0 => "void",
         1 => get_cs_ty(results[0]),
         _ => unreachable!(),
+    }
+}
+
+pub fn trap(module: &Module<'_>, message: &str) -> String {
+    if module.test {
+        format!("throw new Exception(\"{message}\");")
+    } else {
+        format!("Debug.LogError(\"{message}\");")
     }
 }

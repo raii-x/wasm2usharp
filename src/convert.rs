@@ -20,15 +20,10 @@ pub fn convert<'input>(
 ) -> Result<HashSet<&'input str>> {
     let mut module = Module::new(buf, class_name, test);
     let mut conv = Converter::new(&mut module);
-    conv.convert(out_file, import_map)
-}
 
-fn trap(module: &Module<'_>, message: &str) -> String {
-    if module.test {
-        format!("throw new Exception(\"{message}\");")
-    } else {
-        format!("Debug.LogError(\"{message}\");")
-    }
+    let ret = conv.convert(import_map)?;
+    write!(out_file, "{}", module)?;
+    Ok(ret)
 }
 
 pub fn convert_to_ident(name: &str) -> String {
