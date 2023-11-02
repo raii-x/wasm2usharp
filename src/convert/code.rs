@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::RefCell, fmt, rc::Rc};
 
 use anyhow::Result;
 use num_traits::float::Float;
@@ -9,7 +9,7 @@ use wasmparser::{
 
 use crate::{
     ir::{
-        func::{Code, FuncHeader, Instr, Var},
+        func::{Code, Func, Instr, Var},
         get_cs_ty,
         module::Module,
         trap, BREAK_DEPTH, CALL_INDIRECT, LOOP, PAGE_SIZE,
@@ -36,7 +36,7 @@ macro_rules! define_visit_operator {
 
 pub struct CodeConverter<'input, 'module> {
     module: &'module Module<'input>,
-    code_idx: usize,
+    func: Rc<RefCell<Func>>,
     blocks: Vec<Block>,
     code: Code,
     /// brの後など、到達不可能なコードの処理時に1加算。
@@ -53,18 +53,15 @@ struct Block {
 }
 
 impl<'input, 'module> CodeConverter<'input, 'module> {
-    pub(super) fn new(module: &'module Module<'input>, code_idx: usize) -> Self {
+    pub(super) fn new(module: &'module Module<'input>, func: Rc<RefCell<Func>>) -> Self {
+        let code = Code::new(&func.borrow().header);
         Self {
             module,
-            code_idx,
+            func,
             blocks: Vec::new(),
-            code: Code::new(&module.funcs[code_idx].header),
+            code,
             unreachable: 0,
         }
-    }
-
-    fn header(&self) -> &'module FuncHeader {
-        &self.module.funcs[self.code_idx].header
     }
 
     fn push_line(&mut self, line: String) {
@@ -79,14 +76,18 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             }
         }
 
-        let results = self.header().ty.results();
+        let blockty = {
+            let func = self.func.borrow();
+            let results = func.header.ty.results();
+            match results.len() {
+                0 => BlockType::Empty,
+                1 => BlockType::Type(results[0]),
+                _ => panic!("multi value is not supported"),
+            }
+        };
 
         // 関数の最上位のブロック
-        self.visit_block(match results.len() {
-            0 => BlockType::Empty,
-            1 => BlockType::Type(results[0]),
-            _ => panic!("multi value is not supported"),
-        })?;
+        self.visit_block(blockty)?;
         let result_var = self.blocks[0].result;
 
         for op in body.get_operators_reader()? {
@@ -930,7 +931,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_return(&mut self) -> Self::Output {
         self.unreachable = 1;
 
-        match self.header().ty.results().len() {
+        let results_len = self.func.borrow().header.ty.results().len();
+        match results_len {
             0 => self.push_line("return;".to_string()),
             1 => {
                 let var = self.last_stack();
@@ -946,7 +948,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_call(&mut self, function_index: u32) -> Self::Output {
         let mut call = String::new();
 
-        let func = &self.module.funcs[function_index as usize].header;
+        let func = &self.module.funcs[function_index as usize].borrow().header;
 
         let params: Vec<Var> = func.ty.params().iter().map(|_| self.pop_stack()).collect();
 

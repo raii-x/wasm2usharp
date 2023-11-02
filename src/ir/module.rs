@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
@@ -10,7 +10,7 @@ pub struct Module<'input> {
     pub class_name: &'input str,
     pub test: bool,
     pub types: Vec<FuncType>,
-    pub funcs: Vec<Func>,
+    pub funcs: Vec<Rc<RefCell<Func>>>,
     pub table: Option<Table>,
     pub memory: Option<Memory>,
     pub globals: Vec<Global>,
@@ -66,7 +66,7 @@ impl<'input> fmt::Display for Module<'input> {
 
             for &item in elem.items.iter() {
                 if use_delegate {
-                    write!(f, "{},", self.funcs[item as usize].header.name)?;
+                    write!(f, "{},", self.funcs[item as usize].borrow().header.name)?;
                 } else {
                     // テーブルに格納される関数インデックスは元のインデックスに1を足したもの
                     // (配列の初期値の0でnullを表現するため)
@@ -79,6 +79,7 @@ impl<'input> fmt::Display for Module<'input> {
 
         // コード
         for func in &self.funcs {
+            let func = func.borrow();
             if func.code.is_some() {
                 write!(f, "{}", func)?;
             }

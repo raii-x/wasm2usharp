@@ -1,4 +1,4 @@
-use std::{collections::HashSet, iter::once};
+use std::{cell::RefCell, collections::HashSet, iter::once, rc::Rc};
 
 use anyhow::Result;
 use wasmparser::{
@@ -123,7 +123,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                     let name = convert_to_ident(export.name);
                     match export.kind {
                         Func => {
-                            let func = &mut self.module.funcs[export.index as usize];
+                            let mut func = self.module.funcs[export.index as usize].borrow_mut();
                             func.header.name = name;
                             func.header.export = true;
                         }
@@ -197,10 +197,13 @@ impl<'input, 'module> Converter<'input, 'module> {
                 }
             }
             CodeSectionEntry(s) => {
-                let code_conv = CodeConverter::new(self.module, self.code_idx);
-                let code = code_conv.convert(s)?;
+                let func = &self.module.funcs[self.code_idx];
+                let code = {
+                    let code_conv = CodeConverter::new(self.module, Rc::clone(func));
+                    code_conv.convert(s)?
+                };
 
-                let func = &mut self.module.funcs[self.code_idx];
+                let mut func = func.borrow_mut();
                 func.code = Some(code);
 
                 self.code_idx += 1;
@@ -224,14 +227,14 @@ impl<'input, 'module> Converter<'input, 'module> {
             self.code_idx += 1;
         }
 
-        self.module.funcs.push(Func {
+        self.module.funcs.push(Rc::new(RefCell::new(Func {
             header: FuncHeader {
                 name,
                 ty,
                 export: false,
             },
             code: None,
-        });
+        })));
     }
 
     fn add_table(&mut self, ty: TableType, name: Option<String>) {
@@ -372,6 +375,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 .join(", ");
 
             for (i, func) in self.module.funcs.iter().enumerate() {
+                let func = func.borrow();
                 if func.header.ty != *ty {
                     continue;
                 }
@@ -418,10 +422,10 @@ impl<'input, 'module> Converter<'input, 'module> {
                 code.instrs.push(Instr::Line("}".to_string()));
             }
 
-            self.module.funcs.push(Func {
+            self.module.funcs.push(Rc::new(RefCell::new(Func {
                 header,
                 code: Some(code),
-            });
+            })));
         }
     }
 
@@ -465,14 +469,14 @@ impl<'input, 'module> Converter<'input, 'module> {
             // start関数の呼び出し
             code.instrs.push(Instr::Line(format!(
                 "{}();",
-                self.module.funcs[start_func as usize].header.name
+                self.module.funcs[start_func as usize].borrow().header.name
             )));
         }
 
-        self.module.funcs.push(Func {
+        self.module.funcs.push(Rc::new(RefCell::new(Func {
             header,
             code: Some(code),
-        });
+        })));
     }
 }
 
