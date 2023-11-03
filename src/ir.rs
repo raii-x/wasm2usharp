@@ -2,10 +2,11 @@ use std::fmt;
 
 use wasmparser::ValType;
 
-use self::module::Module;
+use self::{module::Module, ty::CsType};
 
 pub mod func;
 pub mod module;
+pub mod ty;
 
 pub const PAGE_SIZE: u32 = 65536;
 pub const MAX_PARAMS: usize = 16;
@@ -18,16 +19,6 @@ pub const INIT: &str = "w2us_init";
 pub const CALL_INDIRECT: &str = "w2us_call_indirect";
 pub const BREAK_DEPTH: &str = "w2us_break_depth";
 pub const LOOP: &str = "w2us_loop";
-
-pub fn get_cs_ty(ty: ValType) -> &'static str {
-    match ty {
-        ValType::I32 => "int",
-        ValType::I64 => "long",
-        ValType::F32 => "float",
-        ValType::F64 => "double",
-        _ => unreachable!(),
-    }
-}
 
 pub fn func_header(
     name: impl fmt::Display,
@@ -47,10 +38,10 @@ pub fn func_header(
     header
 }
 
-pub fn result_cs_ty(results: &[ValType]) -> &str {
+pub fn result_cs_ty(results: &[ValType]) -> CsType {
     match results.len() {
-        0 => "void",
-        1 => get_cs_ty(results[0]),
+        0 => CsType::Void,
+        1 => CsType::get(results[0]),
         _ => unreachable!(),
     }
 }

@@ -10,9 +10,10 @@ use crate::{
     convert::code::CodeConverter,
     ir::{
         func::{Code, Func, FuncHeader, Instr, Var},
-        get_cs_ty,
         module::{Data, Element, Global, Memory, Module, Table},
-        trap, CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, TABLE, W2US_PREFIX,
+        trap,
+        ty::CsType,
+        CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, TABLE, W2US_PREFIX,
     },
 };
 
@@ -502,11 +503,12 @@ fn func_delegate(ty: &FuncType) -> String {
         "Func".to_string()
     };
 
-    let params: Vec<&str> = ty
+    let params: Vec<String> = ty
         .params()
         .iter()
-        .map(|&x| get_cs_ty(x))
-        .chain(ty.results().iter().map(|&x| get_cs_ty(x)))
+        .map(|&x| CsType::get(x))
+        .chain(ty.results().iter().map(|&x| CsType::get(x)))
+        .map(|x| x.to_string())
         .collect();
 
     if params.is_empty() {

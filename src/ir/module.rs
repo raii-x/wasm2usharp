@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
-use super::{func::Func, get_cs_ty, DATA, ELEMENT, PAGE_SIZE};
+use super::{func::Func, ty::CsType, DATA, ELEMENT, PAGE_SIZE};
 
 pub struct Module<'input> {
     pub buf: &'input [u8],
@@ -120,7 +120,7 @@ impl<'input> fmt::Display for Module<'input> {
                 write!(f, "[NonSerialized] public ")?
             }
 
-            let cs_ty = get_cs_ty(global.ty.content_type);
+            let cs_ty = CsType::get(global.ty.content_type);
             writeln!(f, "{cs_ty} {};", global.name)?;
         }
 

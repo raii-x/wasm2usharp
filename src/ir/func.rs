@@ -2,7 +2,7 @@ use std::{cell::RefCell, fmt, rc::Rc};
 
 use wasmparser::{FuncType, ValType};
 
-use super::{func_header, get_cs_ty, result_cs_ty, BREAK_DEPTH, LOOP};
+use super::{func_header, result_cs_ty, ty::CsType, BREAK_DEPTH, LOOP};
 
 pub struct Func {
     pub header: FuncHeader,
@@ -20,10 +20,10 @@ impl fmt::Display for Func {
 
         let code = self.code.as_ref().unwrap();
 
-        let params: Vec<(&str, &Var)> = func_ty
+        let params: Vec<(CsType, &Var)> = func_ty
             .params()
             .iter()
-            .map(|&ty| get_cs_ty(ty))
+            .map(|&ty| CsType::get(ty))
             .zip(code.vars.iter())
             .collect();
         write!(
@@ -43,7 +43,7 @@ impl fmt::Display for Func {
 
         // 一時変数
         for var in code.vars.iter().skip(func_ty.params().len()) {
-            writeln!(f, "{} {var} = 0;", get_cs_ty(var.ty))?;
+            writeln!(f, "{} {var} = 0;", CsType::get(var.ty))?;
         }
 
         // 本体

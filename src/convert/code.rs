@@ -10,9 +10,10 @@ use wasmparser::{
 use crate::{
     ir::{
         func::{Code, Func, Instr, Var},
-        get_cs_ty,
         module::Module,
-        trap, BREAK_DEPTH, LOOP, PAGE_SIZE,
+        trap,
+        ty::CsType,
+        BREAK_DEPTH, LOOP, PAGE_SIZE,
     },
     util::bit_mask,
 };
@@ -201,13 +202,13 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let memory = &self.module.memory.as_ref().unwrap().name;
         match mem_type {
             I8 => load += &format!("{memory}[{0}+{1}];", idx, memarg.offset),
-            I16 => load += &format!("{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8;", idx, memarg.offset, get_cs_ty(var_type)),
+            I16 => load += &format!("{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8;", idx, memarg.offset, CsType::get(var_type)),
             Val(I32) => load += &format!(
                 "{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8 | ({2}){memory}[{0}+{1}+2]<<16 | ({2}){memory}[{0}+{1}+3]<<24;",
-                idx, memarg.offset, get_cs_ty(var_type)),
+                idx, memarg.offset, CsType::get(var_type)),
             Val(I64) => load += &format!(
                 "{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8 | ({2}){memory}[{0}+{1}+2]<<16 | ({2}){memory}[{0}+{1}+3]<<24 | ({2}){memory}[{0}+{1}+4]<<32 | ({2}){memory}[{0}+{1}+5]<<40 | ({2}){memory}[{0}+{1}+6]<<48 | ({2}){memory}[{0}+{1}+7]<<56;",
-                idx, memarg.offset, get_cs_ty(var_type)),
+                idx, memarg.offset, CsType::get(var_type)),
             _ => unreachable!(),
         }
         self.push_line(load);
@@ -261,7 +262,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let expo_bit_mask = bit_mask(expo_bits as u64);
         // LSBに寄せた後のビットマスク
         let expo_offset = (1 << (expo_bits - 1)) - 1;
-        let cs_ty = get_cs_ty(f_ty);
+        let cs_ty = CsType::get(f_ty);
         let class = self.math_class(f_ty);
 
         self.push_line("{".to_string());
@@ -382,8 +383,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let expo_bit_mask = bit_mask(expo_bits as u64);
         // LSBに寄せた後のビットマスク
         let expo_offset = (1 << (expo_bits - 1)) - 1;
-        let f_cs_ty = get_cs_ty(f_ty);
-        let i_cs_ty = get_cs_ty(i_ty);
+        let f_cs_ty = CsType::get(f_ty);
+        let i_cs_ty = CsType::get(i_ty);
         let class = self.math_class(f_ty);
         let subnormal_bound = match f_ty {
             ValType::F32 => "1.1754944e-38f",
@@ -485,7 +486,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         T: Float,
         F: FnOnce() -> String,
     {
-        let cs_ty = get_cs_ty(ty);
+        let cs_ty = CsType::get(ty);
 
         let literal = if value.is_infinite() {
             if value.is_sign_positive() {
@@ -537,8 +538,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         if signed {
             line += &format!("{lhs} {op} {rhs}")
         } else {
-            let cs_ty = get_cs_ty(ty);
-            let cs_ty_u = "u".to_string() + cs_ty;
+            let cs_ty = CsType::get(ty);
+            let cs_ty_u = cs_ty.to_unsigned();
 
             if !logical {
                 line += &format!("({cs_ty})");
@@ -566,8 +567,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         if signed {
             self.push_line(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
         } else {
-            let cs_ty = get_cs_ty(ty);
-            let cs_ty_u = "u".to_string() + cs_ty;
+            let cs_ty = CsType::get(ty);
+            let cs_ty_u = cs_ty.to_unsigned();
 
             self.push_line("{".to_string());
             self.push_line(format!("var lhs_u = ({cs_ty_u}){lhs};"));
@@ -594,12 +595,12 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         let mut line = format!("{result} = ");
 
-        let cs_ty = get_cs_ty(ty);
+        let cs_ty = CsType::get(ty);
 
         if signed {
             line += &format!("({cs_ty})({lhs} {op} (int){rhs})");
         } else {
-            let cs_ty_u = "u".to_string() + cs_ty;
+            let cs_ty_u = cs_ty.to_unsigned();
             line += &format!("({cs_ty})(({cs_ty_u}){lhs} {op} (int){rhs})");
         };
 
@@ -617,8 +618,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         let bits = get_int_bits(ty);
 
-        let cs_ty = get_cs_ty(ty);
-        let cs_ty_u = "u".to_string() + cs_ty;
+        let cs_ty = CsType::get(ty);
+        let cs_ty_u = cs_ty.to_unsigned();
 
         if right {
             self.push_line(format!(
@@ -640,7 +641,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let bits = get_int_bits(ty);
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cs_ty = get_cs_ty(ty);
+        let cs_ty = CsType::get(ty);
         // 2進で文字列化して文字数を数える
         self.push_line(format!(
             "else {result} = ({cs_ty})({bits} - Convert.ToString({opnd}, 2).Length);",
@@ -656,7 +657,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let bits = get_int_bits(ty);
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cs_ty = get_cs_ty(ty);
+        let cs_ty = CsType::get(ty);
 
         // 符号付き整数の最小値のリテラルはUdonSharpではエラーとなるので
         // `-最大値 - 1` で表現する
@@ -681,7 +682,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let result: Var = self.code.new_var(ty);
         self.push_stack(result);
 
-        let cs_ty = get_cs_ty(ty);
+        let cs_ty = CsType::get(ty);
         // 2進で文字列化して、0を除去した後の文字数を数える
         self.push_line(format!(
             "{result} = ({cs_ty})Convert.ToString({opnd}, 2).Replace(\"0\", \"\").Length;"
@@ -740,7 +741,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let result = self.code.new_var(result_ty);
         self.push_stack(result);
 
-        let result_cs_ty = get_cs_ty(result_ty);
+        let result_cs_ty = CsType::get(result_ty);
 
         self.push_line(match mid_ty {
             Some(cast_ty) => format!("{result} = ({result_cs_ty})({cast_ty}){opnd};"),
@@ -1155,7 +1156,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         let memory = &self.module.memory.as_ref().unwrap().name;
 
-        let cs_ty = get_cs_ty(var.ty);
+        let cs_ty = CsType::get(var.ty);
         self.push_line(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
         Ok(())
     }
@@ -1190,7 +1191,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         self.push_line("} else {".to_string());
         {
             // 前のサイズを返す
-            let cs_ty = get_cs_ty(var.ty);
+            let cs_ty = CsType::get(var.ty);
             self.push_line(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
 
             // メモリをsizeだけ拡張
