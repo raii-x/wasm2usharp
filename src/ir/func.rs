@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{cell::RefCell, fmt, rc::Rc};
 
 use wasmparser::{FuncType, ValType};
 
@@ -106,15 +106,39 @@ impl fmt::Display for Var {
     }
 }
 
-#[derive(Debug, Clone)]
 pub enum Instr {
     Line(String),
+    Call {
+        func: Rc<RefCell<Func>>,
+        params: Vec<Var>,
+        result: Option<Var>,
+    },
 }
 
 impl fmt::Display for Instr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Line(x) => write!(f, "{}", x),
+            Self::Call {
+                func,
+                params,
+                result,
+            } => {
+                if let Some(result) = result {
+                    write!(f, "{result} = ")?;
+                }
+
+                write!(f, "{}(", func.borrow().header.name)?;
+
+                let params = params
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(f, "{params}")?;
+
+                write!(f, ");")
+            }
         }
     }
 }

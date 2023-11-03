@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::{
     convert::code::CodeConverter,
     ir::{
-        func::{Code, Func, FuncHeader, Instr},
+        func::{Code, Func, FuncHeader, Instr, Var},
         get_cs_ty,
         module::{Data, Element, Global, Memory, Module, Table},
         trap, CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, TABLE, W2US_PREFIX,
@@ -39,7 +39,6 @@ impl<'input, 'module> Converter<'input, 'module> {
             self.convert_payload(payload?, &mut import_modules, &import_map)?;
         }
 
-        self.add_call_indirects();
         self.add_init_method();
 
         Ok(import_modules)
@@ -196,6 +195,9 @@ impl<'input, 'module> Converter<'input, 'module> {
                         data: data.data,
                     });
                 }
+            }
+            CodeSectionStart { .. } => {
+                self.add_call_indirects();
             }
             CodeSectionEntry(s) => {
                 let func = &self.module.wasm_funcs[self.code_idx];
@@ -372,29 +374,29 @@ impl<'input, 'module> Converter<'input, 'module> {
             )));
 
             // 関数呼び出し用の引数リスト
-            let call_params = code.vars[0..code.vars.len() - 1]
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
+            let call_params: Vec<Var> = code.vars[0..code.vars.len() - 1].to_vec();
+
+            let result = if ty.results().is_empty() {
+                None
+            } else {
+                Some(code.new_var(ty.results()[0]))
+            };
 
             for (i, func) in self.module.wasm_funcs.iter().enumerate() {
-                let func = func.borrow();
-                if func.header.ty != *ty {
+                if func.borrow().header.ty != *ty {
                     continue;
                 }
 
                 code.instrs.push(Instr::Line(format!("case {}:", i + 1)));
-                if ty.results().is_empty() {
-                    code.instrs.push(Instr::Line(format!(
-                        "{}({call_params}); return;",
-                        func.header.name
-                    )));
-                } else {
-                    code.instrs.push(Instr::Line(format!(
-                        "return {}({call_params});",
-                        func.header.name
-                    )));
+                code.instrs.push(Instr::Call {
+                    func: Rc::clone(func),
+                    params: call_params.clone(),
+                    result,
+                });
+
+                match result {
+                    Some(x) => code.instrs.push(Instr::Line(format!("return {x};"))),
+                    None => code.instrs.push(Instr::Line("return;".to_string())),
                 }
             }
 
@@ -413,6 +415,11 @@ impl<'input, 'module> Converter<'input, 'module> {
                 code.instrs.push(Instr::Line("} else {".to_string()));
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
+                let call_params = call_params
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
 
                 if ty.results().is_empty() {
                     code.instrs.push(Instr::Line(format!(
@@ -426,10 +433,13 @@ impl<'input, 'module> Converter<'input, 'module> {
                 code.instrs.push(Instr::Line("}".to_string()));
             }
 
-            self.module.all_funcs.push(Rc::new(RefCell::new(Func {
+            let func = Rc::new(RefCell::new(Func {
                 header,
                 code: Some(code),
-            })));
+            }));
+
+            self.module.call_indirects.push(Rc::clone(&func));
+            self.module.all_funcs.push(func);
         }
     }
 

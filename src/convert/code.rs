@@ -12,7 +12,7 @@ use crate::{
         func::{Code, Func, Instr, Var},
         get_cs_ty,
         module::Module,
-        trap, BREAK_DEPTH, CALL_INDIRECT, LOOP, PAGE_SIZE,
+        trap, BREAK_DEPTH, LOOP, PAGE_SIZE,
     },
     util::bit_mask,
 };
@@ -749,13 +749,13 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn get_result(&mut self, ty: FuncType, line: &mut String) {
+    fn get_result(&mut self, ty: &FuncType) -> Option<Var> {
         match ty.results().len() {
-            0 => {}
+            0 => None,
             1 => {
                 let var = self.code.new_var(ty.results()[0]);
-                *line += &format!("{var} = ");
                 self.push_stack(var);
+                Some(var)
             }
             _ => {
                 panic!("Multiple return values are not supported")
@@ -946,27 +946,24 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_call(&mut self, function_index: u32) -> Self::Output {
-        let mut call = String::new();
+        let func = Rc::clone(&self.module.wasm_funcs[function_index as usize]);
+        let ty = func.borrow().header.ty.clone();
 
-        let func = &self.module.wasm_funcs[function_index as usize]
-            .borrow()
-            .header;
+        // mapは遅延評価であるため、mapの後にrevを呼んだ場合ではpop_stackで得る値が逆順にならない
+        // そのため、一度collectでVecにした後、reverseで逆順にしている
+        let mut params: Vec<Var> = ty.params().iter().map(|_| self.pop_stack()).collect();
+        params.reverse();
 
-        let params: Vec<Var> = func.ty.params().iter().map(|_| self.pop_stack()).collect();
-
-        self.get_result(func.ty.clone(), &mut call);
-        call += &format!("{}(", func.name);
-
-        for (i, arg) in params.iter().rev().enumerate() {
-            if i != 0 {
-                call += ", ";
-            }
-            call += &format!("{arg}");
+        for (i, p_ty) in ty.params().iter().enumerate() {
+            assert_eq!(params[i].ty, *p_ty);
         }
+        let result = self.get_result(&ty);
 
-        call += ");";
-
-        self.push_line(call);
+        self.code.instrs.push(Instr::Call {
+            func,
+            params,
+            result,
+        });
         Ok(())
     }
 
@@ -979,27 +976,22 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         assert!(table_index == 0);
         assert!(table_byte == 0);
 
-        let mut call = String::new();
-
+        let func = Rc::clone(&self.module.call_indirects[type_index as usize]);
         let ty = self.module.types[type_index as usize].clone();
 
-        let params: Vec<Var> = (0..ty.params().len() + 1)
+        // Iteratorのrevを使わない理由はvisit_callのコメントを参照
+        let mut params: Vec<Var> = (0..ty.params().len() + 1)
             .map(|_| self.pop_stack())
             .collect();
+        params.reverse();
 
-        self.get_result(ty, &mut call);
-        call += &format!("{CALL_INDIRECT}{}(", type_index);
+        let result = self.get_result(&ty);
 
-        for (i, arg) in params.iter().rev().enumerate() {
-            if i != 0 {
-                call += ", ";
-            }
-            call += &format!("{arg}");
-        }
-
-        call += ");";
-
-        self.push_line(call);
+        self.code.instrs.push(Instr::Call {
+            func,
+            params,
+            result,
+        });
         Ok(())
     }
 
