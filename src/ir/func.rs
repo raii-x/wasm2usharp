@@ -1,6 +1,6 @@
 use std::{cell::RefCell, fmt, io, rc::Rc};
 
-use wasmparser::{FuncType, ValType};
+use wasmparser::FuncType;
 
 use super::{func_header, module::Module, result_cs_ty, ty::CsType, BREAK_DEPTH, LOOP};
 
@@ -48,7 +48,7 @@ impl Func {
 
         // 一時変数
         for var in code.vars.iter().skip(func_ty.params().len()) {
-            writeln!(f, "{} {var} = 0;", CsType::get(var.ty))?;
+            writeln!(f, "{} {var} = 0;", var.ty)?;
         }
 
         // 本体
@@ -83,13 +83,13 @@ impl Code {
         };
 
         for &ty in header.ty.params() {
-            this.new_var(ty);
+            this.new_var(CsType::get(ty));
         }
 
         this
     }
 
-    pub fn new_var(&mut self, ty: ValType) -> Var {
+    pub fn new_var(&mut self, ty: CsType) -> Var {
         let var = Var {
             index: self.vars.len(),
             ty,
@@ -102,7 +102,7 @@ impl Code {
 #[derive(Debug, Clone, Copy)]
 pub struct Var {
     pub index: usize,
-    pub ty: ValType,
+    pub ty: CsType,
 }
 
 impl fmt::Display for Var {

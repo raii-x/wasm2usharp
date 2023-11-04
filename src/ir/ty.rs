@@ -25,6 +25,16 @@ impl CsType {
         }
     }
 
+    pub fn val_type(&self) -> ValType {
+        match self {
+            Self::Int => ValType::I32,
+            Self::Long => ValType::I64,
+            Self::Float => ValType::F32,
+            Self::Double => ValType::F64,
+            _ => panic!("Unsupported type"),
+        }
+    }
+
     pub fn to_unsigned(&self) -> Self {
         match self {
             Self::Int => Self::UInt,

@@ -381,7 +381,7 @@ impl<'input, 'module> Converter<'input, 'module> {
             let result = if ty.results().is_empty() {
                 None
             } else {
-                Some(code.new_var(ty.results()[0]))
+                Some(code.new_var(CsType::get(ty.results()[0])))
             };
 
             for (i, func) in self.module.wasm_funcs.iter().enumerate() {
