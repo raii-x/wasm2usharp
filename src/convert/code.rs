@@ -608,24 +608,26 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     ) -> <Self as VisitOperator<'_>>::Output {
         let (lhs, rhs, result) = self.bin_op_vars(ty);
 
-        let mut line = format!("{result} = ");
-
-        let cs_ty = CsType::get(ty);
-
-        let cast_int = cast_from(CsType::get(rhs.ty), CsType::Int);
-
-        if signed {
-            line += &format!("({cs_ty})({lhs} {op} {cast_int}({rhs}))");
+        let rhs_int = if rhs.ty == ValType::I32 {
+            rhs
         } else {
-            let cs_ty_u = cs_ty.to_unsigned();
-            let cast_ty = cast(cs_ty);
-            let cast_ty_u = cast(cs_ty_u);
-            line += &format!("{cast_ty}({cast_ty_u}({lhs}) {op} {cast_int}({rhs}))");
+            let rhs_int = self.code.new_var(ValType::I32);
+            self.push_line(format!("{rhs_int} = {}({rhs});", cast(CsType::Int)));
+            rhs_int
         };
 
-        line += ";";
+        if signed {
+            self.push_line(format!("{result} = {lhs} {op} {rhs_int};"));
+        } else {
+            let bits = get_int_bits(lhs.ty);
+            let only_msb = 1u64 << (bits - 1);
+            let except_msb = only_msb - 1;
 
-        self.push_line(line);
+            self.push_line(format!(
+                "{result} = {rhs} < 0 ? (({lhs} & {except_msb}) {op} {rhs_int}) | (1 << ({} - {rhs_int})) : {lhs} {op} {rhs_int};",
+                bits - 1
+            ));
+        }
         Ok(())
     }
 
@@ -740,20 +742,70 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_cast(
+    fn visit_cast(&mut self, result_ty: ValType) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars(result_ty);
+        let cast_ty = cast(CsType::get(result_ty));
+
+        self.push_line(format!("{result} = {cast_ty}({opnd});"));
+        Ok(())
+    }
+
+    fn visit_cast_trunc(
         &mut self,
         result_ty: ValType,
-        mid_ty: Option<CsType>,
+        signed: bool,
+    ) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars(result_ty);
+        let tmp = self.code.new_var(ValType::F64);
+
+        self.push_line(format!(
+            "{tmp} = Math.Truncate({}({opnd}));",
+            cast_from(CsType::get(opnd.ty), CsType::Double)
+        ));
+
+        let cast_ty = cast(CsType::get(result_ty));
+        if signed {
+            self.push_line(format!("{result} = {cast_ty}({tmp});"));
+        } else {
+            let bits = get_int_bits(result_ty);
+            let only_msb = 1u64 << (bits - 1);
+
+            self.push_line(format!("{result} = {tmp} >= {only_msb} ? {cast_ty}({tmp} - {only_msb}) | (-{} - 1) : {cast_ty}({tmp});", only_msb - 1));
+        }
+        Ok(())
+    }
+
+    fn visit_cast_extend(&mut self, signed: bool) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars(ValType::I64);
+        let cast_ty = cast(CsType::Long);
+
+        if signed {
+            self.push_line(format!("{result} = {cast_ty}({opnd});"));
+        } else {
+            self.push_line(format!("{result} = {opnd} < 0 ? {cast_ty}({opnd} & 0x7fffffff) | 0x80000000 : {cast_ty}({opnd});"));
+        }
+        Ok(())
+    }
+
+    fn visit_cast_convert(
+        &mut self,
+        result_ty: ValType,
+        signed: bool,
     ) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(result_ty);
 
-        let result_cs_ty = CsType::get(result_ty);
-        let cast_result = cast(result_cs_ty);
+        let cast_ty = cast(CsType::get(result_ty));
+        if signed {
+            self.push_line(format!("{result} = {cast_ty}({opnd});"));
+        } else {
+            let bits = get_int_bits(opnd.ty);
+            let only_msb = 1u64 << (bits - 1);
 
-        self.push_line(match mid_ty {
-            Some(mid_ty) => format!("{result} = {cast_result}({}({opnd}));", cast(mid_ty)),
-            None => format!("{result} = {cast_result}({opnd});"),
-        });
+            self.push_line(format!(
+                "{result} = {opnd} < 0 ? {cast_ty}({opnd} & {}) + {only_msb} : {cast_ty}({opnd});",
+                only_msb - 1
+            ));
+        }
         Ok(())
     }
 
@@ -1531,6 +1583,13 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_f32_trunc(&mut self) -> Self::Output {
+        let (opnd, result) = self.un_op_vars(ValType::F32);
+        self.push_line(format!(
+            "{result} = {}(Math.Truncate({}({opnd})));",
+            cast(CsType::Float),
+            cast(CsType::Double)
+        ));
+
         self.visit_math_un_op(ValType::F32, "Truncate")
     }
 
@@ -1627,87 +1686,96 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i32_wrap_i64(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I32, None)
+        let (opnd, result) = self.un_op_vars(ValType::I32);
+
+        self.push_line(format!(
+            "{result} = {}({opnd} & 0x7fffffff);",
+            cast(CsType::Int)
+        ));
+        self.push_line(format!(
+            "if (({opnd} & 0x80000000) != 0) {result} |= -0x7fffffff - 1;"
+        ));
+        Ok(())
     }
 
     fn visit_i32_trunc_f32_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I32, None)
+        self.visit_cast_trunc(ValType::I32, true)
     }
 
     fn visit_i32_trunc_f32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I32, Some(CsType::UInt))
+        self.visit_cast_trunc(ValType::I32, false)
     }
 
     fn visit_i32_trunc_f64_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I32, None)
+        self.visit_cast_trunc(ValType::I32, true)
     }
 
     fn visit_i32_trunc_f64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I32, Some(CsType::UInt))
+        self.visit_cast_trunc(ValType::I32, false)
     }
 
     fn visit_i64_extend_i32_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, None)
+        self.visit_cast_extend(true)
     }
 
     fn visit_i64_extend_i32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, Some(CsType::UInt))
+        self.visit_cast_extend(false)
     }
 
     fn visit_i64_trunc_f32_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, None)
+        self.visit_cast_trunc(ValType::I64, true)
     }
 
     fn visit_i64_trunc_f32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, Some(CsType::ULong))
+        self.visit_cast_trunc(ValType::I64, false)
     }
 
     fn visit_i64_trunc_f64_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, None)
+        self.visit_cast_trunc(ValType::I64, true)
     }
 
     fn visit_i64_trunc_f64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, Some(CsType::ULong))
+        self.visit_cast_trunc(ValType::I64, false)
     }
 
     fn visit_f32_convert_i32_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F32, None)
+        self.visit_cast_convert(ValType::F32, true)
     }
 
     fn visit_f32_convert_i32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F32, Some(CsType::UInt))
+        self.visit_cast_convert(ValType::F32, false)
     }
 
     fn visit_f32_convert_i64_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F32, None)
+        self.visit_cast_convert(ValType::F32, true)
     }
 
     fn visit_f32_convert_i64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F32, Some(CsType::ULong))
+        self.visit_cast_convert(ValType::F32, false)
     }
 
     fn visit_f32_demote_f64(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F32, None)
+        self.visit_cast(ValType::F32)
     }
 
     fn visit_f64_convert_i32_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F64, None)
+        self.visit_cast_convert(ValType::F64, true)
     }
 
     fn visit_f64_convert_i32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F64, Some(CsType::UInt))
+        self.visit_cast_convert(ValType::F64, false)
     }
 
     fn visit_f64_convert_i64_s(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F64, None)
+        self.visit_cast_convert(ValType::F64, true)
     }
 
     fn visit_f64_convert_i64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F64, Some(CsType::ULong))
+        self.visit_cast_convert(ValType::F64, false)
     }
 
     fn visit_f64_promote_f32(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F64, None)
+        self.visit_cast(ValType::F64)
     }
 
     fn visit_i32_reinterpret_f32(&mut self) -> Self::Output {
@@ -1751,8 +1819,8 @@ fn ty_f_to_i(ty: ValType) -> ValType {
 
 fn get_int_bits(ty: ValType) -> u32 {
     match ty {
-        ValType::I32 => 32,
-        ValType::I64 => 64,
+        ValType::I32 => i32::BITS,
+        ValType::I64 => i64::BITS,
         _ => panic!("Specify integer type as argument"),
     }
 }
