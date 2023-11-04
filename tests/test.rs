@@ -21,7 +21,7 @@ macro_rules! test (
     ($func_name:ident, $name:expr) => {
         #[test]
         fn $func_name() {
-            test_wast($name, None as Option<fn(&WastDirective<'_>) -> bool>);
+            test_wast($name, None);
         }
     };
     ($func_name:ident, $name:expr, $filter:expr) => {
@@ -37,7 +37,7 @@ macro_rules! test_ignore {
         #[test]
         #[ignore]
         fn $func_name() {
-            test_wast($name, None as Option<fn(&WastDirective<'_>) -> bool>);
+            test_wast($name, None);
         }
     };
 }
@@ -58,7 +58,7 @@ test!(test_const, "const");
 test!(
     test_conversions,
     "conversions",
-    deny_float_nan_case(0, &["i32.reinterpret_f32", "i64.reinterpret_f64"])
+    &deny_float_nan_case(0, &["i32.reinterpret_f32", "i64.reinterpret_f64"])
 );
 test!(test_custom, "custom");
 test!(test_data, "data");
@@ -69,21 +69,21 @@ test!(test_f32, "f32");
 test!(
     test_f32_bitwise,
     "f32_bitwise",
-    deny_float_nan_case(1, &["copysign"])
+    &deny_float_nan_case(1, &["copysign"])
 );
 test!(test_f32_cmp, "f32_cmp");
 test!(test_f64, "f64");
 test!(
     test_f64_bitwise,
     "f64_bitwise",
-    deny_float_nan_case(1, &["copysign"])
+    &deny_float_nan_case(1, &["copysign"])
 );
 test!(test_f64_cmp, "f64_cmp");
 test!(test_fac, "fac");
 test!(
     test_float_exprs,
     "float_exprs",
-    deny_int_nan_case(&[
+    &deny_int_nan_case(&[
         "f32.nonarithmetic_nan_bitpattern",
         "f64.nonarithmetic_nan_bitpattern"
     ])
@@ -91,7 +91,7 @@ test!(
 test!(
     test_float_literals,
     "float_literals",
-    deny_assert_return(
+    &deny_assert_return(
         &[
             "f32.nan",
             "f32.positive_nan",
@@ -116,15 +116,15 @@ test!(
 test!(
     test_float_memory,
     "float_memory",
-    deny_int_result_nan_case(&["i32.load", "i64.load"])
+    &deny_int_result_nan_case(&["i32.load", "i64.load"])
 );
 test!(test_float_misc, "float_misc");
 test!(test_forward, "forward");
 test!(test_func, "func");
 test!(test_func_ptrs, "func_ptrs");
 test!(test_globals, "globals");
-test!(test_i32, "i32", deny_int_neg_max_case(&["rem_s"]));
-test!(test_i64, "i64", deny_int_neg_max_case(&["rem_s"]));
+test!(test_i32, "i32", &deny_int_neg_max_case(&["rem_s"]));
+test!(test_i64, "i64", &deny_int_neg_max_case(&["rem_s"]));
 test!(test_if, "if");
 // test!(test_imports, "imports");
 // test!(test_inline_module, "inline-module");
@@ -239,7 +239,7 @@ fn deny_int_result_nan_case(names: &'static [&'static str]) -> impl Filter {
     })
 }
 
-fn test_wast(name: &str, filter: Option<impl Filter>) {
+fn test_wast(name: &str, filter: Option<&dyn Filter>) {
     let buf = read_to_string("tests/spectest.wast").unwrap();
 
     let mut wast_path: PathBuf = PathBuf::from("tests/testsuite/");

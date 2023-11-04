@@ -15,8 +15,8 @@ pub fn convert<'input>(
     buf: &'input [u8],
     class_name: &'input str,
     test: bool,
-    out_file: &mut impl Write,
-    import_map: impl Fn(&str) -> String,
+    out_file: &mut dyn Write,
+    import_map: &dyn Fn(&str) -> String,
 ) -> Result<HashSet<&'input str>> {
     let mut module = Module::new(buf, class_name, test);
     let mut conv = Converter::new(&mut module);

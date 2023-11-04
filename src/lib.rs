@@ -44,10 +44,9 @@ pub fn lib_main() -> ExitCode {
         None => Box::new(std::io::stdout()) as Box<dyn Write>,
     });
 
-    convert(&buf, class_name, args.test, &mut out_file, |module| {
-        format!("class_{}", convert_to_ident(module))
-    })
-    .unwrap();
+    let import_map = |module: &_| format!("class_{}", convert_to_ident(module));
+
+    convert(&buf, class_name, args.test, &mut out_file, &import_map).unwrap();
 
     ExitCode::SUCCESS
 }

@@ -33,7 +33,7 @@ impl<'input, 'module> Converter<'input, 'module> {
     }
 
     /// import_mapはモジュール名をモジュールと対応するクラス型の名前に変換する関数
-    pub fn convert(&mut self, import_map: impl Fn(&str) -> String) -> Result<HashSet<&'input str>> {
+    pub fn convert(&mut self, import_map: &dyn Fn(&str) -> String) -> Result<HashSet<&'input str>> {
         let mut import_modules = HashSet::new();
 
         for payload in Parser::new(0).parse_all(self.module.buf) {
@@ -49,7 +49,7 @@ impl<'input, 'module> Converter<'input, 'module> {
         &mut self,
         payload: wasmparser::Payload<'input>,
         import_modules: &mut HashSet<&'input str>,
-        import_map: impl Fn(&str) -> String,
+        import_map: &dyn Fn(&str) -> String,
     ) -> Result<()> {
         use wasmparser::Payload::*;
         match payload {
