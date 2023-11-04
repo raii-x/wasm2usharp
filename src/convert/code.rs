@@ -400,7 +400,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         };
 
         self.push_line("{".to_string());
-        self.push_line(format!("{i_ty} sign;"));
+        self.push_line("bool sign;".to_string());
         self.push_line(format!("{i_ty} expo;"));
         self.push_line(format!("{i_ty} frac;"));
         self.push_line(format!("var absVar = {class}.Abs({f_var});"));
@@ -411,21 +411,21 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         {
             // 0の場合
             // 1/0を計算することで+0と-0を区別
-            self.push_line(format!("sign = 1 / {f_var} > 0 ? 0 : 1;"));
+            self.push_line(format!("sign = 1 / {f_var} < 0;"));
             self.push_line("expo = 0;".to_string());
             self.push_line("frac = 0;".to_string());
         }
         self.push_line(format!("}} else if ({f_ty}.IsInfinity({f_var})) {{"));
         {
             // 無限大の場合
-            self.push_line(format!("sign = {f_var} > 0 ? 0 : 1;"));
+            self.push_line(format!("sign = {f_var} < 0;"));
             self.push_line(format!("expo = {expo_bit_mask};"));
             self.push_line("frac = 0;".to_string());
         }
         self.push_line(format!("}} else if ({f_ty}.IsNaN({f_var})) {{"));
         {
             // NaNの場合
-            self.push_line("sign = 1;".to_string());
+            self.push_line("sign = true;".to_string());
             self.push_line(format!("expo = {expo_bit_mask};"));
             // MSBだけが1
             self.push_line(format!("frac = {};", 1u64 << (frac_bits - 1)));
@@ -433,7 +433,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         self.push_line(format!("}} else if (absVar < {subnormal_bound}) {{",));
         {
             // 非正規化数の場合
-            self.push_line(format!("sign = {f_var} > 0 ? 0 : 1;"));
+            self.push_line(format!("sign = {f_var} < 0;"));
             self.push_line("expo = 0;".to_string());
             self.push_line(format!(
                 "frac = {cast_i_ty}({class}.Abs({f_var}) / {f_ty}.Epsilon);"
@@ -441,7 +441,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         }
         self.push_line("} else {".to_string());
         {
-            self.push_line(format!("sign = {f_var} > 0 ? 0 : 1;"));
+            self.push_line(format!("sign = {f_var} < 0;"));
             self.push_line(format!(
                 "var expoF = {class}.Floor({class}.Log(absVar, 2));"
             ));
@@ -465,9 +465,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         self.push_line("}".to_string());
 
         self.push_line(format!(
-            "{i_var} = (sign << {}) | (expo << {}) | frac;",
-            bits - 1,
-            frac_bits
+            "{i_var} = ({cast_i_ty}(sign) << {}) | (expo << {frac_bits}) | frac;",
+            bits - 1
         ));
 
         self.push_line("}".to_string());
@@ -541,7 +540,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_eqz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(CsType::Int);
 
-        self.push_line(format!("{result} = {opnd} == 0 ? 1 : 0;"));
+        self.push_line(format!("{result} = {}({opnd} == 0);", cast(result.ty)));
         Ok(())
     }
 
@@ -566,13 +565,11 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         self.push_stack(result);
 
         if signed {
-            let mut line = format!("{result} = {lhs} {op} {rhs}");
             if logical {
-                line += " ? 1 : 0";
+                self.push_line(format!("{result} = {}({lhs} {op} {rhs});", cast(result.ty)));
+            } else {
+                self.push_line(format!("{result} = {lhs} {op} {rhs};"));
             }
-            line += ";";
-
-            self.push_line(line);
         } else {
             let lhs_u = self.code.new_var(lhs.ty.to_unsigned());
             let rhs_u = self.code.new_var(rhs.ty.to_unsigned());
@@ -585,7 +582,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             self.push_line(format!("{tmp} = {lhs_u} {op} {rhs_u};"));
 
             if logical {
-                self.push_line(format!("{result} = {tmp} ? 1 : 0;"));
+                self.push_line(format!("{result} = {}({tmp});", cast(result.ty)));
             } else {
                 self.cast_sign(tmp, result);
             }
