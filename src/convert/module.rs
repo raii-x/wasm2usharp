@@ -238,6 +238,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 export: false,
             },
             code: None,
+            recursive: true,
         }));
 
         self.module.wasm_funcs.push(Rc::clone(&func));
@@ -437,6 +438,7 @@ impl<'input, 'module> Converter<'input, 'module> {
             let func = Rc::new(RefCell::new(Func {
                 header,
                 code: Some(code),
+                recursive: true,
             }));
 
             self.module.call_indirects.push(Rc::clone(&func));
@@ -491,6 +493,7 @@ impl<'input, 'module> Converter<'input, 'module> {
         self.module.all_funcs.push(Rc::new(RefCell::new(Func {
             header,
             code: Some(code),
+            recursive: false,
         })));
     }
 }

@@ -1,5 +1,4 @@
-use core::fmt;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, io, rc::Rc};
 
 use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
@@ -46,8 +45,8 @@ impl<'input> Module<'input> {
     }
 }
 
-impl<'input> fmt::Display for Module<'input> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<'input> Module<'input> {
+    pub fn write(&self, f: &mut dyn io::Write) -> io::Result<()> {
         writeln!(f, "using System;")?;
         if !self.test {
             writeln!(f, "using UdonSharp;")?;
@@ -92,7 +91,7 @@ impl<'input> fmt::Display for Module<'input> {
         for func in &self.all_funcs {
             let func = func.borrow();
             if func.code.is_some() {
-                write!(f, "{}", func)?;
+                func.write(f, self)?;
             }
         }
 

@@ -22,7 +22,7 @@ pub fn convert<'input>(
     let mut conv = Converter::new(&mut module);
 
     let ret = conv.convert(import_map)?;
-    write!(out_file, "{}", module)?;
+    module.write(out_file)?;
     Ok(ret)
 }
 

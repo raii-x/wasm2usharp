@@ -1,18 +1,23 @@
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::{cell::RefCell, fmt, io, rc::Rc};
 
 use wasmparser::{FuncType, ValType};
 
-use super::{func_header, result_cs_ty, ty::CsType, BREAK_DEPTH, LOOP};
+use super::{func_header, module::Module, result_cs_ty, ty::CsType, BREAK_DEPTH, LOOP};
 
 pub struct Func {
     pub header: FuncHeader,
     pub code: Option<Code>,
+    pub recursive: bool,
 }
 
-impl fmt::Display for Func {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Func {
+    pub fn write(&self, f: &mut dyn io::Write, module: &Module<'_>) -> io::Result<()> {
         // 関数ヘッダ
         let func_ty = self.header.ty.clone();
+
+        if !module.test && self.recursive {
+            write!(f, "[RecursiveMethod] ")?;
+        }
 
         if self.header.export {
             write!(f, "public ")?;
@@ -48,7 +53,7 @@ impl fmt::Display for Func {
 
         // 本体
         for instr in &code.instrs {
-            writeln!(f, "{instr}")?;
+            instr.write(f)?;
         }
 
         writeln!(f, "}}")?;
@@ -115,10 +120,10 @@ pub enum Instr {
     },
 }
 
-impl fmt::Display for Instr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Instr {
+    pub fn write(&self, f: &mut dyn io::Write) -> io::Result<()> {
         match self {
-            Self::Line(x) => write!(f, "{}", x),
+            Self::Line(x) => writeln!(f, "{}", x),
             Self::Call {
                 func,
                 params,
@@ -137,7 +142,7 @@ impl fmt::Display for Instr {
                     .join(", ");
                 write!(f, "{params}")?;
 
-                write!(f, ");")
+                writeln!(f, ");")
             }
         }
     }
