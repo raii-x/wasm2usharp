@@ -624,23 +624,27 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             rhs
         } else {
             let rhs_int = self.code.new_var(ValType::I32);
-            self.push_line(format!("{rhs_int} = {}({rhs});", cast(CsType::Int)));
+            self.wrap(rhs, rhs_int);
             rhs_int
         };
 
         if signed {
             self.push_line(format!("{result} = {lhs} {op} {rhs_int};"));
         } else {
-            let bits = get_int_bits(lhs.ty);
-            let only_msb = 1u64 << (bits - 1);
-            let except_msb = only_msb - 1;
-
-            self.push_line(format!(
-                "{result} = {rhs} < 0 ? (({lhs} & {except_msb}) {op} {rhs_int}) | (1 << ({} - {rhs_int})) : {lhs} {op} {rhs_int};",
-                bits - 1
-            ));
+            self.shr_u(lhs, rhs_int, result);
         }
         Ok(())
+    }
+
+    fn shr_u(&mut self, lhs: Var, rhs_int: Var, result: impl fmt::Display) {
+        let bits = get_int_bits(lhs.ty);
+        let only_msb = 1u64 << (bits - 1);
+        let except_msb = only_msb - 1;
+
+        self.push_line(format!(
+            "{result} = {lhs} < 0 ? (({lhs} & {except_msb}) >> {rhs_int}) | ({} << (-1 - {rhs_int})) : {lhs} >> {rhs_int};",
+            if lhs.ty == ValType::I64 { "1L" } else { "1" }
+        ));
     }
 
     fn visit_rot_op(&mut self, right: bool) -> <Self as VisitOperator<'_>>::Output {
@@ -648,20 +652,24 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         let bits = get_int_bits(lhs.ty);
 
-        let cs_ty = CsType::get(lhs.ty);
-        let cs_ty_u = cs_ty.to_unsigned();
-        let cast_ty = cast(cs_ty);
-        let cast_ty_u = cast(cs_ty_u);
-        let cast_int = cast_from(CsType::get(rhs.ty), CsType::Int);
-
-        if right {
-            self.push_line(format!(
-                "{result} = ({cs_ty})({cast_ty_u}({lhs}) >> {cast_int}({rhs})) | ({lhs} << {cast_int}({bits} - {rhs}));"
-            ));
+        let rhs_int = if rhs.ty == ValType::I32 {
+            rhs
         } else {
-            self.push_line(format!(
-                "{result} = ({lhs} << {cast_int}({rhs})) | {cast_ty}({cast_ty_u}({lhs}) >> {cast_int}({bits} - {rhs}));"
-            ));
+            let rhs_int = self.code.new_var(ValType::I32);
+            self.wrap(rhs, rhs_int);
+            rhs_int
+        };
+
+        let bits_m_rhs = self.code.new_var(ValType::I32);
+        self.push_line(format!("{bits_m_rhs} = {bits} - {rhs_int};"));
+
+        let shr = self.code.new_var(lhs.ty);
+        if right {
+            self.shr_u(lhs, rhs_int, shr);
+            self.push_line(format!("{result} = {shr} | ({lhs} << {bits_m_rhs});"));
+        } else {
+            self.shr_u(lhs, bits_m_rhs, shr);
+            self.push_line(format!("{result} = ({lhs} << {rhs_int}) | {shr};"));
         }
         Ok(())
     }
@@ -756,6 +764,16 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!("{result} = {cast_ty}({opnd});"));
         Ok(())
+    }
+
+    fn wrap(&mut self, opnd: Var, result: Var) {
+        self.push_line(format!(
+            "{result} = {}({opnd} & 0x7fffffff);",
+            cast(CsType::Int)
+        ));
+        self.push_line(format!(
+            "if (({opnd} & 0x80000000) != 0) {result} |= -0x7fffffff - 1;"
+        ));
     }
 
     fn visit_cast_trunc(
@@ -1694,7 +1712,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_i32_wrap_i64(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(ValType::I32);
-
+        self.wrap(opnd, result);
         self.push_line(format!(
             "{result} = {}({opnd} & 0x7fffffff);",
             cast(CsType::Int)
