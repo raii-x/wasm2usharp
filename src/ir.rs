@@ -48,8 +48,11 @@ pub fn result_cs_ty(results: &[ValType]) -> CsType {
 
 pub fn trap(module: &Module<'_>, message: &str) -> String {
     if module.test {
-        format!("throw new Exception(\"{message}\");")
+        format!(r#"throw new Exception("{message}");"#)
     } else {
-        format!("Debug.LogError(\"{message}\");")
+        // エラー時にはnullのメソッドを呼び出すことで例外を出して停止する
+        format!(
+            r#"Debug.LogError("{message}"); ((UdonSharpBehaviour)null).GetProgramVariable("");"#
+        )
     }
 }
