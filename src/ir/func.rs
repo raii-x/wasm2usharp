@@ -48,7 +48,11 @@ impl Func {
 
         // 一時変数
         for var in code.vars.iter().skip(func_ty.params().len()) {
-            writeln!(f, "{} {var} = 0;", var.ty)?;
+            let def_val = match var.ty {
+                CsType::Bool => "false",
+                _ => "0",
+            };
+            writeln!(f, "{} {var} = {def_val};", var.ty)?;
         }
 
         // 本体

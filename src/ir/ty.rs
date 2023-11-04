@@ -5,6 +5,7 @@ use wasmparser::ValType;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsType {
     Void,
+    Bool,
     Byte,
     Int,
     UInt,
@@ -42,6 +43,14 @@ impl CsType {
             _ => panic!("Can't convert to unsigned"),
         }
     }
+
+    pub fn signed(&self) -> bool {
+        match self {
+            Self::Int | Self::Long | Self::Float | Self::Double => true,
+            Self::Byte | Self::UInt | Self::ULong => false,
+            _ => panic!("Unsupported type"),
+        }
+    }
 }
 
 impl fmt::Display for CsType {
@@ -51,6 +60,7 @@ impl fmt::Display for CsType {
             "{}",
             match self {
                 Self::Void => "void",
+                Self::Bool => "bool",
                 Self::Byte => "byte",
                 Self::Int => "int",
                 Self::UInt => "uint",

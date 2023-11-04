@@ -574,21 +574,21 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
             self.push_line(line);
         } else {
-            self.push_line("{".to_string());
+            let lhs_u = self.code.new_var(lhs.ty.to_unsigned());
+            let rhs_u = self.code.new_var(rhs.ty.to_unsigned());
+            let tmp = self
+                .code
+                .new_var(if logical { CsType::Bool } else { lhs_u.ty });
 
-            self.push_line(format!(
-                "var tmp = {} {op} {};",
-                cast_unsigned(&lhs.to_string(), lhs.ty),
-                cast_unsigned(&rhs.to_string(), rhs.ty)
-            ));
+            self.cast_sign(lhs, lhs_u);
+            self.cast_sign(rhs, rhs_u);
+            self.push_line(format!("{tmp} = {lhs_u} {op} {rhs_u};"));
 
             if logical {
-                self.push_line(format!("{result} = tmp ? 1 : 0;"));
+                self.push_line(format!("{result} = {tmp} ? 1 : 0;"));
             } else {
-                self.push_line(format!("{result} = {};", cast_signed("tmp", result.ty)));
+                self.cast_sign(tmp, result);
             }
-
-            self.push_line("}".to_string());
         }
 
         Ok(())
@@ -600,21 +600,30 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         if signed {
             self.push_line(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
         } else {
-            self.push_line("{".to_string());
-            self.push_line(format!(
-                "var lhs_u = {};",
-                cast_unsigned(&lhs.to_string(), lhs.ty)
-            ));
-            self.push_line(format!(
-                "var rhs_u = {};",
-                cast_unsigned(&rhs.to_string(), rhs.ty)
-            ));
-            self.push_line("var tmp = lhs_u - lhs_u / rhs_u * rhs_u;".to_string());
-            self.push_line(format!("{result} = {};", cast_signed("tmp", result.ty)));
-            self.push_line("}".to_string());
+            let lhs_u = self.code.new_var(lhs.ty.to_unsigned());
+            let rhs_u = self.code.new_var(rhs.ty.to_unsigned());
+            let tmp = self.code.new_var(lhs_u.ty);
+
+            self.cast_sign(lhs, lhs_u);
+            self.cast_sign(rhs, rhs_u);
+            self.push_line(format!("{tmp} = {lhs_u} - {lhs_u} / {rhs_u} * {rhs_u};"));
+            self.cast_sign(tmp, result);
         };
 
         Ok(())
+    }
+
+    fn cast_sign(&mut self, opnd: Var, result: Var) {
+        let bits = get_int_bits(result.ty);
+        let only_msb = 1u64 << (bits - 1);
+        let except_msb = only_msb - 1;
+        let cast_ty = cast(result.ty);
+
+        if result.ty.signed() {
+            self.push_line(format!("{result} = {opnd} >= {only_msb} ? {cast_ty}({opnd} - {only_msb}) | (-{except_msb} - 1) : {cast_ty}({opnd});"));
+        } else {
+            self.push_line(format!("{result} = {opnd} < 0 ? {cast_ty}({opnd} & {except_msb}) | {only_msb} : {cast_ty}({opnd});"));
+        }
     }
 
     fn visit_shift_op(&mut self, op: &str, signed: bool) -> <Self as VisitOperator<'_>>::Output {
@@ -790,10 +799,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             let cast_ty = cast(result_ty);
             self.push_line(format!("{result} = {cast_ty}({tmp});"));
         } else {
-            self.push_line(format!(
-                "{result} = {};",
-                cast_signed(&tmp.to_string(), result_ty)
-            ));
+            self.cast_sign(tmp, result);
         }
         Ok(())
     }
@@ -1838,8 +1844,8 @@ fn ty_f_to_i(ty: CsType) -> CsType {
 
 fn get_int_bits(ty: CsType) -> u32 {
     match ty {
-        CsType::Int => i32::BITS,
-        CsType::Long => i64::BITS,
+        CsType::Int | CsType::UInt => i32::BITS,
+        CsType::Long | CsType::ULong => i64::BITS,
         _ => panic!("Specify integer type as argument"),
     }
 }
@@ -1855,6 +1861,7 @@ fn get_frac_bits(ty: CsType) -> u32 {
 fn cast(ty: CsType) -> &'static str {
     match ty {
         CsType::Void => panic!("Unsupported conversion"),
+        CsType::Bool => "Convert.ToBoolean",
         CsType::Byte => "Convert.ToByte",
         CsType::Int => "Convert.ToInt32",
         CsType::UInt => "Convert.ToUInt32",
@@ -1871,20 +1878,4 @@ fn cast_from(from: CsType, to: CsType) -> &'static str {
     } else {
         cast(to)
     }
-}
-
-fn cast_unsigned(name: &str, ty: CsType) -> String {
-    let bits = get_int_bits(ty);
-    let only_msb = 1u64 << (bits - 1);
-    let except_msb = only_msb - 1;
-    let cast_ty = cast(ty.to_unsigned());
-    format!("({name} < 0 ? {cast_ty}({name} & {except_msb}) | {only_msb} : {cast_ty}({name}))")
-}
-
-fn cast_signed(name: &str, ty: CsType) -> String {
-    let bits = get_int_bits(ty);
-    let only_msb = 1u64 << (bits - 1);
-    let except_msb = only_msb - 1;
-    let cast_ty = cast(ty);
-    format!("({name} >= {only_msb} ? {cast_ty}({name} - {only_msb}) | (-{except_msb} - 1) : {cast_ty}({name}))")
 }
