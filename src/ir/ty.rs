@@ -2,6 +2,7 @@ use std::fmt;
 
 use wasmparser::ValType;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CsType {
     Void,
     Byte,

@@ -200,15 +200,16 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let mut load = format!("{var} = ");
 
         let memory = &self.module.memory.as_ref().unwrap().name;
+        let cast_var = cast(CsType::get(var_type));
         match mem_type {
             I8 => load += &format!("{memory}[{0}+{1}];", idx, memarg.offset),
-            I16 => load += &format!("{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8;", idx, memarg.offset, CsType::get(var_type)),
+            I16 => load += &format!("{memory}[{0}+{1}] | {2}({memory}[{0}+{1}+1])<<8;", idx, memarg.offset, cast_var),
             Val(I32) => load += &format!(
-                "{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8 | ({2}){memory}[{0}+{1}+2]<<16 | ({2}){memory}[{0}+{1}+3]<<24;",
-                idx, memarg.offset, CsType::get(var_type)),
+                "{memory}[{0}+{1}] | {2}({memory}[{0}+{1}+1])<<8 | {2}({memory}[{0}+{1}+2])<<16 | {2}({memory}[{0}+{1}+3])<<24;",
+                idx, memarg.offset, cast_var),
             Val(I64) => load += &format!(
-                "{memory}[{0}+{1}] | ({2}){memory}[{0}+{1}+1]<<8 | ({2}){memory}[{0}+{1}+2]<<16 | ({2}){memory}[{0}+{1}+3]<<24 | ({2}){memory}[{0}+{1}+4]<<32 | ({2}){memory}[{0}+{1}+5]<<40 | ({2}){memory}[{0}+{1}+6]<<48 | ({2}){memory}[{0}+{1}+7]<<56;",
-                idx, memarg.offset, CsType::get(var_type)),
+                "{memory}[{0}+{1}] | {2}({memory}[{0}+{1}+1])<<8 | {2}({memory}[{0}+{1}+2])<<16 | {2}({memory}[{0}+{1}+3])<<24 | {2}({memory}[{0}+{1}+4])<<32 | {2}({memory}[{0}+{1}+5])<<40 | {2}({memory}[{0}+{1}+6])<<48 | {2}({memory}[{0}+{1}+7])<<56;",
+                idx, memarg.offset, cast_var),
             _ => unreachable!(),
         }
         self.push_line(load);
@@ -277,7 +278,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             bit_mask(frac_bits as u64)
         ));
 
-        let sign = format!("(1 - ({cs_ty})sign * 2)");
+        let sign = format!("(1 - {}(sign) * 2)", cast(cs_ty));
 
         self.push_line("if (expo == 0) {".to_string());
         {
@@ -306,8 +307,11 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         self.push_line("} else {".to_string());
         {
             // 浮動小数点数の変数に代入
-            let expo = format!("{class}.Pow(2, (int)expo - {})", expo_offset);
-            let frac = format!("(({cs_ty})frac / {} + 1)", 1u64 << frac_bits);
+            let expo = format!(
+                "{class}.Pow(2, {}(expo) - {expo_offset})",
+                cast(CsType::Int)
+            );
+            let frac = format!("({}(frac) / {} + 1)", cast(cs_ty), 1u64 << frac_bits);
             self.push_line(format!("{f_var} = {frac} * {expo} * {sign};"));
         }
         self.push_line("}".to_string());
@@ -332,23 +336,24 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         use {StorageType::*, ValType::*};
 
         let memory = &self.module.memory.as_ref().unwrap().name;
+        let cast_byte = cast(CsType::Byte);
         self.push_line(match mem_type {
-            I8 => format!("{memory}[{0}+{1}]=(byte)({2}&0xff);", idx, memarg.offset, var),
+            I8 => format!("{memory}[{0}+{1}]={cast_byte}({2}&0xff);", idx, memarg.offset, var),
             I16 => {
                 format!(
-                    "{memory}[{0}+{1}]=(byte)({2}&0xff); {memory}[{0}+{1}+1]=(byte)(({2}>>8)&0xff);",
+                    "{memory}[{0}+{1}]={cast_byte}({2}&0xff); {memory}[{0}+{1}+1]={cast_byte}(({2}>>8)&0xff);",
                     idx, memarg.offset, var
                 )
             }
             Val(I32) => {
                 format!(
-                    "{memory}[{0}+{1}]=(byte)({2}&0xff); {memory}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {memory}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {memory}[{0}+{1}+3]=(byte)(({2}>>24)&0xff);",
+                    "{memory}[{0}+{1}]={cast_byte}({2}&0xff); {memory}[{0}+{1}+1]={cast_byte}(({2}>>8)&0xff); {memory}[{0}+{1}+2]={cast_byte}(({2}>>16)&0xff); {memory}[{0}+{1}+3]={cast_byte}(({2}>>24)&0xff);",
                     idx, memarg.offset, var
                 )
             }
             Val(I64) => {
                 format!(
-                    "{memory}[{0}+{1}]=(byte)({2}&0xff); {memory}[{0}+{1}+1]=(byte)(({2}>>8)&0xff); {memory}[{0}+{1}+2]=(byte)(({2}>>16)&0xff); {memory}[{0}+{1}+3]=(byte)(({2}>>24)&0xff); {memory}[{0}+{1}+4]=(byte)(({2}>>32)&0xff); {memory}[{0}+{1}+5]=(byte)(({2}>>40)&0xff); {memory}[{0}+{1}+6]=(byte)(({2}>>48)&0xff); {memory}[{0}+{1}+7]=(byte)(({2}>>56)&0xff);",
+                    "{memory}[{0}+{1}]={cast_byte}({2}&0xff); {memory}[{0}+{1}+1]={cast_byte}(({2}>>8)&0xff); {memory}[{0}+{1}+2]={cast_byte}(({2}>>16)&0xff); {memory}[{0}+{1}+3]={cast_byte}(({2}>>24)&0xff); {memory}[{0}+{1}+4]={cast_byte}(({2}>>32)&0xff); {memory}[{0}+{1}+5]={cast_byte}(({2}>>40)&0xff); {memory}[{0}+{1}+6]={cast_byte}(({2}>>48)&0xff); {memory}[{0}+{1}+7]={cast_byte}(({2}>>56)&0xff);",
                     idx, memarg.offset, var
                 )
             }
@@ -398,6 +403,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         self.push_line(format!("{i_cs_ty} frac;"));
         self.push_line(format!("var absVar = {class}.Abs({f_var});"));
 
+        let cast_i_ty = cast(i_cs_ty);
+
         self.push_line(format!("if ({f_var} == 0) {{"));
         {
             // 0の場合
@@ -427,7 +434,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             self.push_line(format!("sign = {f_var} > 0 ? 0 : 1;"));
             self.push_line("expo = 0;".to_string());
             self.push_line(format!(
-                "frac = ({i_cs_ty})({class}.Abs({f_var}) / {f_cs_ty}.Epsilon);"
+                "frac = {cast_i_ty}({class}.Abs({f_var}) / {f_cs_ty}.Epsilon);"
             ));
         }
         self.push_line("} else {".to_string());
@@ -445,9 +452,9 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             self.push_line("} else {".to_string());
             {
                 // 通常の浮動小数点数の場合
-                self.push_line(format!("expo = ({i_cs_ty})expoF + {expo_offset};"));
+                self.push_line(format!("expo = {cast_i_ty}(expoF) + {expo_offset};"));
                 self.push_line(format!(
-                    "frac = ({i_cs_ty})((absVar / {class}.Pow(2, expoF) - 1) * {});",
+                    "frac = {cast_i_ty}((absVar / {class}.Pow(2, expoF) - 1) * {});",
                     1u64 << frac_bits
                 ));
             }
@@ -542,10 +549,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             let cs_ty_u = cs_ty.to_unsigned();
 
             if !logical {
-                line += &format!("({cs_ty})");
+                line += cast(cs_ty);
             }
 
-            line += &format!("(({0}){lhs} {op} ({0}){rhs})", cs_ty_u)
+            line += &format!("({0}({lhs}) {op} {0}({rhs}))", cast(cs_ty_u))
         };
 
         if logical {
@@ -569,12 +576,14 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         } else {
             let cs_ty = CsType::get(ty);
             let cs_ty_u = cs_ty.to_unsigned();
+            let cast_ty = cast(cs_ty);
+            let cast_ty_u = cast(cs_ty_u);
 
             self.push_line("{".to_string());
-            self.push_line(format!("var lhs_u = ({cs_ty_u}){lhs};"));
-            self.push_line(format!("var rhs_u = ({cs_ty_u}){rhs};"));
+            self.push_line(format!("var lhs_u = {cast_ty_u}({lhs});"));
+            self.push_line(format!("var rhs_u = {cast_ty_u}({rhs});"));
             self.push_line(format!(
-                "{result} = ({cs_ty})(lhs_u - lhs_u / rhs_u * rhs_u);"
+                "{result} = {cast_ty}(lhs_u - lhs_u / rhs_u * rhs_u);"
             ));
             self.push_line("}".to_string());
         };
@@ -597,11 +606,15 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         let cs_ty = CsType::get(ty);
 
+        let cast_int = cast_from(CsType::get(rhs.ty), CsType::Int);
+
         if signed {
-            line += &format!("({cs_ty})({lhs} {op} (int){rhs})");
+            line += &format!("({cs_ty})({lhs} {op} {cast_int}({rhs}))");
         } else {
             let cs_ty_u = cs_ty.to_unsigned();
-            line += &format!("({cs_ty})(({cs_ty_u}){lhs} {op} (int){rhs})");
+            let cast_ty = cast(cs_ty);
+            let cast_ty_u = cast(cs_ty_u);
+            line += &format!("{cast_ty}({cast_ty_u}({lhs}) {op} {cast_int}({rhs}))");
         };
 
         line += ";";
@@ -620,14 +633,17 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         let cs_ty = CsType::get(ty);
         let cs_ty_u = cs_ty.to_unsigned();
+        let cast_ty = cast(cs_ty);
+        let cast_ty_u = cast(cs_ty_u);
+        let cast_int = cast_from(CsType::get(rhs.ty), CsType::Int);
 
         if right {
             self.push_line(format!(
-                "{result} = ({cs_ty})(({cs_ty_u}){lhs} >> (int){rhs}) | ({lhs} << (int)({bits} - {rhs}));"
+                "{result} = ({cs_ty})({cast_ty_u}({lhs}) >> {cast_int}({rhs})) | ({lhs} << {cast_int}({bits} - {rhs}));"
             ));
         } else {
             self.push_line(format!(
-                "{result} = ({lhs} << (int){rhs}) | ({cs_ty})(({cs_ty_u}){lhs} >> (int)({bits} - {rhs}));"
+                "{result} = ({lhs} << {cast_int}({rhs})) | {cast_ty}({cast_ty_u}({lhs}) >> {cast_int}({bits} - {rhs}));"
             ));
         }
         Ok(())
@@ -642,9 +658,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
         let cs_ty = CsType::get(ty);
+        let cast_ty = cast_from(CsType::Int, cs_ty);
         // 2進で文字列化して文字数を数える
         self.push_line(format!(
-            "else {result} = ({cs_ty})({bits} - Convert.ToString({opnd}, 2).Length);",
+            "else {result} = {cast_ty}({bits} - Convert.ToString({opnd}, 2).Length);",
         ));
         Ok(())
     }
@@ -658,6 +675,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
         let cs_ty = CsType::get(ty);
+        let cast_ty = cast_from(CsType::Int, cs_ty);
 
         // 符号付き整数の最小値のリテラルはUdonSharpではエラーとなるので
         // `-最大値 - 1` で表現する
@@ -671,7 +689,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         // 2. 2進で文字列化する
         // 3. 最後に1が出現するインデックスを求める
         self.push_line(format!(
-            "else {result} = {} - ({cs_ty})Convert.ToString(({opnd} | ({or_opnd} - 1)), 2).LastIndexOf('1');",
+            "else {result} = {} - {cast_ty}(Convert.ToString(({opnd} | ({or_opnd} - 1)), 2).LastIndexOf('1'));",
             bits - 1,
         ));
         Ok(())
@@ -683,9 +701,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         self.push_stack(result);
 
         let cs_ty = CsType::get(ty);
+        let cast_ty = cast_from(CsType::Int, cs_ty);
         // 2進で文字列化して、0を除去した後の文字数を数える
         self.push_line(format!(
-            "{result} = ({cs_ty})Convert.ToString({opnd}, 2).Replace(\"0\", \"\").Length;"
+            "{result} = {cast_ty}(Convert.ToString({opnd}, 2).Replace(\"0\", \"\").Length);"
         ));
         Ok(())
     }
@@ -735,17 +754,18 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_cast(
         &mut self,
         result_ty: ValType,
-        mid_ty: Option<&'static str>,
+        mid_ty: Option<CsType>,
     ) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
         let result = self.code.new_var(result_ty);
         self.push_stack(result);
 
         let result_cs_ty = CsType::get(result_ty);
+        let cast_result = cast(result_cs_ty);
 
         self.push_line(match mid_ty {
-            Some(cast_ty) => format!("{result} = ({result_cs_ty})({cast_ty}){opnd};"),
-            None => format!("{result} = ({result_cs_ty}){opnd};"),
+            Some(mid_ty) => format!("{result} = {cast_result}({}({opnd}));", cast(mid_ty)),
+            None => format!("{result} = {cast_result}({opnd});"),
         });
         Ok(())
     }
@@ -1156,8 +1176,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         let memory = &self.module.memory.as_ref().unwrap().name;
 
-        let cs_ty = CsType::get(var.ty);
-        self.push_line(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
+        self.push_line(format!("{var} = {memory}.Length / {PAGE_SIZE};"));
         Ok(())
     }
 
@@ -1191,8 +1210,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         self.push_line("} else {".to_string());
         {
             // 前のサイズを返す
-            let cs_ty = CsType::get(var.ty);
-            self.push_line(format!("{var} = ({cs_ty})({memory}.Length / {PAGE_SIZE});"));
+            self.push_line(format!("{var} = {memory}.Length / {PAGE_SIZE};"));
 
             // メモリをsizeだけ拡張
             self.push_line(format!("var old = {memory};"));
@@ -1630,7 +1648,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i32_trunc_f32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I32, Some("uint"))
+        self.visit_cast(ValType::I32, Some(CsType::UInt))
     }
 
     fn visit_i32_trunc_f64_s(&mut self) -> Self::Output {
@@ -1638,7 +1656,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i32_trunc_f64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I32, Some("uint"))
+        self.visit_cast(ValType::I32, Some(CsType::UInt))
     }
 
     fn visit_i64_extend_i32_s(&mut self) -> Self::Output {
@@ -1646,7 +1664,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i64_extend_i32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, Some("uint"))
+        self.visit_cast(ValType::I64, Some(CsType::UInt))
     }
 
     fn visit_i64_trunc_f32_s(&mut self) -> Self::Output {
@@ -1654,7 +1672,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i64_trunc_f32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, Some("ulong"))
+        self.visit_cast(ValType::I64, Some(CsType::ULong))
     }
 
     fn visit_i64_trunc_f64_s(&mut self) -> Self::Output {
@@ -1662,7 +1680,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i64_trunc_f64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::I64, Some("ulong"))
+        self.visit_cast(ValType::I64, Some(CsType::ULong))
     }
 
     fn visit_f32_convert_i32_s(&mut self) -> Self::Output {
@@ -1670,7 +1688,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_f32_convert_i32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F32, Some("uint"))
+        self.visit_cast(ValType::F32, Some(CsType::UInt))
     }
 
     fn visit_f32_convert_i64_s(&mut self) -> Self::Output {
@@ -1678,7 +1696,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_f32_convert_i64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F32, Some("ulong"))
+        self.visit_cast(ValType::F32, Some(CsType::ULong))
     }
 
     fn visit_f32_demote_f64(&mut self) -> Self::Output {
@@ -1690,7 +1708,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_f64_convert_i32_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F64, Some("uint"))
+        self.visit_cast(ValType::F64, Some(CsType::UInt))
     }
 
     fn visit_f64_convert_i64_s(&mut self) -> Self::Output {
@@ -1698,7 +1716,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_f64_convert_i64_u(&mut self) -> Self::Output {
-        self.visit_cast(ValType::F64, Some("ulong"))
+        self.visit_cast(ValType::F64, Some(CsType::ULong))
     }
 
     fn visit_f64_promote_f32(&mut self) -> Self::Output {
@@ -1769,5 +1787,26 @@ fn get_frac_bits(ty: ValType) -> u32 {
         ValType::F32 => f32::MANTISSA_DIGITS - 1,
         ValType::F64 => f64::MANTISSA_DIGITS - 1,
         _ => panic!("Specify float type as argument"),
+    }
+}
+
+fn cast(ty: CsType) -> &'static str {
+    match ty {
+        CsType::Void => panic!("Unsupported conversion"),
+        CsType::Byte => "Convert.ToByte",
+        CsType::Int => "Convert.ToInt32",
+        CsType::UInt => "Convert.ToUInt32",
+        CsType::Long => "Convert.ToInt64",
+        CsType::ULong => "Convert.ToUInt64",
+        CsType::Float => "Convert.ToSingle",
+        CsType::Double => "Convert.ToDouble",
+    }
+}
+
+fn cast_from(from: CsType, to: CsType) -> &'static str {
+    if from == to {
+        ""
+    } else {
+        cast(to)
     }
 }
