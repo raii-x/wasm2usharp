@@ -519,11 +519,20 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         (opnd, result)
     }
 
-    /// (lhs, rhs, result)を返す
-    fn bin_op_vars(&mut self, result_ty: ValType) -> (Var, Var, Var) {
+    /// (opnd, result)を返し、opndの型をresultの型とする
+    fn un_op_vars_auto_ty(&mut self) -> (Var, Var) {
+        let opnd = self.pop_stack();
+        let result = self.code.new_var(opnd.ty);
+        self.push_stack(result);
+
+        (opnd, result)
+    }
+
+    /// (lhs, rhs, result)を返し、lhsの型をresultの型とする
+    fn bin_op_vars_auto_ty(&mut self) -> (Var, Var, Var) {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.code.new_var(result_ty);
+        let result = self.code.new_var(lhs.ty);
         self.push_stack(result);
 
         (lhs, rhs, result)
@@ -536,8 +545,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_un_op(&mut self, ty: ValType, op: &str) -> <Self as VisitOperator<'_>>::Output {
-        let (opnd, result) = self.un_op_vars(ty);
+    fn visit_un_op(&mut self, op: &str) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars_auto_ty();
 
         self.push_line(format!("{result} = {op}{opnd};"));
         Ok(())
@@ -545,19 +554,23 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_bin_op(
         &mut self,
-        ty: ValType,
         op: &str,
         logical: bool,
         signed: bool,
     ) -> <Self as VisitOperator<'_>>::Output {
-        let (lhs, rhs, result) = self.bin_op_vars(if logical { ValType::I32 } else { ty });
+        let rhs = self.pop_stack();
+        let lhs = self.pop_stack();
+        let result = self
+            .code
+            .new_var(if logical { ValType::I32 } else { lhs.ty });
+        self.push_stack(result);
 
         let mut line = format!("{result} = ");
 
         if signed {
             line += &format!("{lhs} {op} {rhs}")
         } else {
-            let cs_ty = CsType::get(ty);
+            let cs_ty = CsType::get(lhs.ty);
             let cs_ty_u = cs_ty.to_unsigned();
 
             if !logical {
@@ -577,13 +590,13 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_rem_op(&mut self, ty: ValType, signed: bool) -> <Self as VisitOperator<'_>>::Output {
-        let (lhs, rhs, result) = self.bin_op_vars(ty);
+    fn visit_rem_op(&mut self, signed: bool) -> <Self as VisitOperator<'_>>::Output {
+        let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
         if signed {
             self.push_line(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
         } else {
-            let cs_ty = CsType::get(ty);
+            let cs_ty = CsType::get(lhs.ty);
             let cs_ty_u = cs_ty.to_unsigned();
             let cast_ty = cast(cs_ty);
             let cast_ty_u = cast(cs_ty_u);
@@ -600,13 +613,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_shift_op(
-        &mut self,
-        ty: ValType,
-        op: &str,
-        signed: bool,
-    ) -> <Self as VisitOperator<'_>>::Output {
-        let (lhs, rhs, result) = self.bin_op_vars(ty);
+    fn visit_shift_op(&mut self, op: &str, signed: bool) -> <Self as VisitOperator<'_>>::Output {
+        let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
         let rhs_int = if rhs.ty == ValType::I32 {
             rhs
@@ -631,12 +639,12 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_rot_op(&mut self, ty: ValType, right: bool) -> <Self as VisitOperator<'_>>::Output {
-        let (lhs, rhs, result) = self.bin_op_vars(ty);
+    fn visit_rot_op(&mut self, right: bool) -> <Self as VisitOperator<'_>>::Output {
+        let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
-        let bits = get_int_bits(ty);
+        let bits = get_int_bits(lhs.ty);
 
-        let cs_ty = CsType::get(ty);
+        let cs_ty = CsType::get(lhs.ty);
         let cs_ty_u = cs_ty.to_unsigned();
         let cast_ty = cast(cs_ty);
         let cast_ty_u = cast(cs_ty_u);
@@ -654,13 +662,13 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_clz(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
-        let (opnd, result) = self.un_op_vars(ty);
+    fn visit_clz(&mut self) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let bits = get_int_bits(ty);
+        let bits = get_int_bits(opnd.ty);
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cs_ty = CsType::get(ty);
+        let cs_ty = CsType::get(opnd.ty);
         let cast_ty = cast_from(CsType::Int, cs_ty);
         // 2進で文字列化して文字数を数える
         self.push_line(format!(
@@ -669,18 +677,18 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_ctz(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
-        let (opnd, result) = self.un_op_vars(ty);
+    fn visit_ctz(&mut self) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let bits = get_int_bits(ty);
+        let bits = get_int_bits(opnd.ty);
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cs_ty = CsType::get(ty);
+        let cs_ty = CsType::get(opnd.ty);
         let cast_ty = cast_from(CsType::Int, cs_ty);
 
         // 符号付き整数の最小値のリテラルはUdonSharpではエラーとなるので
         // `-最大値 - 1` で表現する
-        let or_opnd = match ty {
+        let or_opnd = match opnd.ty {
             ValType::I32 => (1i32 << (bits - 1)) as i64,
             ValType::I64 => 1i64 << (bits - 1),
             _ => unreachable!(),
@@ -696,10 +704,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_popcnt(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
-        let (opnd, result) = self.un_op_vars(ty);
+    fn visit_popcnt(&mut self) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let cs_ty = CsType::get(ty);
+        let cs_ty = CsType::get(opnd.ty);
         let cast_ty = cast_from(CsType::Int, cs_ty);
         // 2進で文字列化して、0を除去した後の文字数を数える
         self.push_line(format!(
@@ -708,36 +716,32 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_math_un_op(&mut self, ty: ValType, func: &str) -> <Self as VisitOperator<'_>>::Output {
-        let (opnd, result) = self.un_op_vars(ty);
+    fn visit_math_un_op(&mut self, func: &str) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars_auto_ty();
 
         self.push_line(format!(
             "{result} = {}.{func}({opnd});",
-            self.math_class(ty)
+            self.math_class(opnd.ty)
         ));
         Ok(())
     }
 
-    fn visit_math_bin_op(
-        &mut self,
-        ty: ValType,
-        func: &str,
-    ) -> <Self as VisitOperator<'_>>::Output {
-        let (lhs, rhs, result) = self.bin_op_vars(ty);
+    fn visit_math_bin_op(&mut self, func: &str) -> <Self as VisitOperator<'_>>::Output {
+        let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
         self.push_line(format!(
             "{result} = {}.{func}({lhs}, {rhs});",
-            self.math_class(ty)
+            self.math_class(lhs.ty)
         ));
         Ok(())
     }
 
-    fn visit_copysign_op(&mut self, ty: ValType) -> <Self as VisitOperator<'_>>::Output {
-        let (lhs, rhs, result) = self.bin_op_vars(ty);
+    fn visit_copysign_op(&mut self) -> <Self as VisitOperator<'_>>::Output {
+        let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
         self.push_line(format!(
             "{result} = {0}.Abs({lhs}) * (({rhs} == 0 ? 1 / {rhs} : {rhs}) > 0 ? 1 : -1);",
-            self.math_class(ty)
+            self.math_class(lhs.ty)
         ));
         Ok(())
     }
@@ -1291,43 +1295,43 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i32_eq(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "==", true, true)
+        self.visit_bin_op("==", true, true)
     }
 
     fn visit_i32_ne(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "!=", true, true)
+        self.visit_bin_op("!=", true, true)
     }
 
     fn visit_i32_lt_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "<", true, true)
+        self.visit_bin_op("<", true, true)
     }
 
     fn visit_i32_lt_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "<", true, false)
+        self.visit_bin_op("<", true, false)
     }
 
     fn visit_i32_gt_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, ">", true, true)
+        self.visit_bin_op(">", true, true)
     }
 
     fn visit_i32_gt_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, ">", true, false)
+        self.visit_bin_op(">", true, false)
     }
 
     fn visit_i32_le_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "<=", true, true)
+        self.visit_bin_op("<=", true, true)
     }
 
     fn visit_i32_le_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "<=", true, false)
+        self.visit_bin_op("<=", true, false)
     }
 
     fn visit_i32_ge_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, ">=", true, true)
+        self.visit_bin_op(">=", true, true)
     }
 
     fn visit_i32_ge_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, ">=", true, false)
+        self.visit_bin_op(">=", true, false)
     }
 
     fn visit_i64_eqz(&mut self) -> Self::Output {
@@ -1335,354 +1339,353 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i64_eq(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "==", true, true)
+        self.visit_bin_op("==", true, true)
     }
 
     fn visit_i64_ne(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "!=", true, true)
+        self.visit_bin_op("!=", true, true)
     }
 
     fn visit_i64_lt_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "<", true, true)
+        self.visit_bin_op("<", true, true)
     }
 
     fn visit_i64_lt_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "<", true, false)
+        self.visit_bin_op("<", true, false)
     }
 
     fn visit_i64_gt_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, ">", true, true)
+        self.visit_bin_op(">", true, true)
     }
 
     fn visit_i64_gt_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, ">", true, false)
+        self.visit_bin_op(">", true, false)
     }
 
     fn visit_i64_le_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "<=", true, true)
+        self.visit_bin_op("<=", true, true)
     }
 
     fn visit_i64_le_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "<=", true, false)
+        self.visit_bin_op("<=", true, false)
     }
 
     fn visit_i64_ge_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, ">=", true, true)
+        self.visit_bin_op(">=", true, true)
     }
 
     fn visit_i64_ge_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, ">=", true, false)
+        self.visit_bin_op(">=", true, false)
     }
 
     fn visit_f32_eq(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "==", true, true)
+        self.visit_bin_op("==", true, true)
     }
 
     fn visit_f32_ne(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "!=", true, true)
+        self.visit_bin_op("!=", true, true)
     }
 
     fn visit_f32_lt(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "<", true, true)
+        self.visit_bin_op("<", true, true)
     }
 
     fn visit_f32_gt(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, ">", true, true)
+        self.visit_bin_op(">", true, true)
     }
 
     fn visit_f32_le(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "<=", true, true)
+        self.visit_bin_op("<=", true, true)
     }
 
     fn visit_f32_ge(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, ">=", true, true)
+        self.visit_bin_op(">=", true, true)
     }
 
     fn visit_f64_eq(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "==", true, true)
+        self.visit_bin_op("==", true, true)
     }
 
     fn visit_f64_ne(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "!=", true, true)
+        self.visit_bin_op("!=", true, true)
     }
 
     fn visit_f64_lt(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "<", true, true)
+        self.visit_bin_op("<", true, true)
     }
 
     fn visit_f64_gt(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, ">", true, true)
+        self.visit_bin_op(">", true, true)
     }
 
     fn visit_f64_le(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "<=", true, true)
+        self.visit_bin_op("<=", true, true)
     }
 
     fn visit_f64_ge(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, ">=", true, true)
+        self.visit_bin_op(">=", true, true)
     }
 
     fn visit_i32_clz(&mut self) -> Self::Output {
-        self.visit_clz(ValType::I32)
+        self.visit_clz()
     }
 
     fn visit_i32_ctz(&mut self) -> Self::Output {
-        self.visit_ctz(ValType::I32)
+        self.visit_ctz()
     }
 
     fn visit_i32_popcnt(&mut self) -> Self::Output {
-        self.visit_popcnt(ValType::I32)
+        self.visit_popcnt()
     }
 
     fn visit_i32_add(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "+", false, true)
+        self.visit_bin_op("+", false, true)
     }
 
     fn visit_i32_sub(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "-", false, true)
+        self.visit_bin_op("-", false, true)
     }
 
     fn visit_i32_mul(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "*", false, true)
+        self.visit_bin_op("*", false, true)
     }
 
     fn visit_i32_div_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "/", false, true)
+        self.visit_bin_op("/", false, true)
     }
 
     fn visit_i32_div_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "/", false, false)
+        self.visit_bin_op("/", false, false)
     }
 
     fn visit_i32_rem_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "%", false, true)
+        self.visit_bin_op("%", false, true)
     }
 
     fn visit_i32_rem_u(&mut self) -> Self::Output {
-        self.visit_rem_op(ValType::I32, false)
+        self.visit_rem_op(false)
     }
 
     fn visit_i32_and(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "&", false, true)
+        self.visit_bin_op("&", false, true)
     }
 
     fn visit_i32_or(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "|", false, true)
+        self.visit_bin_op("|", false, true)
     }
 
     fn visit_i32_xor(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I32, "^", false, true)
+        self.visit_bin_op("^", false, true)
     }
 
     fn visit_i32_shl(&mut self) -> Self::Output {
-        self.visit_shift_op(ValType::I32, "<<", true)
+        self.visit_shift_op("<<", true)
     }
 
     fn visit_i32_shr_s(&mut self) -> Self::Output {
-        self.visit_shift_op(ValType::I32, ">>", true)
+        self.visit_shift_op(">>", true)
     }
 
     fn visit_i32_shr_u(&mut self) -> Self::Output {
-        self.visit_shift_op(ValType::I32, ">>", false)
+        self.visit_shift_op(">>", false)
     }
 
     fn visit_i32_rotl(&mut self) -> Self::Output {
-        self.visit_rot_op(ValType::I32, false)
+        self.visit_rot_op(false)
     }
 
     fn visit_i32_rotr(&mut self) -> Self::Output {
-        self.visit_rot_op(ValType::I32, true)
+        self.visit_rot_op(true)
     }
 
     fn visit_i64_clz(&mut self) -> Self::Output {
-        self.visit_clz(ValType::I64)
+        self.visit_clz()
     }
 
     fn visit_i64_ctz(&mut self) -> Self::Output {
-        self.visit_ctz(ValType::I64)
+        self.visit_ctz()
     }
 
     fn visit_i64_popcnt(&mut self) -> Self::Output {
-        self.visit_popcnt(ValType::I64)
+        self.visit_popcnt()
     }
 
     fn visit_i64_add(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "+", false, true)
+        self.visit_bin_op("+", false, true)
     }
 
     fn visit_i64_sub(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "-", false, true)
+        self.visit_bin_op("-", false, true)
     }
 
     fn visit_i64_mul(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "*", false, true)
+        self.visit_bin_op("*", false, true)
     }
 
     fn visit_i64_div_s(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "/", false, true)
+        self.visit_bin_op("/", false, true)
     }
 
     fn visit_i64_div_u(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "/", false, false)
+        self.visit_bin_op("/", false, false)
     }
 
     fn visit_i64_rem_s(&mut self) -> Self::Output {
-        self.visit_rem_op(ValType::I64, true)
+        self.visit_rem_op(true)
     }
 
     fn visit_i64_rem_u(&mut self) -> Self::Output {
-        self.visit_rem_op(ValType::I64, false)
+        self.visit_rem_op(false)
     }
 
     fn visit_i64_and(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "&", false, true)
+        self.visit_bin_op("&", false, true)
     }
 
     fn visit_i64_or(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "|", false, true)
+        self.visit_bin_op("|", false, true)
     }
 
     fn visit_i64_xor(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::I64, "^", false, true)
+        self.visit_bin_op("^", false, true)
     }
 
     fn visit_i64_shl(&mut self) -> Self::Output {
-        self.visit_shift_op(ValType::I64, "<<", true)
+        self.visit_shift_op("<<", true)
     }
 
     fn visit_i64_shr_s(&mut self) -> Self::Output {
-        self.visit_shift_op(ValType::I64, ">>", true)
+        self.visit_shift_op(">>", true)
     }
 
     fn visit_i64_shr_u(&mut self) -> Self::Output {
-        self.visit_shift_op(ValType::I64, ">>", false)
+        self.visit_shift_op(">>", false)
     }
 
     fn visit_i64_rotl(&mut self) -> Self::Output {
-        self.visit_rot_op(ValType::I64, false)
+        self.visit_rot_op(false)
     }
 
     fn visit_i64_rotr(&mut self) -> Self::Output {
-        self.visit_rot_op(ValType::I64, true)
+        self.visit_rot_op(true)
     }
 
     fn visit_f32_abs(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F32, "Abs")
+        self.visit_math_un_op("Abs")
     }
 
     fn visit_f32_neg(&mut self) -> Self::Output {
-        self.visit_un_op(ValType::F32, "-")
+        self.visit_un_op("-")
     }
 
     fn visit_f32_ceil(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F32, "Ceiling")
+        self.visit_math_un_op("Ceiling")
     }
 
     fn visit_f32_floor(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F32, "Floor")
+        self.visit_math_un_op("Floor")
     }
 
     fn visit_f32_trunc(&mut self) -> Self::Output {
-        let (opnd, result) = self.un_op_vars(ValType::F32);
+        let (opnd, result) = self.un_op_vars_auto_ty();
         self.push_line(format!(
             "{result} = {}(Math.Truncate({}({opnd})));",
             cast(CsType::Float),
             cast(CsType::Double)
         ));
-
-        self.visit_math_un_op(ValType::F32, "Truncate")
+        Ok(())
     }
 
     fn visit_f32_nearest(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F32, "Round")
+        self.visit_math_un_op("Round")
     }
 
     fn visit_f32_sqrt(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F32, "Sqrt")
+        self.visit_math_un_op("Sqrt")
     }
 
     fn visit_f32_add(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "+", false, true)
+        self.visit_bin_op("+", false, true)
     }
 
     fn visit_f32_sub(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "-", false, true)
+        self.visit_bin_op("-", false, true)
     }
 
     fn visit_f32_mul(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "*", false, true)
+        self.visit_bin_op("*", false, true)
     }
 
     fn visit_f32_div(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F32, "/", false, true)
+        self.visit_bin_op("/", false, true)
     }
 
     fn visit_f32_min(&mut self) -> Self::Output {
-        self.visit_math_bin_op(ValType::F32, "Min")
+        self.visit_math_bin_op("Min")
     }
 
     fn visit_f32_max(&mut self) -> Self::Output {
-        self.visit_math_bin_op(ValType::F32, "Max")
+        self.visit_math_bin_op("Max")
     }
 
     fn visit_f32_copysign(&mut self) -> Self::Output {
-        self.visit_copysign_op(ValType::F32)
+        self.visit_copysign_op()
     }
 
     fn visit_f64_abs(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F64, "Abs")
+        self.visit_math_un_op("Abs")
     }
 
     fn visit_f64_neg(&mut self) -> Self::Output {
-        self.visit_un_op(ValType::F64, "-")
+        self.visit_un_op("-")
     }
 
     fn visit_f64_ceil(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F64, "Ceiling")
+        self.visit_math_un_op("Ceiling")
     }
 
     fn visit_f64_floor(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F64, "Floor")
+        self.visit_math_un_op("Floor")
     }
 
     fn visit_f64_trunc(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F64, "Truncate")
+        self.visit_math_un_op("Truncate")
     }
 
     fn visit_f64_nearest(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F64, "Round")
+        self.visit_math_un_op("Round")
     }
 
     fn visit_f64_sqrt(&mut self) -> Self::Output {
-        self.visit_math_un_op(ValType::F64, "Sqrt")
+        self.visit_math_un_op("Sqrt")
     }
 
     fn visit_f64_add(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "+", false, true)
+        self.visit_bin_op("+", false, true)
     }
 
     fn visit_f64_sub(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "-", false, true)
+        self.visit_bin_op("-", false, true)
     }
 
     fn visit_f64_mul(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "*", false, true)
+        self.visit_bin_op("*", false, true)
     }
 
     fn visit_f64_div(&mut self) -> Self::Output {
-        self.visit_bin_op(ValType::F64, "/", false, true)
+        self.visit_bin_op("/", false, true)
     }
 
     fn visit_f64_min(&mut self) -> Self::Output {
-        self.visit_math_bin_op(ValType::F64, "Min")
+        self.visit_math_bin_op("Min")
     }
 
     fn visit_f64_max(&mut self) -> Self::Output {
-        self.visit_math_bin_op(ValType::F64, "Max")
+        self.visit_math_bin_op("Max")
     }
 
     fn visit_f64_copysign(&mut self) -> Self::Output {
-        self.visit_copysign_op(ValType::F64)
+        self.visit_copysign_op()
     }
 
     fn visit_i32_wrap_i64(&mut self) -> Self::Output {
