@@ -565,28 +565,32 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             .new_var(if logical { ValType::I32 } else { lhs.ty });
         self.push_stack(result);
 
-        let mut line = format!("{result} = ");
-
         if signed {
-            line += &format!("{lhs} {op} {rhs}")
-        } else {
-            let cs_ty = CsType::get(lhs.ty);
-            let cs_ty_u = cs_ty.to_unsigned();
+            let mut line = format!("{result} = {lhs} {op} {rhs}");
+            if logical {
+                line += " ? 1 : 0";
+            }
+            line += ";";
 
-            if !logical {
-                line += cast(cs_ty);
+            self.push_line(line);
+        } else {
+            self.push_line("{".to_string());
+
+            self.push_line(format!(
+                "var tmp = {} {op} {};",
+                cast_unsigned(&lhs.to_string(), lhs.ty),
+                cast_unsigned(&rhs.to_string(), rhs.ty)
+            ));
+
+            if logical {
+                self.push_line(format!("{result} = tmp ? 1 : 0;"));
+            } else {
+                self.push_line(format!("{result} = {};", cast_signed("tmp", result.ty)));
             }
 
-            line += &format!("({0}({lhs}) {op} {0}({rhs}))", cast(cs_ty_u))
-        };
-
-        if logical {
-            line += " ? 1 : 0";
+            self.push_line("}".to_string());
         }
 
-        line += ";";
-
-        self.push_line(line);
         Ok(())
     }
 
@@ -596,17 +600,17 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         if signed {
             self.push_line(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
         } else {
-            let cs_ty = CsType::get(lhs.ty);
-            let cs_ty_u = cs_ty.to_unsigned();
-            let cast_ty = cast(cs_ty);
-            let cast_ty_u = cast(cs_ty_u);
-
             self.push_line("{".to_string());
-            self.push_line(format!("var lhs_u = {cast_ty_u}({lhs});"));
-            self.push_line(format!("var rhs_u = {cast_ty_u}({rhs});"));
             self.push_line(format!(
-                "{result} = {cast_ty}(lhs_u - lhs_u / rhs_u * rhs_u);"
+                "var lhs_u = {};",
+                cast_unsigned(&lhs.to_string(), lhs.ty)
             ));
+            self.push_line(format!(
+                "var rhs_u = {};",
+                cast_unsigned(&rhs.to_string(), rhs.ty)
+            ));
+            self.push_line("var tmp = lhs_u - lhs_u / rhs_u * rhs_u;".to_string());
+            self.push_line(format!("{result} = {};", cast_signed("tmp", result.ty)));
             self.push_line("}".to_string());
         };
 
@@ -767,14 +771,14 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             cast_from(CsType::get(opnd.ty), CsType::Double)
         ));
 
-        let cast_ty = cast(CsType::get(result_ty));
         if signed {
+            let cast_ty = cast(CsType::get(result_ty));
             self.push_line(format!("{result} = {cast_ty}({tmp});"));
         } else {
-            let bits = get_int_bits(result_ty);
-            let only_msb = 1u64 << (bits - 1);
-
-            self.push_line(format!("{result} = {tmp} >= {only_msb} ? {cast_ty}({tmp} - {only_msb}) | (-{} - 1) : {cast_ty}({tmp});", only_msb - 1));
+            self.push_line(format!(
+                "{result} = {};",
+                cast_signed(&tmp.to_string(), result_ty)
+            ));
         }
         Ok(())
     }
@@ -1855,4 +1859,20 @@ fn cast_from(from: CsType, to: CsType) -> &'static str {
     } else {
         cast(to)
     }
+}
+
+fn cast_unsigned(name: &str, ty: ValType) -> String {
+    let bits = get_int_bits(ty);
+    let only_msb = 1u64 << (bits - 1);
+    let except_msb = only_msb - 1;
+    let cast_ty = cast(CsType::get(ty).to_unsigned());
+    format!("({name} < 0 ? {cast_ty}({name} & {except_msb}) | {only_msb} : {cast_ty}({name}))")
+}
+
+fn cast_signed(name: &str, ty: ValType) -> String {
+    let bits = get_int_bits(ty);
+    let only_msb = 1u64 << (bits - 1);
+    let except_msb = only_msb - 1;
+    let cast_ty = cast(CsType::get(ty));
+    format!("({name} >= {only_msb} ? {cast_ty}({name} - {only_msb}) | (-{except_msb} - 1) : {cast_ty}({name}))")
 }
