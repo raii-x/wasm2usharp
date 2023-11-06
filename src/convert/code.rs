@@ -1,14 +1,11 @@
-use std::fmt;
-
 use anyhow::Result;
-use num_traits::float::Float;
 use wasmparser::{
     for_each_operator, BlockType, BrTable, FuncType, FunctionBody, Ieee32, Ieee64, MemArg,
     VisitOperator,
 };
 
 use crate::ir::{
-    func::{Code, Instr, Var},
+    func::{Code, Const, Expr, Instr, Var},
     module::Module,
     trap,
     ty::CsType,
@@ -47,7 +44,7 @@ pub struct CodeConverter<'input, 'module> {
 
 #[derive(Debug)]
 struct Block {
-    stack: Vec<Var>,
+    stack: Vec<Expr>,
     result: Option<Var>,
     loop_var: Option<usize>,
 }
@@ -157,15 +154,15 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         }
     }
 
-    fn push_stack(&mut self, var: Var) {
-        self.blocks.last_mut().unwrap().stack.push(var)
+    fn push_stack(&mut self, val: Expr) {
+        self.blocks.last_mut().unwrap().stack.push(val)
     }
 
-    fn pop_stack(&mut self) -> Var {
+    fn pop_stack(&mut self) -> Expr {
         self.blocks.last_mut().unwrap().stack.pop().unwrap()
     }
 
-    fn last_stack(&self) -> Var {
+    fn last_stack(&self) -> Expr {
         *self.blocks.last().unwrap().stack.last().unwrap()
     }
 
@@ -177,7 +174,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     ) -> <Self as VisitOperator<'_>>::Output {
         let idx = self.pop_stack();
         let result = self.code.new_var(ty);
-        self.push_stack(result);
+        self.push_stack(result.into());
 
         self.push_line(if memarg.offset == 0 {
             format!("{result} = {name}({idx});")
@@ -199,67 +196,30 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn visit_const(
-        &mut self,
-        ty: CsType,
-        value: impl fmt::Display,
-    ) -> <Self as VisitOperator<'_>>::Output {
-        let var = self.code.new_var(ty);
-        self.push_stack(var);
-
-        self.push_line(format!("{var} = {value};"));
-        Ok(())
-    }
-
-    fn visit_float_const<T, F>(
-        &mut self,
-        value: T,
-        ty: CsType,
-        normal_display: F,
-    ) -> std::result::Result<(), anyhow::Error>
-    where
-        T: Float,
-        F: FnOnce() -> String,
-    {
-        let literal = if value.is_infinite() {
-            if value.is_sign_positive() {
-                format!("{ty}.PositiveInfinity")
-            } else {
-                format!("{ty}.NegativeInfinity")
-            }
-        } else if value.is_nan() {
-            format!("{ty}.NaN")
-        } else {
-            normal_display()
-        };
-
-        self.visit_const(ty, literal)
-    }
-
     /// (opnd, result)を返す
-    fn un_op_vars(&mut self, result_ty: CsType) -> (Var, Var) {
+    fn un_op_vars(&mut self, result_ty: CsType) -> (Expr, Var) {
         let opnd = self.pop_stack();
         let result = self.code.new_var(result_ty);
-        self.push_stack(result);
+        self.push_stack(result.into());
 
         (opnd, result)
     }
 
     /// (opnd, result)を返し、opndの型をresultの型とする
-    fn un_op_vars_auto_ty(&mut self) -> (Var, Var) {
+    fn un_op_vars_auto_ty(&mut self) -> (Expr, Var) {
         let opnd = self.pop_stack();
-        let result = self.code.new_var(opnd.ty);
-        self.push_stack(result);
+        let result = self.code.new_var(opnd.ty());
+        self.push_stack(result.into());
 
         (opnd, result)
     }
 
     /// (lhs, rhs, result)を返し、lhsの型をresultの型とする
-    fn bin_op_vars_auto_ty(&mut self) -> (Var, Var, Var) {
+    fn bin_op_vars_auto_ty(&mut self) -> (Expr, Expr, Var) {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.code.new_var(lhs.ty);
-        self.push_stack(result);
+        let result = self.code.new_var(lhs.ty());
+        self.push_stack(result.into());
 
         (lhs, rhs, result)
     }
@@ -288,8 +248,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let lhs = self.pop_stack();
         let result = self
             .code
-            .new_var(if logical { CsType::Int } else { lhs.ty });
-        self.push_stack(result);
+            .new_var(if logical { CsType::Int } else { lhs.ty() });
+        self.push_stack(result.into());
 
         if signed {
             if logical {
@@ -301,8 +261,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
                 self.push_line(format!("{result} = {lhs} {op} {rhs};"));
             }
         } else {
-            let lhs_u = self.code.new_var(lhs.ty.to_unsigned());
-            let rhs_u = self.code.new_var(rhs.ty.to_unsigned());
+            let lhs_u = self.code.new_var(lhs.ty().to_unsigned());
+            let rhs_u = self.code.new_var(rhs.ty().to_unsigned());
             let tmp = self
                 .code
                 .new_var(if logical { CsType::Bool } else { lhs_u.ty });
@@ -314,7 +274,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             if logical {
                 self.push_line(format!("{result} = {}({tmp});", result.ty.cast()));
             } else {
-                self.cast_sign(tmp, result);
+                self.cast_sign(tmp.into(), result);
             }
         }
 
@@ -327,20 +287,20 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         if signed {
             self.push_line(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
         } else {
-            let lhs_u = self.code.new_var(lhs.ty.to_unsigned());
-            let rhs_u = self.code.new_var(rhs.ty.to_unsigned());
+            let lhs_u = self.code.new_var(lhs.ty().to_unsigned());
+            let rhs_u = self.code.new_var(rhs.ty().to_unsigned());
             let tmp = self.code.new_var(lhs_u.ty);
 
             self.cast_sign(lhs, lhs_u);
             self.cast_sign(rhs, rhs_u);
             self.push_line(format!("{tmp} = {lhs_u} - {lhs_u} / {rhs_u} * {rhs_u};"));
-            self.cast_sign(tmp, result);
+            self.cast_sign(tmp.into(), result);
         };
 
         Ok(())
     }
 
-    fn cast_sign(&mut self, opnd: Var, result: Var) {
+    fn cast_sign(&mut self, opnd: Expr, result: Var) {
         let bits = result.ty.int_bits();
         let only_msb = 1u64 << (bits - 1);
         let except_msb = only_msb - 1;
@@ -356,12 +316,12 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_shift_op(&mut self, op: &str, signed: bool) -> <Self as VisitOperator<'_>>::Output {
         let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
-        let rhs_int = if rhs.ty == CsType::Int {
+        let rhs_int = if rhs.ty() == CsType::Int {
             rhs
         } else {
             let rhs_int = self.code.new_var(CsType::Int);
             self.wrap(rhs, rhs_int);
-            rhs_int
+            rhs_int.into()
         };
 
         if signed {
@@ -372,39 +332,39 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn shr_u(&mut self, lhs: Var, rhs_int: Var, result: impl fmt::Display) {
-        let bits = lhs.ty.int_bits();
+    fn shr_u(&mut self, lhs: Expr, rhs_int: Expr, result: Var) {
+        let bits = lhs.ty().int_bits();
         let only_msb = 1u64 << (bits - 1);
         let except_msb = only_msb - 1;
 
         self.push_line(format!(
             "{result} = {lhs} < 0 ? (({lhs} & {except_msb}) >> {rhs_int}) | ({} << (-1 - {rhs_int})) : {lhs} >> {rhs_int};",
-            if lhs.ty == CsType::Long { "1L" } else { "1" }
+            if lhs.ty() == CsType::Long { "1L" } else { "1" }
         ));
     }
 
     fn visit_rot_op(&mut self, right: bool) -> <Self as VisitOperator<'_>>::Output {
         let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
-        let bits = lhs.ty.int_bits();
+        let bits = lhs.ty().int_bits();
 
-        let rhs_int = if rhs.ty == CsType::Int {
+        let rhs_int = if rhs.ty() == CsType::Int {
             rhs
         } else {
             let rhs_int = self.code.new_var(CsType::Int);
             self.wrap(rhs, rhs_int);
-            rhs_int
+            rhs_int.into()
         };
 
         let bits_m_rhs = self.code.new_var(CsType::Int);
         self.push_line(format!("{bits_m_rhs} = {bits} - {rhs_int};"));
 
-        let shr = self.code.new_var(lhs.ty);
+        let shr = self.code.new_var(lhs.ty());
         if right {
             self.shr_u(lhs, rhs_int, shr);
             self.push_line(format!("{result} = {shr} | ({lhs} << {bits_m_rhs});"));
         } else {
-            self.shr_u(lhs, bits_m_rhs, shr);
+            self.shr_u(lhs, bits_m_rhs.into(), shr);
             self.push_line(format!("{result} = ({lhs} << {rhs_int}) | {shr};"));
         }
         Ok(())
@@ -413,10 +373,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_clz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let bits = opnd.ty.int_bits();
+        let bits = opnd.ty().int_bits();
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cast_ty = cast_from(CsType::Int, opnd.ty);
+        let cast_ty = cast_from(CsType::Int, opnd.ty());
         // 2進で文字列化して文字数を数える
         self.push_line(format!(
             "else {result} = {cast_ty}({bits} - Convert.ToString({opnd}, 2).Length);",
@@ -427,14 +387,14 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_ctz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let bits = opnd.ty.int_bits();
+        let bits = opnd.ty().int_bits();
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
-        let cast_ty = cast_from(CsType::Int, opnd.ty);
+        let cast_ty = cast_from(CsType::Int, opnd.ty());
 
         // 符号付き整数の最小値のリテラルはUdonSharpではエラーとなるので
         // `-最大値 - 1` で表現する
-        let or_opnd = match opnd.ty {
+        let or_opnd = match opnd.ty() {
             CsType::Int => (1i32 << (bits - 1)) as i64,
             CsType::Long => 1i64 << (bits - 1),
             _ => unreachable!(),
@@ -453,7 +413,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_popcnt(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let cast_ty = cast_from(CsType::Int, opnd.ty);
+        let cast_ty = cast_from(CsType::Int, opnd.ty());
         // 2進で文字列化して、0を除去した後の文字数を数える
         self.push_line(format!(
             "{result} = {cast_ty}(Convert.ToString({opnd}, 2).Replace(\"0\", \"\").Length);"
@@ -466,7 +426,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!(
             "{result} = {}.{func}({opnd});",
-            self.module.math_class(opnd.ty)
+            self.module.math_class(opnd.ty())
         ));
         Ok(())
     }
@@ -476,7 +436,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!(
             "{result} = {}.{func}({lhs}, {rhs});",
-            self.module.math_class(lhs.ty)
+            self.module.math_class(lhs.ty())
         ));
         Ok(())
     }
@@ -486,7 +446,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!(
             "{result} = {0}.Abs({lhs}) * (({rhs} == 0 ? 1 / {rhs} : {rhs}) > 0 ? 1 : -1);",
-            self.module.math_class(lhs.ty)
+            self.module.math_class(lhs.ty())
         ));
         Ok(())
     }
@@ -499,7 +459,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn wrap(&mut self, opnd: Var, result: Var) {
+    fn wrap(&mut self, opnd: Expr, result: Var) {
         self.push_line(format!(
             "{result} = {}({opnd} & 0x7fffffff);",
             CsType::Int.cast()
@@ -519,14 +479,14 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!(
             "{tmp} = Math.Truncate({}({opnd}));",
-            cast_from(opnd.ty, CsType::Double)
+            cast_from(opnd.ty(), CsType::Double)
         ));
 
         if signed {
             let cast_ty = result_ty.cast();
             self.push_line(format!("{result} = {cast_ty}({tmp});"));
         } else {
-            self.cast_sign(tmp, result);
+            self.cast_sign(tmp.into(), result);
         }
         Ok(())
     }
@@ -554,7 +514,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         if signed {
             self.push_line(format!("{result} = {cast_ty}({opnd});"));
         } else {
-            let bits = opnd.ty.int_bits();
+            let bits = opnd.ty().int_bits();
             let only_msb = 1u64 << (bits - 1);
 
             self.push_line(format!(
@@ -570,7 +530,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             0 => None,
             1 => {
                 let var = self.code.new_var(CsType::get(ty.results()[0]));
-                self.push_stack(var);
+                self.push_stack(var.into());
                 Some(var)
             }
             _ => {
@@ -670,7 +630,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         // 最も外側のブロックのendでない場合のみ
         if !self.blocks.is_empty() {
             if let Some(result) = block.result {
-                self.push_stack(result);
+                self.push_stack(result.into());
             }
 
             // 多重break
@@ -754,7 +714,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         // mapは遅延評価であるため、mapの後にrevを呼んだ場合ではpop_stackで得る値が逆順にならない
         // そのため、一度collectでVecにした後、reverseで逆順にしている
-        let mut params: Vec<Var> = ty.params().iter().map(|_| self.pop_stack()).collect();
+        let mut params: Vec<Expr> = ty.params().iter().map(|_| self.pop_stack()).collect();
         params.reverse();
 
         let result = self.get_result(&ty);
@@ -780,7 +740,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let ty = self.module.types[type_index as usize].clone();
 
         // Iteratorのrevを使わない理由はvisit_callのコメントを参照
-        let mut params: Vec<Var> = (0..ty.params().len() + 1)
+        let mut params: Vec<Expr> = (0..ty.params().len() + 1)
             .map(|_| self.pop_stack())
             .collect();
         params.reverse();
@@ -805,8 +765,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let val2 = self.pop_stack();
         let val1 = self.pop_stack();
 
-        let select = self.code.new_var(val1.ty);
-        self.push_stack(select);
+        let select = self.code.new_var(val1.ty());
+        self.push_stack(select.into());
 
         self.push_line(format!("{select} = {c} != 0 ? {val1} : {val2};"));
 
@@ -816,7 +776,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_local_get(&mut self, local_index: u32) -> Self::Output {
         let local = self.code.vars[local_index as usize];
         let var = self.code.new_var(local.ty);
-        self.push_stack(var);
+        self.push_stack(var.into());
 
         self.push_line(format!("{var} = {local};"));
         Ok(())
@@ -838,7 +798,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_global_get(&mut self, global_index: u32) -> Self::Output {
         let global = &self.module.globals[global_index as usize];
         let var = self.code.new_var(CsType::get(global.ty.content_type));
-        self.push_stack(var);
+        self.push_stack(var.into());
 
         self.push_line(format!("{var} = {};", global.name));
         Ok(())
@@ -951,7 +911,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         assert!(mem_byte == 0);
 
         let var = self.code.new_var(CsType::Int);
-        self.push_stack(var);
+        self.push_stack(var.into());
 
         let memory = &self.module.memory.as_ref().unwrap().name;
 
@@ -967,7 +927,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         let size = self.pop_stack();
         let var = self.code.new_var(CsType::Int);
-        self.push_stack(var);
+        self.push_stack(var.into());
 
         let memory = &self.module.memory.as_ref().unwrap().name;
         let max = self
@@ -1003,27 +963,23 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i32_const(&mut self, value: i32) -> Self::Output {
-        match value {
-            i32::MIN => self.visit_const(CsType::Int, format!("{} - 1", i32::MIN + 1)),
-            _ => self.visit_const(CsType::Int, value),
-        }
+        self.push_stack(Const::Int(value).into());
+        Ok(())
     }
 
     fn visit_i64_const(&mut self, value: i64) -> Self::Output {
-        match value {
-            i64::MIN => self.visit_const(CsType::Long, format!("{} - 1", i64::MIN + 1)),
-            _ => self.visit_const(CsType::Long, value),
-        }
+        self.push_stack(Const::Long(value).into());
+        Ok(())
     }
 
     fn visit_f32_const(&mut self, value: Ieee32) -> Self::Output {
-        let value = f32::from_bits(value.bits());
-        self.visit_float_const(value, CsType::Float, || format!("{:e}f", value))
+        self.push_stack(Const::Float(f32::from_bits(value.bits())).into());
+        Ok(())
     }
 
     fn visit_f64_const(&mut self, value: Ieee64) -> Self::Output {
-        let value = f64::from_bits(value.bits());
-        self.visit_float_const(value, CsType::Double, || format!("{:e}", value))
+        self.push_stack(Const::Double(f64::from_bits(value.bits())).into());
+        Ok(())
     }
 
     fn visit_i32_eqz(&mut self) -> Self::Output {

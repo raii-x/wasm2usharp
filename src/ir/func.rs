@@ -1,5 +1,6 @@
 use std::{fmt, io};
 
+use num_traits::Float;
 use wasmparser::FuncType;
 
 use super::{func_header, module::Module, result_cs_ty, ty::CsType, BREAK_DEPTH, LOOP};
@@ -116,11 +117,101 @@ impl fmt::Display for Var {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Const {
+    Int(i32),
+    Long(i64),
+    Float(f32),
+    Double(f64),
+}
+
+impl Const {
+    pub fn ty(&self) -> CsType {
+        match self {
+            Self::Int(_) => CsType::Int,
+            Self::Long(_) => CsType::Long,
+            Self::Float(_) => CsType::Float,
+            Self::Double(_) => CsType::Double,
+        }
+    }
+}
+
+impl fmt::Display for Const {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Int(x) => match *x {
+                i32::MIN => write!(f, "({} - 1)", i32::MIN + 1),
+                _x => write!(f, "{}", _x),
+            },
+            Self::Long(x) => match *x {
+                i64::MIN => write!(f, "({} - 1)", i64::MIN + 1),
+                _x => write!(f, "{}", _x),
+            },
+            Self::Float(x) => {
+                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}f", *x))
+            }
+            Self::Double(x) => {
+                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}", *x))
+            }
+        }
+    }
+}
+
+fn fmt_float(value: impl Float, ty: CsType, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+    if value.is_infinite() {
+        Some(if value.is_sign_positive() {
+            write!(f, "{ty}.PositiveInfinity")
+        } else {
+            write!(f, "{ty}.NegativeInfinity")
+        })
+    } else if value.is_nan() {
+        Some(write!(f, "{ty}.NaN"))
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Expr {
+    Var(Var),
+    Const(Const),
+}
+
+impl Expr {
+    pub fn ty(&self) -> CsType {
+        match self {
+            Self::Var(x) => x.ty,
+            Self::Const(x) => x.ty(),
+        }
+    }
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Var(x) => x.fmt(f),
+            Self::Const(x) => x.fmt(f),
+        }
+    }
+}
+
+impl From<Var> for Expr {
+    fn from(value: Var) -> Self {
+        Self::Var(value)
+    }
+}
+
+impl From<Const> for Expr {
+    fn from(value: Const) -> Self {
+        Self::Const(value)
+    }
+}
+
 pub enum Instr {
     Line(String),
     Call {
         func: usize,
-        params: Vec<Var>,
+        params: Vec<Expr>,
         result: Option<Var>,
     },
 }

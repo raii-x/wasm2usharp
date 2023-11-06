@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::{
     convert::{builtin_func::add_builtin_funcs, code::CodeConverter},
     ir::{
-        func::{Code, Func, FuncHeader, Instr, Var},
+        func::{Code, Const, Expr, Func, FuncHeader, Instr},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::CsType,
@@ -312,16 +312,10 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         use wasmparser::Operator::*;
         let mut op_iter = expr.get_operators_reader().into_iter();
         let value = match op_iter.next().unwrap().unwrap() {
-            I32Const { value } => match value {
-                i32::MIN => format!("{} - 1", i32::MIN + 1),
-                _ => format!("{}", value),
-            },
-            I64Const { value } => match value {
-                i64::MIN => format!("{} - 1", i64::MIN + 1),
-                _ => format!("{}", value),
-            },
-            F32Const { value } => format!("{:e}f", f32::from_bits(value.bits())),
-            F64Const { value } => format!("{:e}", f64::from_bits(value.bits())),
+            I32Const { value } => Const::Int(value).to_string(),
+            I64Const { value } => Const::Long(value).to_string(),
+            F32Const { value } => Const::Float(f32::from_bits(value.bits())).to_string(),
+            F64Const { value } => Const::Double(f64::from_bits(value.bits())).to_string(),
             GlobalGet { global_index } => {
                 self.module.globals[global_index as usize].name.to_string()
             }
@@ -382,7 +376,10 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             )));
 
             // 関数呼び出し用の引数リスト
-            let call_params: Vec<Var> = code.vars[0..code.vars.len() - 1].to_vec();
+            let call_params: Vec<Expr> = code.vars[0..code.vars.len() - 1]
+                .iter()
+                .map(|&x| x.into())
+                .collect();
 
             let result = if ty.results().is_empty() {
                 None
