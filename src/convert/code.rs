@@ -1711,13 +1711,6 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_i32_wrap_i64(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Int);
         self.wrap(opnd, result);
-        self.push_line(format!(
-            "{result} = {}({opnd} & 0x7fffffff);",
-            cast(CsType::Int)
-        ));
-        self.push_line(format!(
-            "if (({opnd} & 0x80000000) != 0) {result} |= -0x7fffffff - 1;"
-        ));
         Ok(())
     }
 
