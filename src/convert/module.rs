@@ -172,6 +172,11 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                         panic!("Non function elements are not supported");
                     };
 
+                    for &i in &items {
+                        // elementに存在するなら関数がテーブルにあるとする
+                        self.module.all_funcs[i as usize].in_table = true;
+                    }
+
                     self.module.elements.push(Element { offset_expr, items });
                 }
             }
@@ -238,6 +243,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             },
             code: None,
             recursive: true,
+            in_table: false,
         };
 
         self.module.wasm_func_count += 1;
@@ -440,6 +446,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 header,
                 code: Some(code),
                 recursive: true,
+                in_table: false,
             };
 
             self.module.call_indirects.push(index);
@@ -496,6 +503,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             header,
             code: Some(code),
             recursive: false,
+            in_table: false,
         });
     }
 }

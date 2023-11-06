@@ -8,6 +8,7 @@ pub struct Func {
     pub header: FuncHeader,
     pub code: Option<Code>,
     pub recursive: bool,
+    pub in_table: bool,
 }
 
 impl Func {
