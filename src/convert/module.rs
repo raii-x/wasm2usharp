@@ -19,12 +19,12 @@ use crate::{
 
 use super::convert_to_ident;
 
-pub struct Converter<'input, 'module> {
+pub struct ModuleConverter<'input, 'module> {
     module: &'module mut Module<'input>,
     code_idx: usize,
 }
 
-impl<'input, 'module> Converter<'input, 'module> {
+impl<'input, 'module> ModuleConverter<'input, 'module> {
     pub fn new(module: &'module mut Module<'input>) -> Self {
         Self {
             module,

@@ -9,7 +9,7 @@ use regex::Regex;
 
 use crate::{ir::module::Module, pass::run_passes};
 
-use self::module::Converter;
+use self::module::ModuleConverter;
 
 pub fn convert<'input>(
     buf: &'input [u8],
@@ -19,7 +19,7 @@ pub fn convert<'input>(
     import_map: &dyn Fn(&str) -> String,
 ) -> Result<HashSet<&'input str>> {
     let mut module = Module::new(buf, class_name, test);
-    let mut conv = Converter::new(&mut module);
+    let mut conv = ModuleConverter::new(&mut module);
 
     let ret = conv.convert(import_map)?;
     run_passes(&mut module);
