@@ -179,10 +179,11 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let result = self.code.new_var(ty);
         self.push_stack(result);
 
-        self.push_line(format!(
-            "{result} = {name}({idx} + {});",
-            memarg.offset as i32
-        ));
+        self.push_line(if memarg.offset == 0 {
+            format!("{result} = {name}({idx});")
+        } else {
+            format!("{result} = {name}({idx} + {});", memarg.offset as i32)
+        });
         Ok(())
     }
 
@@ -190,7 +191,11 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let var = self.pop_stack();
         let idx = self.pop_stack();
 
-        self.push_line(format!("{name}({idx} + {}, {var});", memarg.offset as i32));
+        self.push_line(if memarg.offset == 0 {
+            format!("{name}({idx}, {var});")
+        } else {
+            format!("{name}({idx} + {}, {var});", memarg.offset as i32)
+        });
         Ok(())
     }
 
