@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, io, rc::Rc};
+use std::{collections::HashMap, io};
 
 use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
@@ -9,18 +9,19 @@ pub struct Module<'input> {
     pub class_name: &'input str,
     pub test: bool,
     pub types: Vec<FuncType>,
-    /// 出力のU#に含まれる全ての関数
-    pub all_funcs: Vec<Rc<RefCell<Func>>>,
-    /// 元のwasmに存在した関数
-    pub wasm_funcs: Vec<Rc<RefCell<Func>>>,
+    /// 出力のU#に含まれる全ての関数。
+    /// 元のwasmに存在していた関数は同じインデックスで参照できる
+    pub all_funcs: Vec<Func>,
+    /// 元のwasmに存在していた関数の数
+    pub wasm_func_count: usize,
     /// call_indirect命令に対応する関数
-    pub call_indirects: Vec<Rc<RefCell<Func>>>,
+    pub call_indirects: Vec<usize>,
     pub table: Option<Table>,
     pub memory: Option<Memory>,
     pub globals: Vec<Global>,
     pub elements: Vec<Element>,
     pub datas: Vec<Data<'input>>,
-    pub start_func: Option<Rc<RefCell<Func>>>,
+    pub start_func: Option<usize>,
     pub import_modules: HashMap<String, String>,
 }
 
@@ -32,7 +33,7 @@ impl<'input> Module<'input> {
             test,
             types: Vec::new(),
             all_funcs: Vec::new(),
-            wasm_funcs: Vec::new(),
+            wasm_func_count: 0,
             call_indirects: Vec::new(),
             table: None,
             memory: None,
@@ -72,11 +73,7 @@ impl<'input> Module<'input> {
 
             for &item in elem.items.iter() {
                 if use_delegate {
-                    write!(
-                        f,
-                        "{},",
-                        self.wasm_funcs[item as usize].borrow().header.name
-                    )?;
+                    write!(f, "{},", self.all_funcs[item as usize].header.name)?;
                 } else {
                     // テーブルに格納される関数インデックスは元のインデックスに1を足したもの
                     // (配列の初期値の0でnullを表現するため)
@@ -89,7 +86,6 @@ impl<'input> Module<'input> {
 
         // コード
         for func in &self.all_funcs {
-            let func = func.borrow();
             if func.code.is_some() {
                 func.write(f, self)?;
             }

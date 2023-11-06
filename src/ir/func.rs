@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, io, rc::Rc};
+use std::{fmt, io};
 
 use wasmparser::FuncType;
 
@@ -57,7 +57,7 @@ impl Func {
 
         // 本体
         for instr in &code.instrs {
-            instr.write(f)?;
+            instr.write(f, module)?;
         }
 
         writeln!(f, "}}")?;
@@ -118,14 +118,14 @@ impl fmt::Display for Var {
 pub enum Instr {
     Line(String),
     Call {
-        func: Rc<RefCell<Func>>,
+        func: usize,
         params: Vec<Var>,
         result: Option<Var>,
     },
 }
 
 impl Instr {
-    pub fn write(&self, f: &mut dyn io::Write) -> io::Result<()> {
+    pub fn write(&self, f: &mut dyn io::Write, module: &Module<'_>) -> io::Result<()> {
         match self {
             Self::Line(x) => writeln!(f, "{}", x),
             Self::Call {
@@ -137,7 +137,7 @@ impl Instr {
                     write!(f, "{result} = ")?;
                 }
 
-                write!(f, "{}(", func.borrow().header.name)?;
+                write!(f, "{}(", module.all_funcs[*func].header.name)?;
 
                 let params = params
                     .iter()

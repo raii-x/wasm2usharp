@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashSet, iter::once, rc::Rc};
+use std::{collections::HashSet, iter::once};
 
 use anyhow::Result;
 use wasmparser::{
@@ -123,8 +123,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                     let name = convert_to_ident(export.name);
                     match export.kind {
                         Func => {
-                            let mut func =
-                                self.module.wasm_funcs[export.index as usize].borrow_mut();
+                            let func = &mut self.module.all_funcs[export.index as usize];
                             func.header.name = name;
                             func.header.export = true;
                         }
@@ -150,7 +149,7 @@ impl<'input, 'module> Converter<'input, 'module> {
                 }
             }
             StartSection { func, .. } => {
-                self.module.start_func = Some(Rc::clone(&self.module.wasm_funcs[func as usize]));
+                self.module.start_func = Some(func as usize);
             }
             ElementSection(s) => {
                 for elem in s.into_iter() {
@@ -201,14 +200,12 @@ impl<'input, 'module> Converter<'input, 'module> {
                 self.add_call_indirects();
             }
             CodeSectionEntry(s) => {
-                let func = &self.module.wasm_funcs[self.code_idx];
                 let code = {
-                    let code_conv = CodeConverter::new(self.module, Rc::clone(func));
+                    let code_conv = CodeConverter::new(self.module, self.code_idx);
                     code_conv.convert(s)?
                 };
 
-                let mut func = func.borrow_mut();
-                func.code = Some(code);
+                self.module.all_funcs[self.code_idx].code = Some(code);
 
                 self.code_idx += 1;
             }
@@ -219,11 +216,13 @@ impl<'input, 'module> Converter<'input, 'module> {
         Ok(())
     }
 
+    /// Wasmに元々存在している全ての関数をadd_wasm_funcで追加するまでは
+    /// 他の関数を追加してはならない
     fn add_wasm_func(&mut self, ty: u32, name: Option<String>) {
         let import = name.is_some();
         let name = match name {
             Some(x) => x,
-            None => format!("{W2US_PREFIX}func{}", self.module.wasm_funcs.len()),
+            None => format!("{W2US_PREFIX}func{}", self.module.all_funcs.len()),
         };
         let ty = self.module.types[ty as usize].clone();
 
@@ -231,7 +230,7 @@ impl<'input, 'module> Converter<'input, 'module> {
             self.code_idx += 1;
         }
 
-        let func = Rc::new(RefCell::new(Func {
+        let func = Func {
             header: FuncHeader {
                 name,
                 ty,
@@ -239,9 +238,9 @@ impl<'input, 'module> Converter<'input, 'module> {
             },
             code: None,
             recursive: true,
-        }));
+        };
 
-        self.module.wasm_funcs.push(Rc::clone(&func));
+        self.module.wasm_func_count += 1;
         self.module.all_funcs.push(func);
     }
 
@@ -384,14 +383,15 @@ impl<'input, 'module> Converter<'input, 'module> {
                 Some(code.new_var(CsType::get(ty.results()[0])))
             };
 
-            for (i, func) in self.module.wasm_funcs.iter().enumerate() {
-                if func.borrow().header.ty != *ty {
+            for i in 0..self.module.wasm_func_count {
+                let func = &self.module.all_funcs[i];
+                if func.header.ty != *ty {
                     continue;
                 }
 
                 code.instrs.push(Instr::Line(format!("case {}:", i + 1)));
                 code.instrs.push(Instr::Call {
-                    func: Rc::clone(func),
+                    func: i,
                     params: call_params.clone(),
                     result,
                 });
@@ -435,13 +435,14 @@ impl<'input, 'module> Converter<'input, 'module> {
                 code.instrs.push(Instr::Line("}".to_string()));
             }
 
-            let func = Rc::new(RefCell::new(Func {
+            let index = self.module.all_funcs.len();
+            let func = Func {
                 header,
                 code: Some(code),
                 recursive: true,
-            }));
+            };
 
-            self.module.call_indirects.push(Rc::clone(&func));
+            self.module.call_indirects.push(index);
             self.module.all_funcs.push(func);
         }
     }
@@ -482,19 +483,19 @@ impl<'input, 'module> Converter<'input, 'module> {
                 data.len()
             )));
         }
-        if let Some(start_func) = &self.module.start_func {
+        if let Some(start_func) = self.module.start_func {
             // start関数の呼び出し
             code.instrs.push(Instr::Line(format!(
                 "{}();",
-                start_func.borrow().header.name
+                self.module.all_funcs[start_func].header.name
             )));
         }
 
-        self.module.all_funcs.push(Rc::new(RefCell::new(Func {
+        self.module.all_funcs.push(Func {
             header,
             code: Some(code),
             recursive: false,
-        })));
+        });
     }
 }
 

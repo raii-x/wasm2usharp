@@ -1,4 +1,4 @@
-use std::{cell::RefCell, fmt, rc::Rc};
+use std::fmt;
 
 use anyhow::Result;
 use num_traits::float::Float;
@@ -9,7 +9,7 @@ use wasmparser::{
 
 use crate::{
     ir::{
-        func::{Code, Func, Instr, Var},
+        func::{Code, Instr, Var},
         module::Module,
         trap,
         ty::CsType,
@@ -37,7 +37,7 @@ macro_rules! define_visit_operator {
 
 pub struct CodeConverter<'input, 'module> {
     module: &'module Module<'input>,
-    func: Rc<RefCell<Func>>,
+    func: usize,
     blocks: Vec<Block>,
     code: Code,
     /// brの後など、到達不可能なコードの処理時に1加算。
@@ -54,8 +54,8 @@ struct Block {
 }
 
 impl<'input, 'module> CodeConverter<'input, 'module> {
-    pub(super) fn new(module: &'module Module<'input>, func: Rc<RefCell<Func>>) -> Self {
-        let code = Code::new(&func.borrow().header);
+    pub(super) fn new(module: &'module Module<'input>, func: usize) -> Self {
+        let code = Code::new(&module.all_funcs[func].header);
         Self {
             module,
             func,
@@ -78,7 +78,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         }
 
         let blockty = {
-            let func = self.func.borrow();
+            let func = &self.module.all_funcs[self.func];
             let results = func.header.ty.results();
             match results.len() {
                 0 => BlockType::Empty,
@@ -1017,7 +1017,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_return(&mut self) -> Self::Output {
         self.unreachable = 1;
 
-        let results_len = self.func.borrow().header.ty.results().len();
+        let results_len = self.module.all_funcs[self.func].header.ty.results().len();
         match results_len {
             0 => self.push_line("return;".to_string()),
             1 => {
@@ -1032,8 +1032,9 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_call(&mut self, function_index: u32) -> Self::Output {
-        let func = Rc::clone(&self.module.wasm_funcs[function_index as usize]);
-        let ty = func.borrow().header.ty.clone();
+        let index = function_index as usize;
+        let func = &self.module.all_funcs[index];
+        let ty = func.header.ty.clone();
 
         // mapは遅延評価であるため、mapの後にrevを呼んだ場合ではpop_stackで得る値が逆順にならない
         // そのため、一度collectでVecにした後、reverseで逆順にしている
@@ -1043,7 +1044,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let result = self.get_result(&ty);
 
         self.code.instrs.push(Instr::Call {
-            func,
+            func: index,
             params,
             result,
         });
@@ -1059,7 +1060,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         assert!(table_index == 0);
         assert!(table_byte == 0);
 
-        let func = Rc::clone(&self.module.call_indirects[type_index as usize]);
+        let index = self.module.call_indirects[type_index as usize];
         let ty = self.module.types[type_index as usize].clone();
 
         // Iteratorのrevを使わない理由はvisit_callのコメントを参照
@@ -1071,7 +1072,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let result = self.get_result(&ty);
 
         self.code.instrs.push(Instr::Call {
-            func,
+            func: index,
             params,
             result,
         });
