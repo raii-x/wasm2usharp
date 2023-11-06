@@ -7,7 +7,7 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::ir::module::Module;
+use crate::{ir::module::Module, pass::run_passes};
 
 use self::module::Converter;
 
@@ -22,7 +22,10 @@ pub fn convert<'input>(
     let mut conv = Converter::new(&mut module);
 
     let ret = conv.convert(import_map)?;
+    run_passes(&mut module);
+
     module.write(out_file)?;
+
     Ok(ret)
 }
 

@@ -2,6 +2,7 @@
 
 pub mod convert;
 pub mod ir;
+pub mod pass;
 pub mod util;
 
 use std::{
