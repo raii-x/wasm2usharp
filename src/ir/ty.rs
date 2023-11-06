@@ -51,6 +51,44 @@ impl CsType {
             _ => panic!("Unsupported type"),
         }
     }
+
+    pub fn to_i(&self) -> CsType {
+        match self {
+            CsType::Float => CsType::Int,
+            CsType::Double => CsType::Long,
+            _ => panic!("Specify float type as argument"),
+        }
+    }
+
+    pub fn int_bits(&self) -> u32 {
+        match self {
+            CsType::Int | CsType::UInt => i32::BITS,
+            CsType::Long | CsType::ULong => i64::BITS,
+            _ => panic!("Specify integer type as argument"),
+        }
+    }
+
+    pub fn frac_bits(&self) -> u32 {
+        match self {
+            CsType::Float => f32::MANTISSA_DIGITS - 1,
+            CsType::Double => f64::MANTISSA_DIGITS - 1,
+            _ => panic!("Specify float type as argument"),
+        }
+    }
+
+    pub fn cast(&self) -> &'static str {
+        match self {
+            CsType::Void => panic!("Unsupported conversion"),
+            CsType::Bool => "Convert.ToBoolean",
+            CsType::Byte => "Convert.ToByte",
+            CsType::Int => "Convert.ToInt32",
+            CsType::UInt => "Convert.ToUInt32",
+            CsType::Long => "Convert.ToInt64",
+            CsType::ULong => "Convert.ToUInt64",
+            CsType::Float => "Convert.ToSingle",
+            CsType::Double => "Convert.ToDouble",
+        }
+    }
 }
 
 impl fmt::Display for CsType {

@@ -157,6 +157,20 @@ impl<'input> Module<'input> {
 
         Ok(())
     }
+
+    pub fn math_class(&self, ty: CsType) -> &'static str {
+        match ty {
+            CsType::Float => {
+                if self.test {
+                    "MathF"
+                } else {
+                    "Mathf"
+                }
+            }
+            CsType::Double => "Math",
+            _ => panic!("Specify float type as argument"),
+        }
+    }
 }
 
 pub struct Table {

@@ -7,7 +7,7 @@ use wasmparser::{
 };
 
 use crate::{
-    convert::code::CodeConverter,
+    convert::{builtin_func::add_builtin_funcs, code::CodeConverter},
     ir::{
         func::{Code, Func, FuncHeader, Instr, Var},
         module::{Data, Element, Global, Memory, Module, Table},
@@ -202,6 +202,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 }
             }
             CodeSectionStart { .. } => {
+                add_builtin_funcs(self.module);
                 self.add_call_indirects();
             }
             CodeSectionEntry(s) => {

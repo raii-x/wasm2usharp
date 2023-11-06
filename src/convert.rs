@@ -1,3 +1,4 @@
+mod builtin_func;
 mod code;
 mod module;
 

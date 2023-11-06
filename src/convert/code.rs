@@ -4,19 +4,18 @@ use anyhow::Result;
 use num_traits::float::Float;
 use wasmparser::{
     for_each_operator, BlockType, BrTable, FuncType, FunctionBody, Ieee32, Ieee64, MemArg,
-    StorageType, ValType, VisitOperator,
+    VisitOperator,
 };
 
-use crate::{
-    ir::{
-        func::{Code, Instr, Var},
-        module::Module,
-        trap,
-        ty::CsType,
-        BREAK_DEPTH, LOOP, PAGE_SIZE,
-    },
-    util::bit_mask,
+use crate::ir::{
+    func::{Code, Instr, Var},
+    module::Module,
+    trap,
+    ty::CsType,
+    BREAK_DEPTH, LOOP, PAGE_SIZE,
 };
+
+use super::builtin_func;
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -170,306 +169,29 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         *self.blocks.last().unwrap().stack.last().unwrap()
     }
 
-    fn visit_int_load(
+    fn visit_load(
         &mut self,
         memarg: MemArg,
-        var_type: CsType,
-        mem_type: StorageType,
-        signed: bool,
+        ty: CsType,
+        name: &str,
     ) -> <Self as VisitOperator<'_>>::Output {
         let idx = self.pop_stack();
-        let var = self.code.new_var(var_type);
-        self.push_stack(var);
+        let result = self.code.new_var(ty);
+        self.push_stack(result);
 
-        self.int_load(memarg, var_type, mem_type, signed, idx, var);
-
+        self.push_line(format!(
+            "{result} = {name}({idx} + {});",
+            memarg.offset as i32
+        ));
         Ok(())
     }
 
-    fn int_load(
-        &mut self,
-        memarg: MemArg,
-        var_type: CsType,
-        mem_type: StorageType,
-        signed: bool,
-        idx: Var,
-        var: Var,
-    ) {
-        use {StorageType::*, ValType::*};
-
-        let mut load = format!("{var} = ");
-
-        let memory = &self.module.memory.as_ref().unwrap().name;
-        let cast_var = cast(var_type);
-        match mem_type {
-            I8 => load += &format!("{memory}[{0}+{1}];", idx, memarg.offset),
-            I16 => load += &format!("{memory}[{0}+{1}] | {2}({memory}[{0}+{1}+1])<<8;", idx, memarg.offset, cast_var),
-            Val(I32) => load += &format!(
-                "{memory}[{0}+{1}] | {2}({memory}[{0}+{1}+1])<<8 | {2}({memory}[{0}+{1}+2])<<16 | {2}({memory}[{0}+{1}+3])<<24;",
-                idx, memarg.offset, cast_var),
-            Val(I64) => load += &format!(
-                "{memory}[{0}+{1}] | {2}({memory}[{0}+{1}+1])<<8 | {2}({memory}[{0}+{1}+2])<<16 | {2}({memory}[{0}+{1}+3])<<24 | {2}({memory}[{0}+{1}+4])<<32 | {2}({memory}[{0}+{1}+5])<<40 | {2}({memory}[{0}+{1}+6])<<48 | {2}({memory}[{0}+{1}+7])<<56;",
-                idx, memarg.offset, cast_var),
-            _ => unreachable!(),
-        }
-        self.push_line(load);
-
-        if signed {
-            let mut sign;
-            match mem_type {
-                I8 => sign = format!("if ({var} >= 0x80) "),
-                I16 => sign = format!("if ({var} >= 0x8000) "),
-                Val(I32) => sign = format!("if ({var} >= 0x80000000) "),
-                _ => unreachable!(),
-            }
-
-            match (var_type, mem_type) {
-                (CsType::Int, I8) => sign += &format!("{var} |= -0x100;"),
-                (CsType::Int, I16) => sign += &format!("{var} |= -0x10000;"),
-                (CsType::Long, I8) => sign += &format!("{var} |= -0x100;"),
-                (CsType::Long, I16) => sign += &format!("{var} |= -0x10000;"),
-                (CsType::Long, Val(I32)) => sign += &format!("{var} |= -0x100000000;"),
-                _ => unreachable!(),
-            }
-
-            self.push_line(sign);
-        }
-    }
-
-    fn visit_float_load(
-        &mut self,
-        memarg: MemArg,
-        var_type: CsType,
-    ) -> <Self as VisitOperator<'_>>::Output {
-        let idx = self.pop_stack();
-        let i_ty = ty_f_to_i(var_type);
-        let i_var = self.code.new_var(i_ty);
-
-        let var = self.code.new_var(var_type);
-        self.push_stack(var);
-
-        self.int_load(
-            memarg,
-            i_ty,
-            StorageType::Val(i_ty.val_type()),
-            false,
-            idx,
-            i_var,
-        );
-
-        self.bits_to_float(i_var, var);
-        Ok(())
-    }
-
-    fn bits_to_float(&mut self, i_var: Var, f_var: Var) {
-        let i_ty = i_var.ty;
-        let f_ty = f_var.ty;
-        let bits = get_int_bits(i_ty);
-        let frac_bits = get_frac_bits(f_ty);
-        let expo_bits = bits - 1 - frac_bits;
-        let expo_bit_mask = bit_mask(expo_bits as u64);
-        // LSBに寄せた後のビットマスク
-        let expo_offset = (1 << (expo_bits - 1)) - 1;
-        let class = self.math_class(f_ty);
-
-        self.push_line("{".to_string());
-
-        // ビット列の各データを抽出
-        self.push_line(format!("var sign = ({i_var} >> {}) & 1;", bits - 1));
-        self.push_line(format!(
-            "var expo = ({i_var} >> {frac_bits}) & {expo_bit_mask};",
-        ));
-        self.push_line(format!(
-            "var frac = {i_var} & {};",
-            bit_mask(frac_bits as u64)
-        ));
-
-        let sign = format!("(1 - {}(sign) * 2)", cast(f_ty));
-
-        self.push_line("if (expo == 0) {".to_string());
-        {
-            self.push_line("if (frac == 0) {".to_string());
-            // 0の場合
-            self.push_line(format!("{f_var} = sign == 0 ? 0f : -0f;"));
-            self.push_line("} else {".to_string());
-            // 非正規化数の場合
-            self.push_line(format!("{f_var} = ({f_ty})frac * {f_ty}.Epsilon * {sign};"));
-            self.push_line("}".to_string());
-        }
-        self.push_line(format!("}} else if (expo == {expo_bit_mask}) {{"));
-        {
-            self.push_line("if (frac == 0) {".to_string());
-            // 無限大の場合
-            self.push_line(format!(
-                "{f_var} = sign == 0 ? {f_ty}.PositiveInfinity : {f_ty}.NegativeInfinity;"
-            ));
-            self.push_line("} else {".to_string());
-            // NaNの場合
-            self.push_line(format!("{f_var} = {f_ty}.NaN;"));
-            self.push_line("}".to_string());
-        }
-        self.push_line("} else {".to_string());
-        {
-            // 浮動小数点数の変数に代入
-            let expo = format!(
-                "{class}.Pow(2, {}(expo) - {expo_offset})",
-                cast(CsType::Int)
-            );
-            let frac = format!("({}(frac) / {} + 1)", cast(f_ty), 1u64 << frac_bits);
-            self.push_line(format!("{f_var} = {frac} * {expo} * {sign};"));
-        }
-        self.push_line("}".to_string());
-
-        self.push_line("}".to_string());
-    }
-
-    fn visit_int_store(
-        &mut self,
-        memarg: MemArg,
-        mem_type: StorageType,
-    ) -> <Self as VisitOperator<'_>>::Output {
+    fn visit_store(&mut self, memarg: MemArg, name: &str) -> <Self as VisitOperator<'_>>::Output {
         let var = self.pop_stack();
         let idx = self.pop_stack();
 
-        self.int_store(memarg, mem_type, idx, var);
-
+        self.push_line(format!("{name}({idx} + {}, {var});", memarg.offset as i32));
         Ok(())
-    }
-
-    fn int_store(&mut self, memarg: MemArg, mem_type: StorageType, idx: Var, var: Var) {
-        use {StorageType::*, ValType::*};
-
-        let memory = &self.module.memory.as_ref().unwrap().name;
-        let cast_byte = cast(CsType::Byte);
-        self.push_line(match mem_type {
-            I8 => format!("{memory}[{0}+{1}]={cast_byte}({2}&0xff);", idx, memarg.offset, var),
-            I16 => {
-                format!(
-                    "{memory}[{0}+{1}]={cast_byte}({2}&0xff); {memory}[{0}+{1}+1]={cast_byte}(({2}>>8)&0xff);",
-                    idx, memarg.offset, var
-                )
-            }
-            Val(I32) => {
-                format!(
-                    "{memory}[{0}+{1}]={cast_byte}({2}&0xff); {memory}[{0}+{1}+1]={cast_byte}(({2}>>8)&0xff); {memory}[{0}+{1}+2]={cast_byte}(({2}>>16)&0xff); {memory}[{0}+{1}+3]={cast_byte}(({2}>>24)&0xff);",
-                    idx, memarg.offset, var
-                )
-            }
-            Val(I64) => {
-                format!(
-                    "{memory}[{0}+{1}]={cast_byte}({2}&0xff); {memory}[{0}+{1}+1]={cast_byte}(({2}>>8)&0xff); {memory}[{0}+{1}+2]={cast_byte}(({2}>>16)&0xff); {memory}[{0}+{1}+3]={cast_byte}(({2}>>24)&0xff); {memory}[{0}+{1}+4]={cast_byte}(({2}>>32)&0xff); {memory}[{0}+{1}+5]={cast_byte}(({2}>>40)&0xff); {memory}[{0}+{1}+6]={cast_byte}(({2}>>48)&0xff); {memory}[{0}+{1}+7]={cast_byte}(({2}>>56)&0xff);",
-                    idx, memarg.offset, var
-                )
-            }
-            _ => unreachable!(),
-        });
-    }
-
-    fn visit_float_store(
-        &mut self,
-        memarg: MemArg,
-        mem_type: CsType,
-    ) -> <Self as VisitOperator<'_>>::Output {
-        let var = self.pop_stack();
-        let idx = self.pop_stack();
-        let i_ty = ty_f_to_i(mem_type);
-        let i_var = self.code.new_var(i_ty);
-
-        self.float_to_bits(var, i_var);
-
-        self.int_store(memarg, StorageType::Val(i_ty.val_type()), idx, i_var);
-
-        Ok(())
-    }
-
-    fn float_to_bits(&mut self, f_var: Var, i_var: Var) {
-        let f_ty = f_var.ty;
-        let i_ty = i_var.ty;
-        let bits = get_int_bits(i_ty);
-        let frac_bits = get_frac_bits(f_ty);
-        let frac_bits_mask = bit_mask(frac_bits as u64);
-        let expo_bits = bits - 1 - frac_bits;
-        let expo_bit_mask = bit_mask(expo_bits as u64);
-        // LSBに寄せた後のビットマスク
-        let expo_offset = (1 << (expo_bits - 1)) - 1;
-        let class = self.math_class(f_ty);
-        let subnormal_bound = match f_ty {
-            CsType::Float => "1.1754944e-38f",
-            CsType::Double => "2.2250738585072014e-308",
-            _ => unreachable!(),
-        };
-
-        self.push_line("{".to_string());
-        self.push_line("bool sign;".to_string());
-        self.push_line(format!("{i_ty} expo;"));
-        self.push_line(format!("{i_ty} frac;"));
-        self.push_line(format!("var absVar = {class}.Abs({f_var});"));
-
-        let cast_i_ty = cast(i_ty);
-
-        self.push_line(format!("if ({f_var} == 0) {{"));
-        {
-            // 0の場合
-            // 1/0を計算することで+0と-0を区別
-            self.push_line(format!("sign = 1 / {f_var} < 0;"));
-            self.push_line("expo = 0;".to_string());
-            self.push_line("frac = 0;".to_string());
-        }
-        self.push_line(format!("}} else if ({f_ty}.IsInfinity({f_var})) {{"));
-        {
-            // 無限大の場合
-            self.push_line(format!("sign = {f_var} < 0;"));
-            self.push_line(format!("expo = {expo_bit_mask};"));
-            self.push_line("frac = 0;".to_string());
-        }
-        self.push_line(format!("}} else if ({f_ty}.IsNaN({f_var})) {{"));
-        {
-            // NaNの場合
-            self.push_line("sign = true;".to_string());
-            self.push_line(format!("expo = {expo_bit_mask};"));
-            // MSBだけが1
-            self.push_line(format!("frac = {};", 1u64 << (frac_bits - 1)));
-        }
-        self.push_line(format!("}} else if (absVar < {subnormal_bound}) {{",));
-        {
-            // 非正規化数の場合
-            self.push_line(format!("sign = {f_var} < 0;"));
-            self.push_line("expo = 0;".to_string());
-            self.push_line(format!(
-                "frac = {cast_i_ty}({class}.Abs({f_var}) / {f_ty}.Epsilon);"
-            ));
-        }
-        self.push_line("} else {".to_string());
-        {
-            self.push_line(format!("sign = {f_var} < 0;"));
-            self.push_line(format!(
-                "var expoF = {class}.Floor({class}.Log(absVar, 2));"
-            ));
-            self.push_line(format!("if (expoF >= {}) {{", expo_offset + 1));
-            {
-                // Log2の誤差で無限大になった場合
-                self.push_line(format!("expo = {};", expo_bit_mask - 1));
-                self.push_line(format!("frac = {frac_bits_mask};"));
-            }
-            self.push_line("} else {".to_string());
-            {
-                // 通常の浮動小数点数の場合
-                self.push_line(format!("expo = {cast_i_ty}(expoF) + {expo_offset};"));
-                self.push_line(format!(
-                    "frac = {cast_i_ty}((absVar / {class}.Pow(2, expoF) - 1) * {});",
-                    1u64 << frac_bits
-                ));
-            }
-            self.push_line("}".to_string());
-        }
-        self.push_line("}".to_string());
-
-        self.push_line(format!(
-            "{i_var} = ({cast_i_ty}(sign) << {}) | (expo << {frac_bits}) | frac;",
-            bits - 1
-        ));
-
-        self.push_line("}".to_string());
     }
 
     fn visit_const(
@@ -540,7 +262,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_eqz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(CsType::Int);
 
-        self.push_line(format!("{result} = {}({opnd} == 0);", cast(result.ty)));
+        self.push_line(format!("{result} = {}({opnd} == 0);", result.ty.cast()));
         Ok(())
     }
 
@@ -566,7 +288,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         if signed {
             if logical {
-                self.push_line(format!("{result} = {}({lhs} {op} {rhs});", cast(result.ty)));
+                self.push_line(format!(
+                    "{result} = {}({lhs} {op} {rhs});",
+                    result.ty.cast()
+                ));
             } else {
                 self.push_line(format!("{result} = {lhs} {op} {rhs};"));
             }
@@ -582,7 +307,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             self.push_line(format!("{tmp} = {lhs_u} {op} {rhs_u};"));
 
             if logical {
-                self.push_line(format!("{result} = {}({tmp});", cast(result.ty)));
+                self.push_line(format!("{result} = {}({tmp});", result.ty.cast()));
             } else {
                 self.cast_sign(tmp, result);
             }
@@ -611,10 +336,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     }
 
     fn cast_sign(&mut self, opnd: Var, result: Var) {
-        let bits = get_int_bits(result.ty);
+        let bits = result.ty.int_bits();
         let only_msb = 1u64 << (bits - 1);
         let except_msb = only_msb - 1;
-        let cast_ty = cast(result.ty);
+        let cast_ty = result.ty.cast();
 
         if result.ty.signed() {
             self.push_line(format!("{result} = {opnd} >= {only_msb} ? {cast_ty}({opnd} - {only_msb}) | (-{except_msb} - 1) : {cast_ty}({opnd});"));
@@ -643,7 +368,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     }
 
     fn shr_u(&mut self, lhs: Var, rhs_int: Var, result: impl fmt::Display) {
-        let bits = get_int_bits(lhs.ty);
+        let bits = lhs.ty.int_bits();
         let only_msb = 1u64 << (bits - 1);
         let except_msb = only_msb - 1;
 
@@ -656,7 +381,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_rot_op(&mut self, right: bool) -> <Self as VisitOperator<'_>>::Output {
         let (lhs, rhs, result) = self.bin_op_vars_auto_ty();
 
-        let bits = get_int_bits(lhs.ty);
+        let bits = lhs.ty.int_bits();
 
         let rhs_int = if rhs.ty == CsType::Int {
             rhs
@@ -683,7 +408,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_clz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let bits = get_int_bits(opnd.ty);
+        let bits = opnd.ty.int_bits();
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
         let cast_ty = cast_from(CsType::Int, opnd.ty);
@@ -697,7 +422,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_ctz(&mut self) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars_auto_ty();
 
-        let bits = get_int_bits(opnd.ty);
+        let bits = opnd.ty.int_bits();
 
         self.push_line(format!("if ({opnd} == 0) {result} = {bits};"));
         let cast_ty = cast_from(CsType::Int, opnd.ty);
@@ -736,7 +461,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!(
             "{result} = {}.{func}({opnd});",
-            self.math_class(opnd.ty)
+            self.module.math_class(opnd.ty)
         ));
         Ok(())
     }
@@ -746,7 +471,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!(
             "{result} = {}.{func}({lhs}, {rhs});",
-            self.math_class(lhs.ty)
+            self.module.math_class(lhs.ty)
         ));
         Ok(())
     }
@@ -756,14 +481,14 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
         self.push_line(format!(
             "{result} = {0}.Abs({lhs}) * (({rhs} == 0 ? 1 / {rhs} : {rhs}) > 0 ? 1 : -1);",
-            self.math_class(lhs.ty)
+            self.module.math_class(lhs.ty)
         ));
         Ok(())
     }
 
     fn visit_cast(&mut self, result_ty: CsType) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(result_ty);
-        let cast_ty = cast(result_ty);
+        let cast_ty = result_ty.cast();
 
         self.push_line(format!("{result} = {cast_ty}({opnd});"));
         Ok(())
@@ -772,7 +497,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn wrap(&mut self, opnd: Var, result: Var) {
         self.push_line(format!(
             "{result} = {}({opnd} & 0x7fffffff);",
-            cast(CsType::Int)
+            CsType::Int.cast()
         ));
         self.push_line(format!(
             "if (({opnd} & 0x80000000) != 0) {result} |= -0x7fffffff - 1;"
@@ -793,7 +518,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         ));
 
         if signed {
-            let cast_ty = cast(result_ty);
+            let cast_ty = result_ty.cast();
             self.push_line(format!("{result} = {cast_ty}({tmp});"));
         } else {
             self.cast_sign(tmp, result);
@@ -803,7 +528,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn visit_cast_extend(&mut self, signed: bool) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(CsType::Long);
-        let cast_ty = cast(CsType::Long);
+        let cast_ty = CsType::Long.cast();
 
         if signed {
             self.push_line(format!("{result} = {cast_ty}({opnd});"));
@@ -820,11 +545,11 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     ) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(result_ty);
 
-        let cast_ty = cast(result_ty);
+        let cast_ty = result_ty.cast();
         if signed {
             self.push_line(format!("{result} = {cast_ty}({opnd});"));
         } else {
-            let bits = get_int_bits(opnd.ty);
+            let bits = opnd.ty.int_bits();
             let only_msb = 1u64 << (bits - 1);
 
             self.push_line(format!(
@@ -846,20 +571,6 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             _ => {
                 panic!("Multiple return values are not supported")
             }
-        }
-    }
-
-    fn math_class(&self, ty: CsType) -> &'static str {
-        match ty {
-            CsType::Float => {
-                if self.module.test {
-                    "MathF"
-                } else {
-                    "Mathf"
-                }
-            }
-            CsType::Double => "Math",
-            _ => panic!("Specify float type as argument"),
         }
     }
 }
@@ -1137,95 +848,95 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i32_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Int, StorageType::Val(ValType::I32), false)
+        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD)
     }
 
     fn visit_i64_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Long, StorageType::Val(ValType::I64), false)
+        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD)
     }
 
     fn visit_f32_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_float_load(memarg, CsType::Float)
+        self.visit_load(memarg, CsType::Float, builtin_func::F32_LOAD)
     }
 
     fn visit_f64_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_float_load(memarg, CsType::Double)
+        self.visit_load(memarg, CsType::Double, builtin_func::F64_LOAD)
     }
 
     fn visit_i32_load8_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Int, StorageType::I8, true)
+        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD8_S)
     }
 
     fn visit_i32_load8_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Int, StorageType::I8, false)
+        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD8_U)
     }
 
     fn visit_i32_load16_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Int, StorageType::I16, true)
+        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD16_S)
     }
 
     fn visit_i32_load16_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Int, StorageType::I16, false)
+        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD16_U)
     }
 
     fn visit_i64_load8_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Long, StorageType::I8, true)
+        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD8_S)
     }
 
     fn visit_i64_load8_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Long, StorageType::I8, false)
+        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD8_U)
     }
 
     fn visit_i64_load16_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Long, StorageType::I16, true)
+        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD16_S)
     }
 
     fn visit_i64_load16_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Long, StorageType::I16, false)
+        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD16_U)
     }
 
     fn visit_i64_load32_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Long, StorageType::Val(ValType::I32), true)
+        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD32_S)
     }
 
     fn visit_i64_load32_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_load(memarg, CsType::Long, StorageType::Val(ValType::I32), false)
+        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD32_U)
     }
 
     fn visit_i32_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_store(memarg, StorageType::Val(ValType::I32))
+        self.visit_store(memarg, builtin_func::I32_STORE)
     }
 
     fn visit_i64_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_store(memarg, StorageType::Val(ValType::I64))
+        self.visit_store(memarg, builtin_func::I64_STORE)
     }
 
     fn visit_f32_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_float_store(memarg, CsType::Float)
+        self.visit_store(memarg, builtin_func::F32_STORE)
     }
 
     fn visit_f64_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_float_store(memarg, CsType::Double)
+        self.visit_store(memarg, builtin_func::F64_STORE)
     }
 
     fn visit_i32_store8(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_store(memarg, StorageType::I8)
+        self.visit_store(memarg, builtin_func::I32_STORE8)
     }
 
     fn visit_i32_store16(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_store(memarg, StorageType::I16)
+        self.visit_store(memarg, builtin_func::I32_STORE16)
     }
 
     fn visit_i64_store8(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_store(memarg, StorageType::I8)
+        self.visit_store(memarg, builtin_func::I64_STORE8)
     }
 
     fn visit_i64_store16(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_store(memarg, StorageType::I16)
+        self.visit_store(memarg, builtin_func::I64_STORE16)
     }
 
     fn visit_i64_store32(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_int_store(memarg, StorageType::Val(ValType::I32))
+        self.visit_store(memarg, builtin_func::I64_STORE32)
     }
 
     fn visit_memory_size(&mut self, mem: u32, mem_byte: u8) -> Self::Output {
@@ -1610,8 +1321,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let (opnd, result) = self.un_op_vars_auto_ty();
         self.push_line(format!(
             "{result} = {}(Math.Truncate({}({opnd})));",
-            cast(CsType::Float),
-            cast(CsType::Double)
+            CsType::Float.cast(),
+            CsType::Double.cast()
         ));
         Ok(())
     }
@@ -1796,25 +1507,37 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_i32_reinterpret_f32(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Int);
-        self.float_to_bits(opnd, result);
+        self.push_line(format!(
+            "{result} = {}({opnd});",
+            builtin_func::I32_REINTERPRET_F32
+        ));
         Ok(())
     }
 
     fn visit_i64_reinterpret_f64(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Long);
-        self.float_to_bits(opnd, result);
+        self.push_line(format!(
+            "{result} = {}({opnd});",
+            builtin_func::I64_REINTERPRET_F64
+        ));
         Ok(())
     }
 
     fn visit_f32_reinterpret_i32(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Float);
-        self.bits_to_float(opnd, result);
+        self.push_line(format!(
+            "{result} = {}({opnd});",
+            builtin_func::F32_REINTERPRET_I32
+        ));
         Ok(())
     }
 
     fn visit_f64_reinterpret_i64(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Double);
-        self.bits_to_float(opnd, result);
+        self.push_line(format!(
+            "{result} = {}({opnd});",
+            builtin_func::F64_REINTERPRET_I64
+        ));
         Ok(())
     }
 }
@@ -1825,48 +1548,10 @@ pub enum OperatorError {
     NotSupported(&'static str),
 }
 
-fn ty_f_to_i(ty: CsType) -> CsType {
-    match ty {
-        CsType::Float => CsType::Int,
-        CsType::Double => CsType::Long,
-        _ => panic!("Specify float type as argument"),
-    }
-}
-
-fn get_int_bits(ty: CsType) -> u32 {
-    match ty {
-        CsType::Int | CsType::UInt => i32::BITS,
-        CsType::Long | CsType::ULong => i64::BITS,
-        _ => panic!("Specify integer type as argument"),
-    }
-}
-
-fn get_frac_bits(ty: CsType) -> u32 {
-    match ty {
-        CsType::Float => f32::MANTISSA_DIGITS - 1,
-        CsType::Double => f64::MANTISSA_DIGITS - 1,
-        _ => panic!("Specify float type as argument"),
-    }
-}
-
-fn cast(ty: CsType) -> &'static str {
-    match ty {
-        CsType::Void => panic!("Unsupported conversion"),
-        CsType::Bool => "Convert.ToBoolean",
-        CsType::Byte => "Convert.ToByte",
-        CsType::Int => "Convert.ToInt32",
-        CsType::UInt => "Convert.ToUInt32",
-        CsType::Long => "Convert.ToInt64",
-        CsType::ULong => "Convert.ToUInt64",
-        CsType::Float => "Convert.ToSingle",
-        CsType::Double => "Convert.ToDouble",
-    }
-}
-
 fn cast_from(from: CsType, to: CsType) -> &'static str {
     if from == to {
         ""
     } else {
-        cast(to)
+        to.cast()
     }
 }
