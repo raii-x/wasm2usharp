@@ -485,10 +485,11 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         }
         if let Some(start_func) = self.module.start_func {
             // start関数の呼び出し
-            code.instrs.push(Instr::Line(format!(
-                "{}();",
-                self.module.all_funcs[start_func].header.name
-            )));
+            code.instrs.push(Instr::Call {
+                func: start_func,
+                params: vec![],
+                result: None,
+            });
         }
 
         self.module.all_funcs.push(Func {
