@@ -191,6 +191,13 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         locals.chain(stack_vars).collect()
     }
 
+    fn get_save_loop_vars(&self) -> Vec<usize> {
+        self.blocks
+            .iter()
+            .filter_map(|block| block.loop_var)
+            .collect()
+    }
+
     fn visit_load(
         &mut self,
         memarg: MemArg,
@@ -743,6 +750,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         params.reverse();
 
         let save_vars = self.get_save_vars();
+        let save_loop_vars = self.get_save_loop_vars();
 
         let result = self.get_result(&ty);
 
@@ -752,6 +760,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
             result,
             recursive: false,
             save_vars,
+            save_loop_vars,
         });
         Ok(())
     }
@@ -775,6 +784,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         params.reverse();
 
         let save_vars = self.get_save_vars();
+        let save_loop_vars = self.get_save_loop_vars();
 
         let result = self.get_result(&ty);
 
@@ -784,6 +794,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
             result,
             recursive: false,
             save_vars,
+            save_loop_vars,
         });
         Ok(())
     }

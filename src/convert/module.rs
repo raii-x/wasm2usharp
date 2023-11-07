@@ -399,6 +399,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                     result,
                     recursive: false,
                     save_vars: vec![],
+                    save_loop_vars: vec![],
                 });
 
                 match result {
@@ -496,6 +497,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 result: None,
                 recursive: false,
                 save_vars: vec![],
+                save_loop_vars: vec![],
             });
         }
 

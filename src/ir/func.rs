@@ -168,6 +168,7 @@ pub enum Instr {
         result: Option<Var>,
         recursive: bool,
         save_vars: Vec<Var>,
+        save_loop_vars: Vec<usize>,
     },
 }
 
@@ -181,6 +182,7 @@ impl Instr {
                 result,
                 recursive,
                 save_vars,
+                save_loop_vars,
             } => {
                 if *recursive {
                     // ローカル変数保存用のスタックにプッシュ
@@ -218,6 +220,11 @@ impl Instr {
                             write!(f, " + {i}")?;
                         }
                         writeln!(f, "];")?;
+                    }
+
+                    // ループ変数を元に戻す
+                    for i in save_loop_vars {
+                        writeln!(f, "{LOOP}{i} = true;")?;
                     }
                 }
 
