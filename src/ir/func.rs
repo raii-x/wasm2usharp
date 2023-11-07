@@ -3,12 +3,13 @@ use std::{fmt, io};
 use num_traits::Float;
 use wasmparser::FuncType;
 
+use crate::ir::{STACK, STACK_TOP};
+
 use super::{func_header, module::Module, result_cs_ty, ty::CsType, BREAK_DEPTH, LOOP};
 
 pub struct Func {
     pub header: FuncHeader,
     pub code: Option<Code>,
-    pub recursive: bool,
     pub in_table: bool,
 }
 
@@ -16,10 +17,6 @@ impl Func {
     pub fn write(&self, f: &mut dyn io::Write, module: &Module<'_>) -> io::Result<()> {
         // 関数ヘッダ
         let func_ty = self.header.ty.clone();
-
-        if !module.test && self.recursive {
-            write!(f, "[RecursiveMethod] ")?;
-        }
 
         if self.header.export {
             write!(f, "public ")?;
@@ -213,6 +210,8 @@ pub enum Instr {
         func: usize,
         params: Vec<Expr>,
         result: Option<Var>,
+        recursive: bool,
+        save_vars: Vec<Var>,
     },
 }
 
@@ -224,7 +223,21 @@ impl Instr {
                 func,
                 params,
                 result,
+                recursive,
+                save_vars,
             } => {
+                if *recursive {
+                    // ローカル変数保存用のスタックにプッシュ
+                    for (i, &var) in save_vars.iter().enumerate() {
+                        write!(f, "{STACK}[{STACK_TOP}")?;
+                        if i != 0 {
+                            write!(f, " + {i}")?;
+                        }
+                        writeln!(f, "] = {var};")?;
+                    }
+                    writeln!(f, "{STACK_TOP} += {};", save_vars.len())?;
+                }
+
                 if let Some(result) = result {
                     write!(f, "{result} = ")?;
                 }
@@ -238,7 +251,21 @@ impl Instr {
                     .join(", ");
                 write!(f, "{params}")?;
 
-                writeln!(f, ");")
+                writeln!(f, ");")?;
+
+                if *recursive {
+                    writeln!(f, "{STACK_TOP} -= {};", save_vars.len())?;
+                    // ローカル変数保存用のスタックからポップ
+                    for (i, &var) in save_vars.iter().enumerate() {
+                        write!(f, "{var} = ({}){STACK}[{STACK_TOP}", var.ty)?;
+                        if i != 0 {
+                            write!(f, " + {i}")?;
+                        }
+                        writeln!(f, "];")?;
+                    }
+                }
+
+                Ok(())
             }
         }
     }

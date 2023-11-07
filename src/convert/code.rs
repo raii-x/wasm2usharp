@@ -36,6 +36,7 @@ pub struct CodeConverter<'input, 'module> {
     func: usize,
     blocks: Vec<Block>,
     code: Code,
+    local_count: usize,
     /// brの後など、到達不可能なコードの処理時に1加算。
     /// unreachableが1以上の場合のブロックの出現ごとに1加算。
     /// ブロックの終了時に1減算。
@@ -51,12 +52,14 @@ struct Block {
 
 impl<'input, 'module> CodeConverter<'input, 'module> {
     pub(super) fn new(module: &'module Module<'input>, func: usize) -> Self {
-        let code = Code::new(&module.all_funcs[func].header);
+        let header = &module.all_funcs[func].header;
+        let code = Code::new(header);
         Self {
             module,
             func,
             blocks: Vec::new(),
             code,
+            local_count: header.ty.params().len(),
             unreachable: 0,
         }
     }
@@ -71,6 +74,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             for _ in 0..count {
                 self.code.new_var(CsType::get(ty));
             }
+            self.local_count += count as usize;
         }
 
         let blockty = {
@@ -164,6 +168,21 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
 
     fn last_stack(&self) -> Expr {
         *self.blocks.last().unwrap().stack.last().unwrap()
+    }
+
+    fn get_save_vars(&self) -> Vec<Var> {
+        let locals = self.code.vars[0..self.local_count].iter().copied();
+
+        let stack_vars = self.blocks.iter().flat_map(|block| {
+            block.stack.iter().filter_map(|&expr| match expr {
+                Expr::Var(x) => Some(x),
+                Expr::Const(_) => None,
+            })
+        });
+
+        // TODO: ループ変数を追加
+
+        locals.chain(stack_vars).collect()
     }
 
     fn visit_load(
@@ -717,12 +736,16 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let mut params: Vec<Expr> = ty.params().iter().map(|_| self.pop_stack()).collect();
         params.reverse();
 
+        let save_vars = self.get_save_vars();
+
         let result = self.get_result(&ty);
 
         self.code.instrs.push(Instr::Call {
             func: index,
             params,
             result,
+            recursive: false,
+            save_vars,
         });
         Ok(())
     }
@@ -745,12 +768,16 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
             .collect();
         params.reverse();
 
+        let save_vars = self.get_save_vars();
+
         let result = self.get_result(&ty);
 
         self.code.instrs.push(Instr::Call {
             func: index,
             params,
             result,
+            recursive: false,
+            save_vars,
         });
         Ok(())
     }

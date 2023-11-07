@@ -243,7 +243,6 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 export: false,
             },
             code: None,
-            recursive: true,
             in_table: false,
         };
 
@@ -398,6 +397,8 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                     func: i,
                     params: call_params.clone(),
                     result,
+                    recursive: false,
+                    save_vars: vec![],
                 });
 
                 match result {
@@ -443,7 +444,6 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             let func = Func {
                 header,
                 code: Some(code),
-                recursive: true,
                 in_table: false,
             };
 
@@ -494,13 +494,14 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 func: start_func,
                 params: vec![],
                 result: None,
+                recursive: false,
+                save_vars: vec![],
             });
         }
 
         self.module.all_funcs.push(Func {
             header,
             code: Some(code),
-            recursive: false,
             in_table: false,
         });
     }

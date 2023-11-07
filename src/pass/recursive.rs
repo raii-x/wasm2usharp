@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::ir::{func::Instr, module::Module};
 
 use petgraph::{algo::tarjan_scc, graph::Graph};
@@ -5,8 +7,6 @@ use petgraph::{algo::tarjan_scc, graph::Graph};
 /// 関数のコールグラフがサイクルを含むか判定し、
 /// 含むなら関数のrecursiveをtrue、含まないならfalseにする
 pub fn recursive(module: &mut Module<'_>) {
-    let mut recursives = vec![false; module.all_funcs.len()];
-
     // 関数呼び出しに対応するグラフ
     let mut graph = Graph::<(), ()>::new();
 
@@ -16,16 +16,11 @@ pub fn recursive(module: &mut Module<'_>) {
         .collect::<Vec<_>>();
 
     // 関数呼び出しに対応するエッジを追加
-    for (i_caller, caller) in module.all_funcs.iter().enumerate() {
-        if let Some(code) = &caller.code {
-            for instr in &code.instrs {
+    for (i_caller, caller) in module.all_funcs.iter_mut().enumerate() {
+        if let Some(code) = &mut caller.code {
+            for instr in &mut code.instrs {
                 if let Instr::Call { func, .. } = instr {
-                    if *func == i_caller {
-                        // 自身を再帰的に呼び出すならrecursiveとする
-                        recursives[i_caller] = true;
-                    } else {
-                        graph.add_edge(nodes[i_caller], nodes[*func], ());
-                    }
+                    graph.add_edge(nodes[i_caller], nodes[*func], ());
                 }
             }
         }
@@ -35,15 +30,21 @@ pub fn recursive(module: &mut Module<'_>) {
     let scc = tarjan_scc(&graph);
 
     for nodes in scc {
-        if nodes.len() >= 2 {
-            // 強連結成分のノード数が2以上ならrecursiveとする
-            for node in nodes {
-                recursives[node.index()] = true;
+        let nodes_set: HashSet<usize> = HashSet::from_iter(nodes.iter().map(|x| x.index()));
+        for node in nodes {
+            if let Some(code) = &mut module.all_funcs[node.index()].code {
+                for instr in &mut code.instrs {
+                    if let Instr::Call {
+                        func, recursive, ..
+                    } = instr
+                    {
+                        if nodes_set.contains(func) {
+                            // 同じ強連結成分に含まれる関数の呼び出しをrecursiveとする
+                            *recursive = true;
+                        }
+                    }
+                }
             }
         }
-    }
-
-    for (i, rec) in recursives.into_iter().enumerate() {
-        module.all_funcs[i].recursive = rec;
     }
 }

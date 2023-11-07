@@ -185,7 +185,6 @@ fn add_func<'a>(
     let func = Func {
         header,
         code: Some(code),
-        recursive: false,
         in_table: false,
     };
 

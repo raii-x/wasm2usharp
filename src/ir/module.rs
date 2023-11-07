@@ -2,6 +2,8 @@ use std::{collections::HashMap, io};
 
 use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
+use crate::ir::{STACK, STACK_SIZE, STACK_TOP};
+
 use super::{func::Func, ty::CsType, DATA, ELEMENT, PAGE_SIZE};
 
 pub struct Module<'input> {
@@ -152,6 +154,10 @@ impl<'input> Module<'input> {
                 )?;
             }
         }
+
+        // 再帰呼び出しで保存するローカル変数用のスタック
+        writeln!(f, "object[] {STACK} = new object[{STACK_SIZE}];")?;
+        writeln!(f, "int {STACK_TOP} = 0;")?;
 
         writeln!(f, "}}")?;
 
