@@ -5,10 +5,10 @@ use wasmparser::{
 };
 
 use crate::ir::{
-    func::{Code, Const, Expr, Instr, Var},
+    func::{Code, Expr, Instr, Var},
     module::Module,
     trap,
-    ty::CsType,
+    ty::{Const, CsType},
     BREAK_DEPTH, LOOP, PAGE_SIZE,
 };
 
@@ -72,7 +72,8 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         for local in body.get_locals_reader()? {
             let (count, ty) = local?;
             for _ in 0..count {
-                self.code.new_var(CsType::get(ty));
+                let cs_ty = CsType::get(ty);
+                self.code.new_var(cs_ty, Some(cs_ty.default()));
             }
             self.local_count += count as usize;
         }
@@ -114,7 +115,10 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn new_block(&mut self, blockty: BlockType, is_loop: bool) -> &Block {
         let result = match blockty {
             BlockType::Empty => None,
-            BlockType::Type(ty) => Some(self.code.new_var(CsType::get(ty))),
+            BlockType::Type(ty) => {
+                let cs_ty = CsType::get(ty);
+                Some(self.code.new_var(cs_ty, Some(cs_ty.default())))
+            }
             BlockType::FuncType(..) => panic!("func type blocks are not supported"),
         };
 
@@ -171,7 +175,9 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     }
 
     fn get_save_vars(&self) -> Vec<Var> {
-        let locals = self.code.vars[0..self.local_count].iter().copied();
+        let locals = self.code.var_decls[0..self.local_count]
+            .iter()
+            .map(|x| x.var);
 
         let stack_vars = self.blocks.iter().flat_map(|block| {
             block.stack.iter().filter_map(|&expr| match expr {
@@ -192,7 +198,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         name: &str,
     ) -> <Self as VisitOperator<'_>>::Output {
         let idx = self.pop_stack();
-        let result = self.code.new_var(ty);
+        let result = self.code.new_var(ty, None);
         self.push_stack(result.into());
 
         self.push_line(if memarg.offset == 0 {
@@ -218,7 +224,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     /// (opnd, result)を返す
     fn un_op_vars(&mut self, result_ty: CsType) -> (Expr, Var) {
         let opnd = self.pop_stack();
-        let result = self.code.new_var(result_ty);
+        let result = self.code.new_var(result_ty, None);
         self.push_stack(result.into());
 
         (opnd, result)
@@ -227,7 +233,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     /// (opnd, result)を返し、opndの型をresultの型とする
     fn un_op_vars_auto_ty(&mut self) -> (Expr, Var) {
         let opnd = self.pop_stack();
-        let result = self.code.new_var(opnd.ty());
+        let result = self.code.new_var(opnd.ty(), None);
         self.push_stack(result.into());
 
         (opnd, result)
@@ -237,7 +243,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn bin_op_vars_auto_ty(&mut self) -> (Expr, Expr, Var) {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.code.new_var(lhs.ty());
+        let result = self.code.new_var(lhs.ty(), None);
         self.push_stack(result.into());
 
         (lhs, rhs, result)
@@ -267,7 +273,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let lhs = self.pop_stack();
         let result = self
             .code
-            .new_var(if logical { CsType::Int } else { lhs.ty() });
+            .new_var(if logical { CsType::Int } else { lhs.ty() }, None);
         self.push_stack(result.into());
 
         if signed {
@@ -280,11 +286,11 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
                 self.push_line(format!("{result} = {lhs} {op} {rhs};"));
             }
         } else {
-            let lhs_u = self.code.new_var(lhs.ty().to_unsigned());
-            let rhs_u = self.code.new_var(rhs.ty().to_unsigned());
+            let lhs_u = self.code.new_var(lhs.ty().to_unsigned(), None);
+            let rhs_u = self.code.new_var(rhs.ty().to_unsigned(), None);
             let tmp = self
                 .code
-                .new_var(if logical { CsType::Bool } else { lhs_u.ty });
+                .new_var(if logical { CsType::Bool } else { lhs_u.ty }, None);
 
             self.cast_sign(lhs, lhs_u);
             self.cast_sign(rhs, rhs_u);
@@ -306,9 +312,9 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         if signed {
             self.push_line(format!("{result} = {lhs} - {lhs} / {rhs} * {rhs};"));
         } else {
-            let lhs_u = self.code.new_var(lhs.ty().to_unsigned());
-            let rhs_u = self.code.new_var(rhs.ty().to_unsigned());
-            let tmp = self.code.new_var(lhs_u.ty);
+            let lhs_u = self.code.new_var(lhs.ty().to_unsigned(), None);
+            let rhs_u = self.code.new_var(rhs.ty().to_unsigned(), None);
+            let tmp = self.code.new_var(lhs_u.ty, None);
 
             self.cast_sign(lhs, lhs_u);
             self.cast_sign(rhs, rhs_u);
@@ -338,7 +344,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let rhs_int = if rhs.ty() == CsType::Int {
             rhs
         } else {
-            let rhs_int = self.code.new_var(CsType::Int);
+            let rhs_int = self.code.new_var(CsType::Int, None);
             self.wrap(rhs, rhs_int);
             rhs_int.into()
         };
@@ -370,15 +376,15 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let rhs_int = if rhs.ty() == CsType::Int {
             rhs
         } else {
-            let rhs_int = self.code.new_var(CsType::Int);
+            let rhs_int = self.code.new_var(CsType::Int, None);
             self.wrap(rhs, rhs_int);
             rhs_int.into()
         };
 
-        let bits_m_rhs = self.code.new_var(CsType::Int);
+        let bits_m_rhs = self.code.new_var(CsType::Int, None);
         self.push_line(format!("{bits_m_rhs} = {bits} - {rhs_int};"));
 
-        let shr = self.code.new_var(lhs.ty());
+        let shr = self.code.new_var(lhs.ty(), None);
         if right {
             self.shr_u(lhs, rhs_int, shr);
             self.push_line(format!("{result} = {shr} | ({lhs} << {bits_m_rhs});"));
@@ -494,7 +500,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         signed: bool,
     ) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(result_ty);
-        let tmp = self.code.new_var(CsType::Double);
+        let tmp = self.code.new_var(CsType::Double, None);
 
         self.push_line(format!(
             "{tmp} = Math.Truncate({}({opnd}));",
@@ -548,7 +554,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         match ty.results().len() {
             0 => None,
             1 => {
-                let var = self.code.new_var(CsType::get(ty.results()[0]));
+                let var = self.code.new_var(CsType::get(ty.results()[0]), None);
                 self.push_stack(var.into());
                 Some(var)
             }
@@ -792,7 +798,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let val2 = self.pop_stack();
         let val1 = self.pop_stack();
 
-        let select = self.code.new_var(val1.ty());
+        let select = self.code.new_var(val1.ty(), None);
         self.push_stack(select.into());
 
         self.push_line(format!("{select} = {c} != 0 ? {val1} : {val2};"));
@@ -801,8 +807,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_local_get(&mut self, local_index: u32) -> Self::Output {
-        let local = self.code.vars[local_index as usize];
-        let var = self.code.new_var(local.ty);
+        let local = self.code.var_decls[local_index as usize].var;
+        let var = self.code.new_var(local.ty, None);
         self.push_stack(var.into());
 
         self.push_line(format!("{var} = {local};"));
@@ -810,21 +816,21 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_local_set(&mut self, local_index: u32) -> Self::Output {
-        let local = self.code.vars[local_index as usize];
+        let local = self.code.var_decls[local_index as usize].var;
         let var = self.pop_stack();
         self.push_line(format!("{local} = {var};"));
         Ok(())
     }
 
     fn visit_local_tee(&mut self, local_index: u32) -> Self::Output {
-        let local = self.code.vars[local_index as usize];
+        let local = self.code.var_decls[local_index as usize].var;
         self.push_line(format!("{local} = {};", self.last_stack()));
         Ok(())
     }
 
     fn visit_global_get(&mut self, global_index: u32) -> Self::Output {
         let global = &self.module.globals[global_index as usize];
-        let var = self.code.new_var(CsType::get(global.ty.content_type));
+        let var = self.code.new_var(CsType::get(global.ty.content_type), None);
         self.push_stack(var.into());
 
         self.push_line(format!("{var} = {};", global.name));
@@ -937,7 +943,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         }
         assert!(mem_byte == 0);
 
-        let var = self.code.new_var(CsType::Int);
+        let var = self.code.new_var(CsType::Int, None);
         self.push_stack(var.into());
 
         let memory = &self.module.memory.as_ref().unwrap().name;
@@ -953,7 +959,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         assert!(mem_byte == 0);
 
         let size = self.pop_stack();
-        let var = self.code.new_var(CsType::Int);
+        let var = self.code.new_var(CsType::Int, None);
         self.push_stack(var.into());
 
         let memory = &self.module.memory.as_ref().unwrap().name;

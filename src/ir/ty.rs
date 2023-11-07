@@ -1,5 +1,6 @@
 use std::fmt;
 
+use num_traits::Float;
 use wasmparser::ValType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,41 +53,55 @@ impl CsType {
         }
     }
 
-    pub fn to_i(&self) -> CsType {
+    pub fn to_i(&self) -> Self {
         match self {
-            CsType::Float => CsType::Int,
-            CsType::Double => CsType::Long,
+            Self::Float => Self::Int,
+            Self::Double => Self::Long,
             _ => panic!("Specify float type as argument"),
         }
     }
 
     pub fn int_bits(&self) -> u32 {
         match self {
-            CsType::Int | CsType::UInt => i32::BITS,
-            CsType::Long | CsType::ULong => i64::BITS,
+            Self::Int | Self::UInt => i32::BITS,
+            Self::Long | Self::ULong => i64::BITS,
             _ => panic!("Specify integer type as argument"),
         }
     }
 
     pub fn frac_bits(&self) -> u32 {
         match self {
-            CsType::Float => f32::MANTISSA_DIGITS - 1,
-            CsType::Double => f64::MANTISSA_DIGITS - 1,
+            Self::Float => f32::MANTISSA_DIGITS - 1,
+            Self::Double => f64::MANTISSA_DIGITS - 1,
             _ => panic!("Specify float type as argument"),
         }
     }
 
     pub fn cast(&self) -> &'static str {
         match self {
-            CsType::Void => panic!("Unsupported conversion"),
-            CsType::Bool => "Convert.ToBoolean",
-            CsType::Byte => "Convert.ToByte",
-            CsType::Int => "Convert.ToInt32",
-            CsType::UInt => "Convert.ToUInt32",
-            CsType::Long => "Convert.ToInt64",
-            CsType::ULong => "Convert.ToUInt64",
-            CsType::Float => "Convert.ToSingle",
-            CsType::Double => "Convert.ToDouble",
+            Self::Void => panic!("Unsupported conversion"),
+            Self::Bool => "Convert.ToBoolean",
+            Self::Byte => "Convert.ToByte",
+            Self::Int => "Convert.ToInt32",
+            Self::UInt => "Convert.ToUInt32",
+            Self::Long => "Convert.ToInt64",
+            Self::ULong => "Convert.ToUInt64",
+            Self::Float => "Convert.ToSingle",
+            Self::Double => "Convert.ToDouble",
+        }
+    }
+
+    pub fn default(&self) -> Const {
+        match self {
+            Self::Void => panic!("Unsupported type"),
+            Self::Bool => Const::Bool(false),
+            Self::Byte => Const::Byte(0),
+            Self::Int => Const::Int(0),
+            Self::UInt => Const::UInt(0),
+            Self::Long => Const::Long(0),
+            Self::ULong => Const::ULong(0),
+            Self::Float => Const::Float(0.),
+            Self::Double => Const::Double(0.),
         }
     }
 }
@@ -108,5 +123,71 @@ impl fmt::Display for CsType {
                 Self::Double => "double",
             }
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Const {
+    Bool(bool),
+    Byte(u8),
+    Int(i32),
+    UInt(u32),
+    Long(i64),
+    ULong(u64),
+    Float(f32),
+    Double(f64),
+}
+
+impl Const {
+    pub fn ty(&self) -> CsType {
+        match self {
+            Self::Bool(_) => CsType::Bool,
+            Self::Byte(_) => CsType::Byte,
+            Self::Int(_) => CsType::Int,
+            Self::UInt(_) => CsType::UInt,
+            Self::Long(_) => CsType::Long,
+            Self::ULong(_) => CsType::ULong,
+            Self::Float(_) => CsType::Float,
+            Self::Double(_) => CsType::Double,
+        }
+    }
+}
+
+impl fmt::Display for Const {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bool(x) => write!(f, "{}", x),
+            Self::Byte(x) => write!(f, "{}", x),
+            Self::Int(x) => match *x {
+                i32::MIN => write!(f, "({} - 1)", i32::MIN + 1),
+                _x => write!(f, "{}", _x),
+            },
+            Self::UInt(x) => write!(f, "{}u", x),
+            Self::Long(x) => match *x {
+                i64::MIN => write!(f, "({}L - 1L)", i64::MIN + 1),
+                _x => write!(f, "{}L", _x),
+            },
+            Self::ULong(x) => write!(f, "{}ul", x),
+            Self::Float(x) => {
+                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}f", *x))
+            }
+            Self::Double(x) => {
+                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}", *x))
+            }
+        }
+    }
+}
+
+fn fmt_float(value: impl Float, ty: CsType, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
+    if value.is_infinite() {
+        Some(if value.is_sign_positive() {
+            write!(f, "{ty}.PositiveInfinity")
+        } else {
+            write!(f, "{ty}.NegativeInfinity")
+        })
+    } else if value.is_nan() {
+        Some(write!(f, "{ty}.NaN"))
+    } else {
+        None
     }
 }

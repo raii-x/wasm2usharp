@@ -1,11 +1,16 @@
 use std::{fmt, io};
 
-use num_traits::Float;
 use wasmparser::FuncType;
 
 use crate::ir::{STACK, STACK_TOP};
 
-use super::{func_header, module::Module, result_cs_ty, ty::CsType, BREAK_DEPTH, LOOP};
+use super::{
+    func_header,
+    module::Module,
+    result_cs_ty,
+    ty::{Const, CsType},
+    BREAK_DEPTH, LOOP,
+};
 
 pub struct Func {
     pub header: FuncHeader,
@@ -28,7 +33,7 @@ impl Func {
             .params()
             .iter()
             .map(|&ty| CsType::get(ty))
-            .zip(code.vars.iter())
+            .zip(code.var_decls.iter().map(|x| &x.var))
             .collect();
         write!(
             f,
@@ -46,12 +51,11 @@ impl Func {
         }
 
         // 一時変数
-        for var in code.vars.iter().skip(func_ty.params().len()) {
-            let def_val = match var.ty {
-                CsType::Bool => "false",
-                _ => "0",
-            };
-            writeln!(f, "{} {var} = {def_val};", var.ty)?;
+        for decl in code.var_decls.iter().skip(func_ty.params().len()) {
+            match decl.default {
+                Some(def) => writeln!(f, "{} {} = {def};", decl.var.ty, decl.var)?,
+                None => writeln!(f, "{} {};", decl.var.ty, decl.var)?,
+            }
         }
 
         // 本体
@@ -73,7 +77,7 @@ pub struct FuncHeader {
 
 pub struct Code {
     pub instrs: Vec<Instr>,
-    pub vars: Vec<Var>,
+    pub var_decls: Vec<VarDecl>,
     pub loop_var_count: usize,
 }
 
@@ -81,25 +85,31 @@ impl Code {
     pub fn new(header: &FuncHeader) -> Self {
         let mut this = Self {
             instrs: Vec::new(),
-            vars: Vec::new(),
+            var_decls: Vec::new(),
             loop_var_count: 0,
         };
 
         for &ty in header.ty.params() {
-            this.new_var(CsType::get(ty));
+            this.new_var(CsType::get(ty), None);
         }
 
         this
     }
 
-    pub fn new_var(&mut self, ty: CsType) -> Var {
+    pub fn new_var(&mut self, ty: CsType, default: Option<Const>) -> Var {
         let var = Var {
-            index: self.vars.len(),
+            index: self.var_decls.len(),
             ty,
         };
-        self.vars.push(var);
+        self.var_decls.push(VarDecl { var, default });
         var
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VarDecl {
+    pub var: Var,
+    pub default: Option<Const>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -111,60 +121,6 @@ pub struct Var {
 impl fmt::Display for Var {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "var{}", self.index)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Const {
-    Int(i32),
-    Long(i64),
-    Float(f32),
-    Double(f64),
-}
-
-impl Const {
-    pub fn ty(&self) -> CsType {
-        match self {
-            Self::Int(_) => CsType::Int,
-            Self::Long(_) => CsType::Long,
-            Self::Float(_) => CsType::Float,
-            Self::Double(_) => CsType::Double,
-        }
-    }
-}
-
-impl fmt::Display for Const {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Int(x) => match *x {
-                i32::MIN => write!(f, "({} - 1)", i32::MIN + 1),
-                _x => write!(f, "{}", _x),
-            },
-            Self::Long(x) => match *x {
-                i64::MIN => write!(f, "({} - 1)", i64::MIN + 1),
-                _x => write!(f, "{}", _x),
-            },
-            Self::Float(x) => {
-                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}f", *x))
-            }
-            Self::Double(x) => {
-                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}", *x))
-            }
-        }
-    }
-}
-
-fn fmt_float(value: impl Float, ty: CsType, f: &mut fmt::Formatter<'_>) -> Option<fmt::Result> {
-    if value.is_infinite() {
-        Some(if value.is_sign_positive() {
-            write!(f, "{ty}.PositiveInfinity")
-        } else {
-            write!(f, "{ty}.NegativeInfinity")
-        })
-    } else if value.is_nan() {
-        Some(write!(f, "{ty}.NaN"))
-    } else {
-        None
     }
 }
 

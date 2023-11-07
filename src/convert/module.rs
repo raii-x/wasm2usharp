@@ -9,10 +9,10 @@ use wasmparser::{
 use crate::{
     convert::{builtin_func::add_builtin_funcs, code::CodeConverter},
     ir::{
-        func::{Code, Const, Expr, Func, FuncHeader, Instr},
+        func::{Code, Expr, Func, FuncHeader, Instr},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
-        ty::CsType,
+        ty::{Const, CsType},
         CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, TABLE, W2US_PREFIX,
     },
 };
@@ -360,7 +360,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             let table_name = &table.name;
             let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
 
-            let index_var = *code.vars.last().unwrap();
+            let index_var = code.var_decls.last().unwrap().var;
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
@@ -375,15 +375,15 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             )));
 
             // 関数呼び出し用の引数リスト
-            let call_params: Vec<Expr> = code.vars[0..code.vars.len() - 1]
+            let call_params: Vec<Expr> = code.var_decls[0..code.var_decls.len() - 1]
                 .iter()
-                .map(|&x| x.into())
+                .map(|x| x.var.into())
                 .collect();
 
             let result = if ty.results().is_empty() {
                 None
             } else {
-                Some(code.new_var(CsType::get(ty.results()[0])))
+                Some(code.new_var(CsType::get(ty.results()[0]), None))
             };
 
             for i in 0..self.module.wasm_func_count {

@@ -199,8 +199,15 @@ fn func_int_load(
     mem_type: StorageType,
     signed: bool,
 ) {
-    let result = code.new_var(CsType::get(results[0]));
-    int_load(module, code, mem_type, signed, code.vars[0], result);
+    let result = code.new_var(CsType::get(results[0]), None);
+    int_load(
+        module,
+        code,
+        mem_type,
+        signed,
+        code.var_decls[0].var,
+        result,
+    );
     push_line(code, format!("return {};", result));
 }
 
@@ -210,14 +217,14 @@ fn func_float_load(
     _params: Vec<ValType>,
     results: Vec<ValType>,
 ) {
-    let i_result = code.new_var(CsType::get(results[0]).to_i());
-    let f_result = code.new_var(CsType::get(results[0]));
+    let i_result = code.new_var(CsType::get(results[0]).to_i(), None);
+    let f_result = code.new_var(CsType::get(results[0]), None);
     int_load(
         module,
         code,
         StorageType::Val(i_result.ty.val_type()),
         false,
-        code.vars[0],
+        code.var_decls[0].var,
         i_result,
     );
     bits_to_float(module, code, i_result, f_result);
@@ -231,7 +238,13 @@ fn func_int_store(
     _results: Vec<ValType>,
     mem_type: StorageType,
 ) {
-    int_store(module, code, mem_type, code.vars[0], code.vars[1]);
+    int_store(
+        module,
+        code,
+        mem_type,
+        code.var_decls[0].var,
+        code.var_decls[1].var,
+    );
 }
 
 fn func_float_store(
@@ -240,13 +253,13 @@ fn func_float_store(
     _params: Vec<ValType>,
     _results: Vec<ValType>,
 ) {
-    let i_var = code.new_var(code.vars[1].ty.to_i());
-    float_to_bits(module, code, code.vars[1], i_var);
+    let i_var = code.new_var(code.var_decls[1].var.ty.to_i(), None);
+    float_to_bits(module, code, code.var_decls[1].var, i_var);
     int_store(
         module,
         code,
         StorageType::Val(i_var.ty.val_type()),
-        code.vars[0],
+        code.var_decls[0].var,
         i_var,
     );
 }
@@ -257,10 +270,10 @@ fn func_reinterpret(
     params: Vec<ValType>,
     results: Vec<ValType>,
 ) {
-    let result = code.new_var(CsType::get(results[0]));
+    let result = code.new_var(CsType::get(results[0]), None);
     match params[0] {
-        ValType::I32 | ValType::I64 => bits_to_float(module, code, code.vars[0], result),
-        ValType::F32 | ValType::F64 => float_to_bits(module, code, code.vars[0], result),
+        ValType::I32 | ValType::I64 => bits_to_float(module, code, code.var_decls[0].var, result),
+        ValType::F32 | ValType::F64 => float_to_bits(module, code, code.var_decls[0].var, result),
         _ => unreachable!(),
     }
     push_line(code, format!("return {};", result));
