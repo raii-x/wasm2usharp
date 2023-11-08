@@ -152,7 +152,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 self.module.start_func = Some(func as usize);
             }
             ElementSection(s) => {
-                for elem in s.into_iter() {
+                for elem in s {
                     let elem = elem?;
 
                     let offset_expr = match elem.kind {
@@ -181,7 +181,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 }
             }
             DataSection(s) => {
-                for data in s.into_iter() {
+                for data in s {
                     let data = data?;
                     let offset_expr = match data.kind {
                         DataKind::Active {
