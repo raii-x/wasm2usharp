@@ -2,8 +2,8 @@ use std::{collections::HashSet, iter::once};
 
 use anyhow::Result;
 use wasmparser::{
-    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, MemoryType, Parser,
-    RecGroup, StructuralType, TableType, ValType,
+    ConstExpr, DataKind, ElementItems, ElementKind, FuncType, GlobalType, MemoryType, Name,
+    NameSectionReader, Naming, Parser, RecGroup, StructuralType, TableType, ValType,
 };
 
 use crate::{
@@ -215,9 +215,12 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
                 self.code_idx += 1;
             }
-            _other => {
-                // println!("found payload {:?}", _other);
+            CustomSection(s) => {
+                if s.name() == "name" {
+                    self.apply_names(s)?;
+                }
             }
+            _other => {}
         }
         Ok(())
     }
@@ -240,6 +243,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             header: FuncHeader {
                 name,
                 ty,
+                import,
                 export: false,
             },
             code: None,
@@ -352,6 +356,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             let header = FuncHeader {
                 name,
                 ty: call_ind_ty,
+                import: false,
                 export: false,
             };
 
@@ -457,6 +462,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         let header = FuncHeader {
             name: INIT.to_string(),
             ty: FuncType::new(vec![], vec![]),
+            import: false,
             export: true,
         };
 
@@ -506,6 +512,71 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             code: Some(code),
             in_table: false,
         });
+    }
+
+    fn apply_names(
+        &mut self,
+        setcion: wasmparser::CustomSectionReader<'_>,
+    ) -> Result<(), anyhow::Error> {
+        let mut names = self.all_names();
+
+        let reader = NameSectionReader::new(setcion.data(), setcion.data_offset());
+        for name in reader {
+            if let Name::Function(s) = name? {
+                self.apply_func_names(s, &mut names)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn apply_func_names(
+        &mut self,
+        s: wasmparser::SectionLimited<'_, Naming<'_>>,
+        names: &mut HashSet<String>,
+    ) -> Result<(), anyhow::Error> {
+        for naming in s {
+            let naming = naming?;
+
+            let header = &mut self.module.all_funcs[naming.index as usize].header;
+
+            if !header.import && !header.export {
+                let name: String = convert_to_ident(naming.name);
+                for i in 0..100 {
+                    let mut name = name.clone();
+                    if i != 0 {
+                        // 既に同じ名前があれば後ろに"_"と数字をつける
+                        name += &format!("_{i}");
+                    }
+
+                    if names.insert(name.clone()) {
+                        // 同名の関数がない場合のみに関数の名前を変更
+                        header.name = name;
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn all_names(&mut self) -> HashSet<String> {
+        let class = once(self.module.class_name.clone());
+        let funcs = self.module.all_funcs.iter().map(|x| x.header.name.clone());
+        let table = self.module.table.iter().map(|x| x.name.clone());
+        let memory = self.module.memory.iter().map(|x| x.name.clone());
+        let globals = self.module.globals.iter().map(|x| x.name.clone());
+        let imports = self.module.import_modules.keys().cloned(); // key(変数名)のみ
+
+        HashSet::from_iter(
+            class
+                .chain(funcs)
+                .chain(table)
+                .chain(memory)
+                .chain(globals)
+                .chain(imports),
+        )
     }
 }
 

@@ -176,6 +176,7 @@ fn add_func<'a>(
     let header = FuncHeader {
         name: name.to_string(),
         ty: FuncType::new(params.clone(), results.clone()),
+        import: false,
         export: false,
     };
 

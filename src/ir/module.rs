@@ -8,7 +8,7 @@ use super::{func::Func, ty::CsType, DATA, ELEMENT, PAGE_SIZE};
 
 pub struct Module<'input> {
     pub buf: &'input [u8],
-    pub class_name: &'input str,
+    pub class_name: String,
     pub test: bool,
     pub types: Vec<FuncType>,
     /// 出力のU#に含まれる全ての関数。
@@ -28,7 +28,7 @@ pub struct Module<'input> {
 }
 
 impl<'input> Module<'input> {
-    pub fn new(buf: &'input [u8], class_name: &'input str, test: bool) -> Self {
+    pub fn new(buf: &'input [u8], class_name: String, test: bool) -> Self {
         Self {
             buf,
             class_name,

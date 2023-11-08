@@ -14,7 +14,7 @@ use self::module::ModuleConverter;
 
 pub fn convert<'input>(
     buf: &'input [u8],
-    class_name: &'input str,
+    class_name: String,
     test: bool,
     out_file: &mut dyn Write,
     import_map: &dyn Fn(&str) -> String,

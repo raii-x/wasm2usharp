@@ -72,6 +72,7 @@ impl Func {
 pub struct FuncHeader {
     pub name: String,
     pub ty: FuncType,
+    pub import: bool,
     pub export: bool,
 }
 

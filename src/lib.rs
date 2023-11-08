@@ -47,7 +47,14 @@ pub fn lib_main() -> ExitCode {
 
     let import_map = |module: &_| format!("class_{}", convert_to_ident(module));
 
-    convert(&buf, class_name, args.test, &mut out_file, &import_map).unwrap();
+    convert(
+        &buf,
+        class_name.to_string(),
+        args.test,
+        &mut out_file,
+        &import_map,
+    )
+    .unwrap();
 
     ExitCode::SUCCESS
 }
