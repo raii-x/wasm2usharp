@@ -393,7 +393,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
             for i in 0..self.module.wasm_func_count {
                 let func = &self.module.all_funcs[i];
-                if func.header.ty != *ty {
+                if func.header.ty != *ty || !func.in_table {
                     continue;
                 }
 
