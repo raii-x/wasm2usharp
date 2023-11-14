@@ -308,24 +308,14 @@ fn int_load(
     push_line(code, load);
 
     if signed {
-        let mut sign;
-        match mem_type {
-            I8 => sign = format!("if ({result} >= 0x80) "),
-            I16 => sign = format!("if ({result} >= 0x8000) "),
-            Val(I32) => sign = format!("if ({result} >= 0x80000000) "),
+        let (ge, or) = match mem_type {
+            I8 => ("0x80", "-0x100"),
+            I16 => ("0x8000", "-0x10000"),
+            Val(I32) => ("0x80000000", "-0x100000000"),
             _ => unreachable!(),
-        }
+        };
 
-        match (result.ty, mem_type) {
-            (CsType::Int, I8) => sign += &format!("{result} |= -0x100;"),
-            (CsType::Int, I16) => sign += &format!("{result} |= -0x10000;"),
-            (CsType::Long, I8) => sign += &format!("{result} |= -0x100;"),
-            (CsType::Long, I16) => sign += &format!("{result} |= -0x10000;"),
-            (CsType::Long, Val(I32)) => sign += &format!("{result} |= -0x100000000;"),
-            _ => unreachable!(),
-        }
-
-        push_line(code, sign);
+        push_line(code, format!("if ({result} >= {ge}) {result} |= {or};"));
     }
 }
 
