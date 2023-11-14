@@ -4,7 +4,7 @@ use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
 use crate::ir::{STACK, STACK_SIZE, STACK_TOP};
 
-use super::{func::Func, ty::CsType, DATA, ELEMENT, PAGE_SIZE};
+use super::{func::Func, ty::CsType, DATA, ELEMENT};
 
 pub struct Module<'input> {
     pub buf: &'input [u8],
@@ -132,26 +132,17 @@ impl<'input> Module<'input> {
                 // テーブルはobjectの配列で表す
                 let elem_cs_ty = if self.test { "object" } else { "uint" };
 
-                writeln!(
-                    f,
-                    "{elem_cs_ty}[] {} = new {elem_cs_ty}[{}];",
-                    table.name, table.ty.initial
-                )?;
+                writeln!(f, "{elem_cs_ty}[] {};", table.name)?;
             }
         }
 
-        // メモリー宣言
+        // メモリ宣言
         if let Some(memory) = &self.memory {
             if !memory.import {
                 if memory.export {
                     write!(f, "[NonSerialized] public ")?
                 }
-                writeln!(
-                    f,
-                    "byte[] {} = new byte[{}];",
-                    memory.name,
-                    memory.ty.initial * PAGE_SIZE as u64
-                )?;
+                writeln!(f, "byte[] {};", memory.name)?;
             }
         }
 

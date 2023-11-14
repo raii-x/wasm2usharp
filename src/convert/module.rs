@@ -13,7 +13,7 @@ use crate::{
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
-        CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, TABLE, W2US_PREFIX,
+        CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE, W2US_PREFIX,
     },
 };
 
@@ -479,6 +479,18 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                     .push(Instr::Line(format!("{} = {init_expr};", global.name)));
             }
         }
+
+        if let Some(table) = &self.module.table {
+            if !table.import {
+                // テーブル配列の作成
+                let elem_cs_ty = if self.module.test { "object" } else { "uint" };
+                code.instrs.push(Instr::Line(format!(
+                    "{} = new {elem_cs_ty}[{}];",
+                    table.name, table.ty.initial
+                )));
+            }
+        }
+
         for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
             code.instrs.push(Instr::Line(format!(
@@ -487,6 +499,18 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 items.len()
             )));
         }
+
+        if let Some(memory) = &self.module.memory {
+            if !memory.import {
+                // メモリ配列の作成
+                code.instrs.push(Instr::Line(format!(
+                    "{} = new byte[{}];",
+                    memory.name,
+                    memory.ty.initial * PAGE_SIZE as u64
+                )));
+            }
+        }
+
         for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
             // メモリへのデータのコピー
             code.instrs.push(Instr::Line(format!(
@@ -495,6 +519,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 data.len()
             )));
         }
+
         if let Some(start_func) = self.module.start_func {
             // start関数の呼び出し
             code.instrs.push(Instr::Call {
