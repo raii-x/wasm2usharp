@@ -1,7 +1,7 @@
 use anyhow::Result;
 use wasmparser::{
     for_each_operator, BlockType, BrTable, FuncType, FunctionBody, Ieee32, Ieee64, MemArg,
-    VisitOperator,
+    StorageType, ValType, VisitOperator,
 };
 
 use crate::ir::{
@@ -12,10 +12,11 @@ use crate::ir::{
     BREAK_DEPTH, LOOP, PAGE_SIZE,
 };
 
-use super::builtin_func;
+use super::builtin_func::{self};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
+    ( @sign_extension $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {
         fn $visit(&mut self $($(,$arg: $argty)*)?) -> Self::Output {
             Err(OperatorError::NotSupported(stringify!($proposal)).into())
@@ -196,6 +197,20 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             .iter()
             .filter_map(|block| block.loop_var)
             .collect()
+    }
+
+    fn get_result(&mut self, ty: &FuncType) -> Option<Var> {
+        match ty.results().len() {
+            0 => None,
+            1 => {
+                let var = self.code.new_var(CsType::get(ty.results()[0]), None);
+                self.push_stack(var.into());
+                Some(var)
+            }
+            _ => {
+                panic!("Multiple return values are not supported")
+            }
+        }
     }
 
     fn visit_load(
@@ -557,18 +572,22 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn get_result(&mut self, ty: &FuncType) -> Option<Var> {
-        match ty.results().len() {
-            0 => None,
-            1 => {
-                let var = self.code.new_var(CsType::get(ty.results()[0]), None);
-                self.push_stack(var.into());
-                Some(var)
-            }
-            _ => {
-                panic!("Multiple return values are not supported")
-            }
-        }
+    fn visit_extend(&mut self, ty: StorageType) -> <Self as VisitOperator<'_>>::Output {
+        let opnd = self.pop_stack();
+        let result = self.code.new_var(opnd.ty(), None);
+        self.push_stack(result.into());
+
+        use {StorageType::*, ValType::*};
+        let (and, ge, or) = match ty {
+            I8 => ("0xff", "0x80", "-0x100"),
+            I16 => ("0xffff", "0x8000", "-0x10000"),
+            Val(I32) => ("0xffffffff", "0x80000000", "-0x100000000"),
+            _ => unreachable!(),
+        };
+
+        self.push_line(format!("{result} = {opnd} & {and};"));
+        self.push_line(format!("if ({result} >= {ge}) {result} |= {or};"));
+        Ok(())
     }
 }
 
@@ -1544,6 +1563,26 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
             builtin_func::F64_REINTERPRET_I64
         ));
         Ok(())
+    }
+
+    fn visit_i32_extend8_s(&mut self) -> Self::Output {
+        self.visit_extend(StorageType::I8)
+    }
+
+    fn visit_i32_extend16_s(&mut self) -> Self::Output {
+        self.visit_extend(StorageType::I16)
+    }
+
+    fn visit_i64_extend8_s(&mut self) -> Self::Output {
+        self.visit_extend(StorageType::I8)
+    }
+
+    fn visit_i64_extend16_s(&mut self) -> Self::Output {
+        self.visit_extend(StorageType::I16)
+    }
+
+    fn visit_i64_extend32_s(&mut self) -> Self::Output {
+        self.visit_extend(StorageType::Val(ValType::I32))
     }
 }
 
