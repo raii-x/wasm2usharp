@@ -152,6 +152,7 @@ test!(test_stack, "stack");
 test!(test_start, "start");
 test!(test_store, "store");
 test!(test_switch, "switch");
+test!(test_table, "table");
 test!(test_token, "token");
 test!(test_traps, "traps");
 test!(test_type, "type");
