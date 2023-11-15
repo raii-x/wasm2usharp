@@ -10,7 +10,7 @@ use crate::{
     convert::{builtin_func::add_builtin_funcs, code::CodeConverter},
     ir::{
         func::{Code, Func, FuncHeader, Primary},
-        instr::Instr,
+        instr::{Call, Instr},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
@@ -399,14 +399,14 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 }
 
                 code.instrs.push(Instr::Line(format!("case {}:", i + 1)));
-                code.instrs.push(Instr::Call {
+                let call = Call {
                     func: i,
                     params: call_params.clone(),
-                    result,
                     recursive: false,
                     save_vars: vec![],
                     save_loop_vars: vec![],
-                });
+                };
+                code.instrs.push(call.into_instr(result));
 
                 match result {
                     Some(x) => code.instrs.push(Instr::Line(format!("return {x};"))),
@@ -523,14 +523,13 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
         if let Some(start_func) = self.module.start_func {
             // start関数の呼び出し
-            code.instrs.push(Instr::Call {
+            code.instrs.push(Instr::Call(Call {
                 func: start_func,
                 params: vec![],
-                result: None,
                 recursive: false,
                 save_vars: vec![],
                 save_loop_vars: vec![],
-            });
+            }));
         }
 
         self.module.all_funcs.push(Func {

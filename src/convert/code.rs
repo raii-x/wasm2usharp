@@ -6,7 +6,7 @@ use wasmparser::{
 
 use crate::ir::{
     func::{Code, Primary, Var},
-    instr::Instr,
+    instr::{Call, Instr},
     module::Module,
     trap,
     ty::{Const, CsType},
@@ -774,14 +774,15 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         let result = self.get_result(&ty);
 
-        self.code.instrs.push(Instr::Call {
+        let call = Call {
             func: index,
             params,
-            result,
             recursive: false,
             save_vars,
             save_loop_vars,
-        });
+        };
+
+        self.code.instrs.push(call.into_instr(result));
         Ok(())
     }
 
@@ -808,14 +809,15 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         let result = self.get_result(&ty);
 
-        self.code.instrs.push(Instr::Call {
+        let call = Call {
             func: index,
             params,
-            result,
             recursive: false,
             save_vars,
             save_loop_vars,
-        });
+        };
+
+        self.code.instrs.push(call.into_instr(result));
         Ok(())
     }
 

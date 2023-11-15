@@ -1,6 +1,9 @@
 use std::collections::HashSet;
 
-use crate::ir::{instr::Instr, module::Module};
+use crate::ir::{
+    instr::{Call, Expr, Instr},
+    module::Module,
+};
 
 use petgraph::{algo::tarjan_scc, graph::Graph};
 
@@ -18,11 +21,9 @@ pub fn recursive(module: &mut Module<'_>) {
     // 関数呼び出しに対応するエッジを追加
     for (i_caller, caller) in module.all_funcs.iter_mut().enumerate() {
         if let Some(code) = &mut caller.code {
-            for instr in &mut code.instrs {
-                if let Instr::Call { func, .. } = instr {
-                    graph.add_edge(nodes[i_caller], nodes[*func], ());
-                }
-            }
+            iterate_call(&mut code.instrs, |call| {
+                graph.add_edge(nodes[i_caller], nodes[call.func], ());
+            });
         }
     }
 
@@ -33,18 +34,31 @@ pub fn recursive(module: &mut Module<'_>) {
         let nodes_set: HashSet<usize> = HashSet::from_iter(nodes.iter().map(|x| x.index()));
         for node in nodes {
             if let Some(code) = &mut module.all_funcs[node.index()].code {
-                for instr in &mut code.instrs {
-                    if let Instr::Call {
-                        func, recursive, ..
-                    } = instr
-                    {
-                        if nodes_set.contains(func) {
-                            // 同じ強連結成分に含まれる関数の呼び出しをrecursiveとする
-                            *recursive = true;
-                        }
+                iterate_call(&mut code.instrs, |call| {
+                    if nodes_set.contains(&call.func) {
+                        // 同じ強連結成分に含まれる関数の呼び出しをrecursiveとする
+                        call.recursive = true;
                     }
-                }
+                });
             }
+        }
+    }
+}
+
+fn iterate_call(instrs: &mut Vec<Instr>, mut f: impl FnMut(&mut Call)) {
+    for instr in instrs {
+        match instr {
+            Instr::Call(call) => {
+                f(call);
+            }
+            Instr::Set { rhs, .. } => match rhs {
+                Expr::Call(call) => {
+                    f(call);
+                }
+                Expr::Primary(_) => (),
+                Expr::Line(_) => (),
+            },
+            Instr::Line(_) => (),
         }
     }
 }
