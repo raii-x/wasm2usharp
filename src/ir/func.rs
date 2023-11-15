@@ -91,19 +91,24 @@ impl Code {
         };
 
         for &ty in header.ty.params() {
-            this.new_var(CsType::get(ty), None);
+            this.new_var_with_local(CsType::get(ty), None, true);
         }
 
         this
     }
 
-    pub fn new_var(&mut self, ty: CsType, default: Option<Const>) -> Var {
+    fn new_var_with_local(&mut self, ty: CsType, default: Option<Const>, local: bool) -> Var {
         let var = Var {
             index: self.var_decls.len(),
             ty,
+            local,
         };
         self.var_decls.push(VarDecl { var, default });
         var
+    }
+
+    pub fn new_var(&mut self, ty: CsType, default: Option<Const>) -> Var {
+        self.new_var_with_local(ty, default, false)
     }
 }
 
@@ -117,6 +122,7 @@ pub struct VarDecl {
 pub struct Var {
     pub index: usize,
     pub ty: CsType,
+    pub local: bool,
 }
 
 impl fmt::Display for Var {
