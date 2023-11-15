@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::{
     convert::{builtin_func::add_builtin_funcs, code::CodeConverter},
     ir::{
-        func::{Code, Expr, Func, FuncHeader},
+        func::{Code, Func, FuncHeader, Primary},
         instr::Instr,
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
@@ -381,7 +381,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             )));
 
             // 関数呼び出し用の引数リスト
-            let call_params: Vec<Expr> = code.var_decls[0..code.var_decls.len() - 1]
+            let call_params: Vec<Primary> = code.var_decls[0..code.var_decls.len() - 1]
                 .iter()
                 .map(|x| x.var.into())
                 .collect();

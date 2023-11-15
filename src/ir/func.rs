@@ -131,12 +131,12 @@ impl fmt::Display for Var {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Expr {
+pub enum Primary {
     Var(Var),
     Const(Const),
 }
 
-impl Expr {
+impl Primary {
     pub fn ty(&self) -> CsType {
         match self {
             Self::Var(x) => x.ty,
@@ -145,7 +145,7 @@ impl Expr {
     }
 }
 
-impl fmt::Display for Expr {
+impl fmt::Display for Primary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Var(x) => x.fmt(f),
@@ -154,13 +154,13 @@ impl fmt::Display for Expr {
     }
 }
 
-impl From<Var> for Expr {
+impl From<Var> for Primary {
     fn from(value: Var) -> Self {
         Self::Var(value)
     }
 }
 
-impl From<Const> for Expr {
+impl From<Const> for Primary {
     fn from(value: Const) -> Self {
         Self::Const(value)
     }

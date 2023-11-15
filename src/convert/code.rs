@@ -5,7 +5,7 @@ use wasmparser::{
 };
 
 use crate::ir::{
-    func::{Code, Expr, Var},
+    func::{Code, Primary, Var},
     instr::Instr,
     module::Module,
     trap,
@@ -47,7 +47,7 @@ pub struct CodeConverter<'input, 'module> {
 
 #[derive(Debug)]
 struct Block {
-    stack: Vec<Expr>,
+    stack: Vec<Primary>,
     result: Option<Var>,
     loop_var: Option<usize>,
 }
@@ -164,15 +164,15 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         }
     }
 
-    fn push_stack(&mut self, val: Expr) {
+    fn push_stack(&mut self, val: Primary) {
         self.blocks.last_mut().unwrap().stack.push(val)
     }
 
-    fn pop_stack(&mut self) -> Expr {
+    fn pop_stack(&mut self) -> Primary {
         self.blocks.last_mut().unwrap().stack.pop().unwrap()
     }
 
-    fn last_stack(&self) -> Expr {
+    fn last_stack(&self) -> Primary {
         *self.blocks.last().unwrap().stack.last().unwrap()
     }
 
@@ -182,9 +182,9 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             .map(|x| x.var);
 
         let stack_vars = self.blocks.iter().flat_map(|block| {
-            block.stack.iter().filter_map(|&expr| match expr {
-                Expr::Var(x) => Some(x),
-                Expr::Const(_) => None,
+            block.stack.iter().filter_map(|&prim| match prim {
+                Primary::Var(x) => Some(x),
+                Primary::Const(_) => None,
             })
         });
 
@@ -245,7 +245,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     }
 
     /// (opnd, result)を返す
-    fn un_op_vars(&mut self, result_ty: CsType) -> (Expr, Var) {
+    fn un_op_vars(&mut self, result_ty: CsType) -> (Primary, Var) {
         let opnd = self.pop_stack();
         let result = self.code.new_var(result_ty, None);
         self.push_stack(result.into());
@@ -254,7 +254,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     }
 
     /// (opnd, result)を返し、opndの型をresultの型とする
-    fn un_op_vars_auto_ty(&mut self) -> (Expr, Var) {
+    fn un_op_vars_auto_ty(&mut self) -> (Primary, Var) {
         let opnd = self.pop_stack();
         let result = self.code.new_var(opnd.ty(), None);
         self.push_stack(result.into());
@@ -263,7 +263,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     }
 
     /// (lhs, rhs, result)を返し、lhsの型をresultの型とする
-    fn bin_op_vars_auto_ty(&mut self) -> (Expr, Expr, Var) {
+    fn bin_op_vars_auto_ty(&mut self) -> (Primary, Primary, Var) {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
         let result = self.code.new_var(lhs.ty(), None);
@@ -348,7 +348,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn cast_sign(&mut self, opnd: Expr, result: Var) {
+    fn cast_sign(&mut self, opnd: Primary, result: Var) {
         let bits = result.ty.int_bits();
         let only_msb = 1u64 << (bits - 1);
         let except_msb = only_msb - 1;
@@ -380,7 +380,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn shr_u(&mut self, lhs: Expr, rhs_int: Expr, result: Var) {
+    fn shr_u(&mut self, lhs: Primary, rhs_int: Primary, result: Var) {
         let bits = lhs.ty().int_bits();
         let only_msb = 1u64 << (bits - 1);
         let except_msb = only_msb - 1;
@@ -507,7 +507,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         Ok(())
     }
 
-    fn wrap(&mut self, opnd: Expr, result: Var) {
+    fn wrap(&mut self, opnd: Primary, result: Var) {
         self.push_line(format!(
             "{result} = {}({opnd} & 0x7fffffff);",
             CsType::Int.cast()
@@ -766,7 +766,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         // mapは遅延評価であるため、mapの後にrevを呼んだ場合ではpop_stackで得る値が逆順にならない
         // そのため、一度collectでVecにした後、reverseで逆順にしている
-        let mut params: Vec<Expr> = ty.params().iter().map(|_| self.pop_stack()).collect();
+        let mut params: Vec<Primary> = ty.params().iter().map(|_| self.pop_stack()).collect();
         params.reverse();
 
         let save_vars = self.get_save_vars();
@@ -798,7 +798,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let ty = self.module.types[type_index as usize].clone();
 
         // Iteratorのrevを使わない理由はvisit_callのコメントを参照
-        let mut params: Vec<Expr> = (0..ty.params().len() + 1)
+        let mut params: Vec<Primary> = (0..ty.params().len() + 1)
             .map(|_| self.pop_stack())
             .collect();
         params.reverse();

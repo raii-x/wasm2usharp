@@ -3,7 +3,7 @@ use std::io;
 use crate::ir::{STACK, STACK_TOP};
 
 use super::{
-    func::{Expr, Var},
+    func::{Primary, Var},
     module::Module,
     LOOP,
 };
@@ -12,7 +12,7 @@ pub enum Instr {
     Line(String),
     Call {
         func: usize,
-        params: Vec<Expr>,
+        params: Vec<Primary>,
         result: Option<Var>,
         recursive: bool,
         save_vars: Vec<Var>,
