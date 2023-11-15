@@ -2,7 +2,8 @@ use wasmparser::{FuncType, StorageType, ValType};
 
 use crate::{
     ir::{
-        func::{Code, Func, FuncHeader, Instr, Var},
+        func::{Code, Func, FuncHeader, Var},
+        instr::Instr,
         module::Module,
         ty::CsType,
     },

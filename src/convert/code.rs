@@ -5,7 +5,8 @@ use wasmparser::{
 };
 
 use crate::ir::{
-    func::{Code, Expr, Instr, Var},
+    func::{Code, Expr, Var},
+    instr::Instr,
     module::Module,
     trap,
     ty::{Const, CsType},

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::ir::{func::Instr, module::Module};
+use crate::ir::{instr::Instr, module::Module};
 
 use petgraph::{algo::tarjan_scc, graph::Graph};
 

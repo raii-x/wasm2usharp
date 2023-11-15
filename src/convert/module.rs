@@ -9,7 +9,8 @@ use wasmparser::{
 use crate::{
     convert::{builtin_func::add_builtin_funcs, code::CodeConverter},
     ir::{
-        func::{Code, Expr, Func, FuncHeader, Instr},
+        func::{Code, Expr, Func, FuncHeader},
+        instr::Instr,
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
