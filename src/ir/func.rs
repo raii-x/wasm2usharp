@@ -185,7 +185,7 @@ impl Instr {
                 save_vars,
                 save_loop_vars,
             } => {
-                if *recursive {
+                if *recursive && !save_vars.is_empty() {
                     // ローカル変数保存用のスタックにプッシュ
                     for (i, &var) in save_vars.iter().enumerate() {
                         write!(f, "{STACK}[{STACK_TOP}")?;
@@ -212,7 +212,7 @@ impl Instr {
 
                 writeln!(f, ");")?;
 
-                if *recursive {
+                if *recursive && !save_vars.is_empty() {
                     writeln!(f, "{STACK_TOP} -= {};", save_vars.len())?;
                     // ローカル変数保存用のスタックからポップ
                     for (i, &var) in save_vars.iter().enumerate() {
