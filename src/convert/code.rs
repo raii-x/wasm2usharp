@@ -176,6 +176,23 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         *self.blocks.last().unwrap().stack.last().unwrap()
     }
 
+    fn call(&mut self, index: usize, ty: FuncType, params: Vec<Primary>) {
+        let save_vars = self.get_save_vars();
+        let save_loop_vars = self.get_save_loop_vars();
+
+        let result = self.get_result(&ty);
+
+        let call = Call {
+            func: index,
+            params,
+            recursive: false,
+            save_vars,
+            save_loop_vars,
+        };
+
+        self.code.instrs.push(call.into_instr(result));
+    }
+
     fn get_save_vars(&self) -> Vec<Var> {
         let locals = self.code.var_decls[0..self.local_count]
             .iter()
@@ -769,20 +786,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let mut params: Vec<Primary> = ty.params().iter().map(|_| self.pop_stack()).collect();
         params.reverse();
 
-        let save_vars = self.get_save_vars();
-        let save_loop_vars = self.get_save_loop_vars();
-
-        let result = self.get_result(&ty);
-
-        let call = Call {
-            func: index,
-            params,
-            recursive: false,
-            save_vars,
-            save_loop_vars,
-        };
-
-        self.code.instrs.push(call.into_instr(result));
+        self.call(index, ty, params);
         Ok(())
     }
 
@@ -804,20 +808,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
             .collect();
         params.reverse();
 
-        let save_vars = self.get_save_vars();
-        let save_loop_vars = self.get_save_loop_vars();
-
-        let result = self.get_result(&ty);
-
-        let call = Call {
-            func: index,
-            params,
-            recursive: false,
-            save_vars,
-            save_loop_vars,
-        };
-
-        self.code.instrs.push(call.into_instr(result));
+        self.call(index, ty, params);
         Ok(())
     }
 
