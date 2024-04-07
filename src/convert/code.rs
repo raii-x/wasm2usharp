@@ -13,8 +13,6 @@ use crate::ir::{
     BREAK_DEPTH, LOOP, PAGE_SIZE,
 };
 
-use super::builtin_func::{self};
-
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @sign_extension $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -234,29 +232,74 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
     fn visit_load(
         &mut self,
         memarg: MemArg,
-        ty: CsType,
-        name: &str,
+        result_ty: CsType,
+        storage_ty: StorageType,
+        signed: Option<bool>,
     ) -> <Self as VisitOperator<'_>>::Output {
+        use {StorageType::*, ValType::*};
+
         let idx = self.pop_stack();
-        let result = self.code.new_var(ty, None);
+        let result = self.code.new_var(result_ty, None);
         self.push_stack(result.into());
 
-        self.push_line(if memarg.offset == 0 {
-            format!("{result} = {name}({idx});")
+        let mut load = format!("{result} = ");
+
+        let memory = &self.module.memory.as_ref().unwrap().name;
+        let idx = if memarg.offset == 0 {
+            idx.to_string()
         } else {
-            format!("{result} = {name}({idx} + {});", memarg.offset as i32)
-        });
+            format!("{idx} + {}", memarg.offset as i32)
+        };
+
+        load += &match (storage_ty, signed) {
+            (I8, Some(_)) => format!("{memory}[{idx}];"),
+            (I16, Some(false)) => format!("BitConverter.ToUInt16({memory}, {idx});"),
+            (I16, Some(true)) => format!("BitConverter.ToInt16({memory}, {idx});"),
+            (Val(I32), Some(false)) => format!("BitConverter.ToUInt32({memory}, {idx});"),
+            (Val(I32), Some(true) | None) => format!("BitConverter.ToInt32({memory}, {idx});"),
+            (Val(I64), None) => format!("BitConverter.ToInt64({memory}, {idx});"),
+            (Val(F32), None) => format!("BitConverter.ToSingle({memory}, {idx});"),
+            (Val(F64), None) => format!("BitConverter.ToDouble({memory}, {idx});"),
+            _ => unreachable!(),
+        };
+        self.push_line(load);
+
+        if storage_ty == I8 && signed == Some(true) {
+            self.push_line(format!("if ({result} >= 0x80) {result} |= -0x100;"));
+        }
+
         Ok(())
     }
 
-    fn visit_store(&mut self, memarg: MemArg, name: &str) -> <Self as VisitOperator<'_>>::Output {
+    fn visit_store(
+        &mut self,
+        memarg: MemArg,
+        storage_ty: StorageType,
+    ) -> <Self as VisitOperator<'_>>::Output {
+        use {StorageType::*, ValType::*};
+
         let var = self.pop_stack();
         let idx = self.pop_stack();
 
-        self.push_line(if memarg.offset == 0 {
-            format!("{name}({idx}, {var});")
+        let memory = &self.module.memory.as_ref().unwrap().name;
+        let idx = if memarg.offset == 0 {
+            idx.to_string()
         } else {
-            format!("{name}({idx} + {}, {var});", memarg.offset as i32)
+            format!("{idx} + {}", memarg.offset as i32)
+        };
+
+        self.push_line(match storage_ty {
+            I8 => format!("{memory}[{idx}] = {}({var} & 0xff);", CsType::Byte.cast()),
+            I16 => format!("Array.Copy(BitConverter.GetBytes(Convert.ToUInt16({var} & 0xffff)), 0, {memory}, {idx}, 2);"),
+            Val(I32) => match var.ty() {
+                CsType::Int => format!("Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, 4);"),
+                CsType::Long => format!("Array.Copy(BitConverter.GetBytes({}({var} & 0xffffffff)), 0, {memory}, {idx}, 4);", CsType::UInt.cast()),
+                _ => unreachable!(),
+            },
+            Val(I64) => format!("Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, 8);"),
+            Val(F32) => format!("Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, 4);"),
+            Val(F64) => format!("Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, 8);"),
+            _ => unreachable!(),
         });
         Ok(())
     }
@@ -870,95 +913,105 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     }
 
     fn visit_i32_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD)
+        self.visit_load(memarg, CsType::Int, StorageType::Val(ValType::I32), None)
     }
 
     fn visit_i64_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD)
+        self.visit_load(memarg, CsType::Long, StorageType::Val(ValType::I64), None)
     }
 
     fn visit_f32_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Float, builtin_func::F32_LOAD)
+        self.visit_load(memarg, CsType::Float, StorageType::Val(ValType::F32), None)
     }
 
     fn visit_f64_load(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Double, builtin_func::F64_LOAD)
+        self.visit_load(memarg, CsType::Double, StorageType::Val(ValType::F64), None)
     }
 
     fn visit_i32_load8_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD8_S)
+        self.visit_load(memarg, CsType::Int, StorageType::I8, Some(true))
     }
 
     fn visit_i32_load8_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD8_U)
+        self.visit_load(memarg, CsType::Int, StorageType::I8, Some(false))
     }
 
     fn visit_i32_load16_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD16_S)
+        self.visit_load(memarg, CsType::Int, StorageType::I16, Some(true))
     }
 
     fn visit_i32_load16_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Int, builtin_func::I32_LOAD16_U)
+        self.visit_load(memarg, CsType::Int, StorageType::I16, Some(false))
     }
 
     fn visit_i64_load8_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD8_S)
+        self.visit_load(memarg, CsType::Long, StorageType::I8, Some(true))
     }
 
     fn visit_i64_load8_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD8_U)
+        self.visit_load(memarg, CsType::Long, StorageType::I8, Some(false))
     }
 
     fn visit_i64_load16_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD16_S)
+        self.visit_load(memarg, CsType::Long, StorageType::I16, Some(true))
     }
 
     fn visit_i64_load16_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD16_U)
+        self.visit_load(memarg, CsType::Long, StorageType::I16, Some(false))
     }
 
     fn visit_i64_load32_s(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD32_S)
+        self.visit_load(
+            memarg,
+            CsType::Long,
+            StorageType::Val(ValType::I32),
+            Some(true),
+        )
     }
 
     fn visit_i64_load32_u(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_load(memarg, CsType::Long, builtin_func::I64_LOAD32_U)
+        self.visit_load(
+            memarg,
+            CsType::Long,
+            StorageType::Val(ValType::I32),
+            Some(false),
+        )
     }
 
     fn visit_i32_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::I32_STORE)
+        self.visit_store(memarg, StorageType::Val(ValType::I32))
     }
 
     fn visit_i64_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::I64_STORE)
+        self.visit_store(memarg, StorageType::Val(ValType::I64))
     }
 
     fn visit_f32_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::F32_STORE)
+        self.visit_store(memarg, StorageType::Val(ValType::F32))
     }
 
     fn visit_f64_store(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::F64_STORE)
+        self.visit_store(memarg, StorageType::Val(ValType::F64))
     }
 
     fn visit_i32_store8(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::I32_STORE8)
+        self.visit_store(memarg, StorageType::I8)
     }
 
     fn visit_i32_store16(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::I32_STORE16)
+        self.visit_store(memarg, StorageType::I16)
     }
 
     fn visit_i64_store8(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::I64_STORE8)
+        self.visit_store(memarg, StorageType::I8)
     }
 
     fn visit_i64_store16(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::I64_STORE16)
+        self.visit_store(memarg, StorageType::I16)
     }
 
     fn visit_i64_store32(&mut self, memarg: MemArg) -> Self::Output {
-        self.visit_store(memarg, builtin_func::I64_STORE32)
+        self.visit_store(memarg, StorageType::Val(ValType::I32))
     }
 
     fn visit_memory_size(&mut self, mem: u32, mem_byte: u8) -> Self::Output {
@@ -1526,8 +1579,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_i32_reinterpret_f32(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Int);
         self.push_line(format!(
-            "{result} = {}({opnd});",
-            builtin_func::I32_REINTERPRET_F32
+            "{result} = BitConverter.SingleToInt32Bits({opnd});"
         ));
         Ok(())
     }
@@ -1535,8 +1587,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_i64_reinterpret_f64(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Long);
         self.push_line(format!(
-            "{result} = {}({opnd});",
-            builtin_func::I64_REINTERPRET_F64
+            "{result} = BitConverter.DoubleToInt64Bits({opnd});"
         ));
         Ok(())
     }
@@ -1544,8 +1595,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_f32_reinterpret_i32(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Float);
         self.push_line(format!(
-            "{result} = {}({opnd});",
-            builtin_func::F32_REINTERPRET_I32
+            "{result} = BitConverter.Int32BitsToSingle({opnd});"
         ));
         Ok(())
     }
@@ -1553,8 +1603,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
     fn visit_f64_reinterpret_i64(&mut self) -> Self::Output {
         let (opnd, result) = self.un_op_vars(CsType::Double);
         self.push_line(format!(
-            "{result} = {}({opnd});",
-            builtin_func::F64_REINTERPRET_I64
+            "{result} = BitConverter.Int64BitsToDouble({opnd});"
         ));
         Ok(())
     }

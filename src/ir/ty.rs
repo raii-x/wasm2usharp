@@ -172,7 +172,7 @@ impl fmt::Display for Const {
                 fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}f", *x))
             }
             Self::Double(x) => {
-                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}", *x))
+                fmt_float(*x, CsType::Double, f).unwrap_or_else(|| write!(f, "{:e}", *x))
             }
         }
     }
