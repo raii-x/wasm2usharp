@@ -1,13 +1,10 @@
 use wasmparser::{FuncType, StorageType, ValType};
 
-use crate::{
-    ir::{
-        func::{Code, Func, FuncHeader, Var},
-        instr::Instr,
-        module::Module,
-        ty::CsType,
-    },
-    util::bit_mask,
+use crate::ir::{
+    func::{Code, Func, FuncHeader, Var},
+    instr::Instr,
+    module::Module,
+    ty::CsType,
 };
 
 pub const I32_LOAD: &str = "w2us_i32_load";
@@ -229,7 +226,7 @@ fn func_float_load(
         code.var_decls[0].var,
         i_result,
     );
-    bits_to_float(module, code, i_result, f_result);
+    bits_to_float(code, i_result, f_result);
     push_line(code, format!("return {};", f_result));
 }
 
@@ -256,7 +253,7 @@ fn func_float_store(
     _results: Vec<ValType>,
 ) {
     let i_var = code.new_var(code.var_decls[1].var.ty.to_i(), None);
-    float_to_bits(module, code, code.var_decls[1].var, i_var);
+    float_to_bits(code, code.var_decls[1].var, i_var);
     int_store(
         module,
         code,
@@ -267,15 +264,15 @@ fn func_float_store(
 }
 
 fn func_reinterpret(
-    module: &Module<'_>,
+    _module: &Module<'_>,
     code: &mut Code,
     params: Vec<ValType>,
     results: Vec<ValType>,
 ) {
     let result = code.new_var(CsType::get(results[0]), None);
     match params[0] {
-        ValType::I32 | ValType::I64 => bits_to_float(module, code, code.var_decls[0].var, result),
-        ValType::F32 | ValType::F64 => float_to_bits(module, code, code.var_decls[0].var, result),
+        ValType::I32 | ValType::I64 => bits_to_float(code, code.var_decls[0].var, result),
+        ValType::F32 | ValType::F64 => float_to_bits(code, code.var_decls[0].var, result),
         _ => unreachable!(),
     }
     push_line(code, format!("return {};", result));
@@ -330,169 +327,26 @@ fn int_store(module: &Module<'_>, code: &mut Code, mem_type: StorageType, idx: V
     );
 }
 
-fn bits_to_float(module: &Module<'_>, code: &mut Code, i_var: Var, f_var: Var) {
-    let i_ty = i_var.ty;
-    let f_ty = f_var.ty;
-    let bits = i_ty.int_bits();
-    let frac_bits = f_ty.frac_bits();
-    let expo_bits = bits - 1 - frac_bits;
-    let expo_bit_mask = bit_mask(expo_bits as u64);
-    // LSBに寄せた後のビットマスク
-    let expo_offset = (1 << (expo_bits - 1)) - 1;
-    let class = module.math_class(f_ty);
-
-    push_line(code, "{".to_string());
-
-    // ビット列の各データを抽出
-    push_line(code, format!("var sign = ({i_var} >> {}) & 1;", bits - 1));
+fn bits_to_float(code: &mut Code, i_var: Var, f_var: Var) {
     push_line(
         code,
-        format!("var expo = ({i_var} >> {frac_bits}) & {expo_bit_mask};",),
+        match f_var.ty {
+            CsType::Float => format!("{f_var} = BitConverter.Int32BitsToSingle({i_var});"),
+            CsType::Double => format!("{f_var} = BitConverter.Int64BitsToDouble({i_var});"),
+            _ => unreachable!(),
+        },
     );
-    push_line(
-        code,
-        format!("var frac = {i_var} & {};", bit_mask(frac_bits as u64)),
-    );
-
-    let sign = format!("(1 - {}(sign) * 2)", f_ty.cast());
-
-    push_line(code, "if (expo == 0) {".to_string());
-    {
-        push_line(code, "if (frac == 0) {".to_string());
-        // 0の場合
-        push_line(code, format!("{f_var} = sign == 0 ? 0f : -0f;"));
-        push_line(code, "} else {".to_string());
-        // 非正規化数の場合
-        push_line(
-            code,
-            format!("{f_var} = ({f_ty})frac * {f_ty}.Epsilon * {sign};"),
-        );
-        push_line(code, "}".to_string());
-    }
-    push_line(code, format!("}} else if (expo == {expo_bit_mask}) {{"));
-    {
-        push_line(code, "if (frac == 0) {".to_string());
-        // 無限大の場合
-        push_line(
-            code,
-            format!("{f_var} = sign == 0 ? {f_ty}.PositiveInfinity : {f_ty}.NegativeInfinity;"),
-        );
-        push_line(code, "} else {".to_string());
-        // NaNの場合
-        push_line(code, format!("{f_var} = {f_ty}.NaN;"));
-        push_line(code, "}".to_string());
-    }
-    push_line(code, "} else {".to_string());
-    {
-        // 浮動小数点数の変数に代入
-        let expo = format!(
-            "{class}.Pow(2, {}(expo) - {expo_offset})",
-            CsType::Int.cast()
-        );
-        let frac = format!("({}(frac) / {} + 1)", f_ty.cast(), 1u64 << frac_bits);
-        push_line(code, format!("{f_var} = {frac} * {expo} * {sign};"));
-    }
-    push_line(code, "}".to_string());
-
-    push_line(code, "}".to_string());
 }
 
-fn float_to_bits(module: &Module<'_>, code: &mut Code, f_var: Var, i_var: Var) {
-    let f_ty = f_var.ty;
-    let i_ty = i_var.ty;
-    let bits = i_ty.int_bits();
-    let frac_bits = f_ty.frac_bits();
-    let frac_bits_mask = bit_mask(frac_bits as u64);
-    let expo_bits = bits - 1 - frac_bits;
-    let expo_bit_mask = bit_mask(expo_bits as u64);
-    // LSBに寄せた後のビットマスク
-    let expo_offset = (1 << (expo_bits - 1)) - 1;
-    let class = module.math_class(f_ty);
-    let subnormal_bound = match f_ty {
-        CsType::Float => "1.1754944e-38f",
-        CsType::Double => "2.2250738585072014e-308",
-        _ => unreachable!(),
-    };
-
-    push_line(code, "{".to_string());
-    push_line(code, "bool sign;".to_string());
-    push_line(code, format!("{i_ty} expo;"));
-    push_line(code, format!("{i_ty} frac;"));
-    push_line(code, format!("var absVar = {class}.Abs({f_var});"));
-
-    let cast_i_ty = i_ty.cast();
-
-    push_line(code, format!("if ({f_var} == 0) {{"));
-    {
-        // 0の場合
-        // 1/0を計算することで+0と-0を区別
-        push_line(code, format!("sign = 1 / {f_var} < 0;"));
-        push_line(code, "expo = 0;".to_string());
-        push_line(code, "frac = 0;".to_string());
-    }
-    push_line(code, format!("}} else if ({f_ty}.IsInfinity({f_var})) {{"));
-    {
-        // 無限大の場合
-        push_line(code, format!("sign = {f_var} < 0;"));
-        push_line(code, format!("expo = {expo_bit_mask};"));
-        push_line(code, "frac = 0;".to_string());
-    }
-    push_line(code, format!("}} else if ({f_ty}.IsNaN({f_var})) {{"));
-    {
-        // NaNの場合
-        push_line(code, "sign = true;".to_string());
-        push_line(code, format!("expo = {expo_bit_mask};"));
-        // MSBだけが1
-        push_line(code, format!("frac = {};", 1u64 << (frac_bits - 1)));
-    }
-    push_line(code, format!("}} else if (absVar < {subnormal_bound}) {{",));
-    {
-        // 非正規化数の場合
-        push_line(code, format!("sign = {f_var} < 0;"));
-        push_line(code, "expo = 0;".to_string());
-        push_line(
-            code,
-            format!("frac = {cast_i_ty}({class}.Abs({f_var}) / {f_ty}.Epsilon);"),
-        );
-    }
-    push_line(code, "} else {".to_string());
-    {
-        push_line(code, format!("sign = {f_var} < 0;"));
-        push_line(
-            code,
-            format!("var expoF = {class}.Floor({class}.Log(absVar, 2));"),
-        );
-        push_line(code, format!("if (expoF >= {}) {{", expo_offset + 1));
-        {
-            // Log2の誤差で無限大になった場合
-            push_line(code, format!("expo = {};", expo_bit_mask - 1));
-            push_line(code, format!("frac = {frac_bits_mask};"));
-        }
-        push_line(code, "} else {".to_string());
-        {
-            // 通常の浮動小数点数の場合
-            push_line(code, format!("expo = {cast_i_ty}(expoF) + {expo_offset};"));
-            push_line(
-                code,
-                format!(
-                    "frac = {cast_i_ty}((absVar / {class}.Pow(2, expoF) - 1) * {});",
-                    1u64 << frac_bits
-                ),
-            );
-        }
-        push_line(code, "}".to_string());
-    }
-    push_line(code, "}".to_string());
-
+fn float_to_bits(code: &mut Code, f_var: Var, i_var: Var) {
     push_line(
         code,
-        format!(
-            "{i_var} = ({cast_i_ty}(sign) << {}) | (expo << {frac_bits}) | frac;",
-            bits - 1
-        ),
+        match f_var.ty {
+            CsType::Float => format!("{i_var} = BitConverter.SingleToInt32Bits({f_var});"),
+            CsType::Double => format!("{i_var} = BitConverter.DoubleToInt64Bits({f_var});"),
+            _ => unreachable!(),
+        },
     );
-
-    push_line(code, "}".to_string());
 }
 
 fn push_line(code: &mut Code, line: String) {
