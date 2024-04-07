@@ -661,8 +661,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_else(&mut self) -> Self::Output {
         match self.unreachable {
-            x if x == 0 => self.block_result(0, false),
-            x if x == 1 => self.unreachable -= 1,
+            0 => self.block_result(0, false),
+            1 => self.unreachable -= 1,
             _ => return Ok(()),
         }
 
@@ -674,8 +674,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
     fn visit_end(&mut self) -> Self::Output {
         match self.unreachable {
-            x if x == 0 => self.block_result(0, false),
-            x if x == 1 => self.unreachable -= 1,
+            0 => self.block_result(0, false),
+            1 => self.unreachable -= 1,
             _ => {
                 self.unreachable -= 1;
                 return Ok(());
