@@ -53,10 +53,10 @@ fn add_funcs_load(module: &mut Module<'_>) {
     use {StorageType::*, ValType::*};
 
     add_func(module, I32_LOAD, vec![I32], vec![I32], &|m, c, p, r| {
-        func_int_load(m, c, p, r, Val(I32), false)
+        func_int_load(m, c, p, r, Val(I32), true)
     });
     add_func(module, I64_LOAD, vec![I32], vec![I64], &|m, c, p, r| {
-        func_int_load(m, c, p, r, Val(I64), false)
+        func_int_load(m, c, p, r, Val(I64), true)
     });
     add_func(module, F32_LOAD, vec![I32], vec![F32], &func_float_load);
     add_func(module, F64_LOAD, vec![I32], vec![F64], &func_float_load);
@@ -225,7 +225,7 @@ fn func_float_load(
         module,
         code,
         StorageType::Val(i_result.ty.val_type()),
-        false,
+        true,
         code.var_decls[0].var,
         i_result,
     );
@@ -294,29 +294,19 @@ fn int_load(
     let mut load = format!("{result} = ");
 
     let memory = &module.memory.as_ref().unwrap().name;
-    let cast_result = result.ty.cast();
-    match mem_type {
-            I8 => load += &format!("{0}[{1}];", memory, idx),
-            I16 => load += &format!("{0}[{1}] | {2}({0}[{1}+1])<<8;", memory, idx, cast_result),
-            Val(I32) => load += &format!(
-                "{0}[{1}] | {2}({0}[{1}+1])<<8 | {2}({0}[{1}+2])<<16 | {2}({0}[{1}+3])<<24;",
-                memory, idx, cast_result),
-            Val(I64) => load += &format!(
-                "{0}[{1}] | {2}({0}[{1}+1])<<8 | {2}({0}[{1}+2])<<16 | {2}({0}[{1}+3])<<24 | {2}({0}[{1}+4])<<32 | {2}({0}[{1}+5])<<40 | {2}({0}[{1}+6])<<48 | {2}({0}[{1}+7])<<56;",
-                memory, idx, cast_result),
-            _ => unreachable!(),
-        }
+    match (mem_type, signed) {
+        (I8, _) => load += &format!("{memory}[{idx}];"),
+        (I16, false) => load += &format!("BitConverter.ToUInt16({memory}, {idx});"),
+        (I16, true) => load += &format!("BitConverter.ToInt16({memory}, {idx});"),
+        (Val(I32), false) => load += &format!("BitConverter.ToUInt32({memory}, {idx});"),
+        (Val(I32), true) => load += &format!("BitConverter.ToInt32({memory}, {idx});"),
+        (Val(I64), true) => load += &format!("BitConverter.ToInt64({memory}, {idx});"),
+        _ => unreachable!(),
+    }
     push_line(code, load);
 
-    if signed {
-        let (ge, or) = match mem_type {
-            I8 => ("0x80", "-0x100"),
-            I16 => ("0x8000", "-0x10000"),
-            Val(I32) => ("0x80000000", "-0x100000000"),
-            _ => unreachable!(),
-        };
-
-        push_line(code, format!("if ({result} >= {ge}) {result} |= {or};"));
+    if mem_type == I8 && signed {
+        push_line(code, format!("if ({result} >= 0x80) {result} |= -0x100;"));
     }
 }
 
@@ -324,29 +314,17 @@ fn int_store(module: &Module<'_>, code: &mut Code, mem_type: StorageType, idx: V
     use {StorageType::*, ValType::*};
 
     let memory = &module.memory.as_ref().unwrap().name;
-    let cast_byte = CsType::Byte.cast();
     push_line(
         code,
         match mem_type {
-            I8 => format!("{0}[{1}]={2}({3}&0xff);", memory, idx, cast_byte, var),
-            I16 => {
-                format!(
-                    "{0}[{1}]={2}({3}&0xff); {0}[{1}+1]={2}(({3}>>8)&0xff);",
-                    memory, idx, cast_byte, var
-                )
-            }
-            Val(I32) => {
-                format!(
-                    "{0}[{1}]={2}({3}&0xff); {0}[{1}+1]={2}(({3}>>8)&0xff); {0}[{1}+2]={2}(({3}>>16)&0xff); {0}[{1}+3]={2}(({3}>>24)&0xff);",
-                    memory, idx, cast_byte, var
-                )
-            }
-            Val(I64) => {
-                format!(
-                    "{0}[{1}]={2}({3}&0xff); {0}[{1}+1]={2}(({3}>>8)&0xff); {0}[{1}+2]={2}(({3}>>16)&0xff); {0}[{1}+3]={2}(({3}>>24)&0xff); {0}[{1}+4]={2}(({3}>>32)&0xff); {0}[{1}+5]={2}(({3}>>40)&0xff); {0}[{1}+6]={2}(({3}>>48)&0xff); {0}[{1}+7]={2}(({3}>>56)&0xff);",
-                    memory, idx, cast_byte, var
-                )
-            }
+            I8 => format!("{memory}[{idx}] = {}({var} & 0xff);", CsType::Byte.cast()),
+            I16 => format!("Array.Copy(BitConverter.GetBytes(Convert.ToUInt16({var} & 0xffff)), 0, {memory}, {idx}, 2);"),
+            Val(I32) => match var.ty {
+                CsType::Int => format!("Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, 4);"),
+                CsType::Long => format!("Array.Copy(BitConverter.GetBytes({}({var} & 0xffffffff)), 0, {memory}, {idx}, 4);", CsType::UInt.cast()),
+                _ => unreachable!(),
+            },
+            Val(I64) => format!("Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, 8);"),
             _ => unreachable!(),
         },
     );
