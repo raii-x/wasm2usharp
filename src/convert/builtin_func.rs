@@ -216,18 +216,17 @@ fn func_float_load(
     _params: Vec<ValType>,
     results: Vec<ValType>,
 ) {
-    let i_result = code.new_var(CsType::get(results[0]).to_i(), None);
-    let f_result = code.new_var(CsType::get(results[0]), None);
-    int_load(
-        module,
+    let memory = &module.memory.as_ref().unwrap().name;
+    let idx = code.var_decls[0].var;
+
+    push_line(
         code,
-        StorageType::Val(i_result.ty.val_type()),
-        true,
-        code.var_decls[0].var,
-        i_result,
+        match results[0] {
+            ValType::F32 => format!("return BitConverter.ToSingle({memory}, {idx});"),
+            ValType::F64 => format!("return BitConverter.ToDouble({memory}, {idx});"),
+            _ => unreachable!(),
+        },
     );
-    bits_to_float(code, i_result, f_result);
-    push_line(code, format!("return {};", f_result));
 }
 
 fn func_int_store(
@@ -249,17 +248,23 @@ fn func_int_store(
 fn func_float_store(
     module: &Module<'_>,
     code: &mut Code,
-    _params: Vec<ValType>,
+    params: Vec<ValType>,
     _results: Vec<ValType>,
 ) {
-    let i_var = code.new_var(code.var_decls[1].var.ty.to_i(), None);
-    float_to_bits(code, code.var_decls[1].var, i_var);
-    int_store(
-        module,
+    let memory = &module.memory.as_ref().unwrap().name;
+    let idx = code.var_decls[0].var;
+    let var = code.var_decls[1].var;
+
+    push_line(
         code,
-        StorageType::Val(i_var.ty.val_type()),
-        code.var_decls[0].var,
-        i_var,
+        format!(
+            "Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, {});",
+            match params[1] {
+                ValType::F32 => 4,
+                ValType::F64 => 8,
+                _ => unreachable!(),
+            }
+        ),
     );
 }
 
@@ -270,11 +275,17 @@ fn func_reinterpret(
     results: Vec<ValType>,
 ) {
     let result = code.new_var(CsType::get(results[0]), None);
-    match params[0] {
-        ValType::I32 | ValType::I64 => bits_to_float(code, code.var_decls[0].var, result),
-        ValType::F32 | ValType::F64 => float_to_bits(code, code.var_decls[0].var, result),
-        _ => unreachable!(),
-    }
+    let from_var = code.var_decls[0].var;
+    push_line(
+        code,
+        match params[0] {
+            ValType::I32 => format!("{result} = BitConverter.Int32BitsToSingle({from_var});"),
+            ValType::I64 => format!("{result} = BitConverter.Int64BitsToDouble({from_var});"),
+            ValType::F32 => format!("{result} = BitConverter.SingleToInt32Bits({from_var});"),
+            ValType::F64 => format!("{result} = BitConverter.DoubleToInt64Bits({from_var});"),
+            _ => unreachable!(),
+        },
+    );
     push_line(code, format!("return {};", result));
 }
 
@@ -322,28 +333,6 @@ fn int_store(module: &Module<'_>, code: &mut Code, mem_type: StorageType, idx: V
                 _ => unreachable!(),
             },
             Val(I64) => format!("Array.Copy(BitConverter.GetBytes({var}), 0, {memory}, {idx}, 8);"),
-            _ => unreachable!(),
-        },
-    );
-}
-
-fn bits_to_float(code: &mut Code, i_var: Var, f_var: Var) {
-    push_line(
-        code,
-        match f_var.ty {
-            CsType::Float => format!("{f_var} = BitConverter.Int32BitsToSingle({i_var});"),
-            CsType::Double => format!("{f_var} = BitConverter.Int64BitsToDouble({i_var});"),
-            _ => unreachable!(),
-        },
-    );
-}
-
-fn float_to_bits(code: &mut Code, f_var: Var, i_var: Var) {
-    push_line(
-        code,
-        match f_var.ty {
-            CsType::Float => format!("{i_var} = BitConverter.SingleToInt32Bits({f_var});"),
-            CsType::Double => format!("{i_var} = BitConverter.DoubleToInt64Bits({f_var});"),
             _ => unreachable!(),
         },
     );
