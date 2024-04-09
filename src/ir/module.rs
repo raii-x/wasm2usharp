@@ -17,7 +17,7 @@ pub struct Module<'input> {
     /// 元のwasmに存在していた関数の数
     pub wasm_func_count: usize,
     /// call_indirect命令に対応する関数
-    pub call_indirects: Vec<usize>,
+    pub call_indirects: HashMap<usize, usize>,
     pub table: Option<Table>,
     pub memory: Option<Memory>,
     pub globals: Vec<Global>,
@@ -36,7 +36,7 @@ impl<'input> Module<'input> {
             types: Vec::new(),
             all_funcs: Vec::new(),
             wasm_func_count: 0,
-            call_indirects: Vec::new(),
+            call_indirects: HashMap::new(),
             table: None,
             memory: None,
             globals: Vec::new(),

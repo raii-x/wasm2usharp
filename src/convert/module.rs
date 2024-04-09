@@ -374,55 +374,68 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 )));
             }
 
-            code.instrs.push(Instr::Line(format!(
-                "switch ({}{table_name}[{index_var}]) {{",
-                if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
-            )));
-
             // 関数呼び出し用の引数リスト
             let call_params: Vec<Primary> = code.var_decls[0..code.var_decls.len() - 1]
                 .iter()
                 .map(|x| x.var.into())
                 .collect();
 
-            let result = if ty.results().is_empty() {
-                None
-            } else {
-                Some(code.new_var(CsType::get(ty.results()[0]), None))
-            };
+            // 呼び出される関数のインデックスのリスト
+            let cases: Vec<usize> = (0..self.module.wasm_func_count)
+                .filter(|&i| {
+                    let func = &self.module.all_funcs[i];
+                    func.header.ty == *ty && func.in_table
+                })
+                .collect();
 
-            for i in 0..self.module.wasm_func_count {
-                let func = &self.module.all_funcs[i];
-                if func.header.ty != *ty || !func.in_table {
+            if cases.is_empty() {
+                if use_delegate {
+                    code.instrs
+                        .push(Instr::Line(trap(self.module, "invalid table value")));
+                } else {
+                    // call_indirect関数を生成しない
                     continue;
                 }
-
-                code.instrs.push(Instr::Line(format!("case {}:", i + 1)));
-                let call = Call {
-                    func: i,
-                    params: call_params.clone(),
-                    recursive: false,
-                    save_vars: vec![],
-                    save_loop_vars: vec![],
-                };
-                code.instrs.push(call.into_instr(result));
-
-                match result {
-                    Some(x) => code.instrs.push(Instr::Line(format!("return {x};"))),
-                    None => code.instrs.push(Instr::Line("return;".to_string())),
-                }
-            }
-
-            code.instrs.push(Instr::Line("default:".to_string()));
-            code.instrs
-                .push(Instr::Line(trap(self.module, "invalid table value")));
-            if ty.results().is_empty() {
-                code.instrs.push(Instr::Line("return;".to_string()));
             } else {
-                code.instrs.push(Instr::Line("return 0;".to_string()));
-            }
+                code.instrs.push(Instr::Line(format!(
+                    "switch ({}{table_name}[{index_var}]) {{",
+                    if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
+                )));
 
-            code.instrs.push(Instr::Line("}".to_string()));
+                let result = if ty.results().is_empty() {
+                    None
+                } else {
+                    Some(code.new_var(CsType::get(ty.results()[0]), None))
+                };
+
+                for i in cases {
+                    code.instrs.push(Instr::Line(format!("case {}:", i + 1)));
+                    let call = Call {
+                        func: i,
+                        params: call_params.clone(),
+                        recursive: false,
+                        save_vars: vec![],
+                        save_loop_vars: vec![],
+                    };
+                    code.instrs.push(call.into_instr(result));
+
+                    match result {
+                        Some(x) => code.instrs.push(Instr::Line(format!("return {x};"))),
+                        None => code.instrs.push(Instr::Line("return;".to_string())),
+                    }
+                }
+
+                code.instrs.push(Instr::Line("default:".to_string()));
+                code.instrs
+                    .push(Instr::Line(trap(self.module, "invalid table value")));
+                if ty.results().is_empty() {
+                    code.instrs.push(Instr::Line("return;".to_string()));
+                } else {
+                    code.instrs.push(Instr::Line("return 0;".to_string()));
+                }
+
+                code.instrs.push(Instr::Line("}".to_string()));
+            }
 
             if use_delegate {
                 code.instrs.push(Instr::Line("} else {".to_string()));
@@ -453,7 +466,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 in_table: false,
             };
 
-            self.module.call_indirects.push(index);
+            self.module.call_indirects.insert(i_ty, index);
             self.module.all_funcs.push(func);
         }
     }

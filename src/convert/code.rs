@@ -842,7 +842,11 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         assert!(table_index == 0);
         assert!(table_byte == 0);
 
-        let index = self.module.call_indirects[type_index as usize];
+        let index = *self
+            .module
+            .call_indirects
+            .get(&(type_index as usize))
+            .unwrap();
         let ty = self.module.types[type_index as usize].clone();
 
         // Iteratorのrevを使わない理由はvisit_callのコメントを参照
