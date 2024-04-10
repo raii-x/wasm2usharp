@@ -168,12 +168,24 @@ impl fmt::Display for Const {
                 _x => write!(f, "{}L", _x),
             },
             Self::ULong(x) => write!(f, "{}ul", x),
-            Self::Float(x) => {
-                fmt_float(*x, CsType::Float, f).unwrap_or_else(|| write!(f, "{:e}f", *x))
-            }
-            Self::Double(x) => {
-                fmt_float(*x, CsType::Double, f).unwrap_or_else(|| write!(f, "{:e}", *x))
-            }
+            Self::Float(x) => fmt_float(*x, CsType::Float, f).unwrap_or_else(|| {
+                if x.to_bits() == 0xffc00000 {
+                    write!(f, "float.NaN")
+                } else if x.is_nan() {
+                    write!(f, "BitConverter.Int32BitsToSingle({})", x.to_bits() as i32)
+                } else {
+                    write!(f, "{:e}f", *x)
+                }
+            }),
+            Self::Double(x) => fmt_float(*x, CsType::Double, f).unwrap_or_else(|| {
+                if x.to_bits() == 0xfff8000000000000 {
+                    write!(f, "double.NaN")
+                } else if x.is_nan() {
+                    write!(f, "BitConverter.Int64BitsToDouble({})", x.to_bits() as i64)
+                } else {
+                    write!(f, "{:e}d", *x)
+                }
+            }),
         }
     }
 }
@@ -185,8 +197,6 @@ fn fmt_float(value: impl Float, ty: CsType, f: &mut fmt::Formatter<'_>) -> Optio
         } else {
             write!(f, "{ty}.NegativeInfinity")
         })
-    } else if value.is_nan() {
-        Some(write!(f, "{ty}.NaN"))
     } else {
         None
     }

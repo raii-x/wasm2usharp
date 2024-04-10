@@ -8,14 +8,14 @@ use std::{fs::read_to_string, path::PathBuf};
 use cs_proj::{CsProj, CsProjExec};
 use wasm2usharp::convert::convert_to_ident;
 use wast::{
-    core::{Module, WastArgCore, WastRetCore},
+    core::{Module, WastArgCore},
     lexer::Lexer,
     parser::{self, ParseBuffer},
-    token::Id,
+    token::{Float32, Float64, Id},
     QuoteWat, Wast, WastArg, WastDirective, WastExecute, WastInvoke, WastRet, Wat,
 };
 
-use crate::value::{f32_to_wasm_ret_core, f64_to_wasm_ret_core, WastRetEq};
+use crate::value::wast_ret_core_contains;
 
 macro_rules! test (
     ($func_name:ident, $name:expr) => {
@@ -55,11 +55,7 @@ test!(test_call, "call");
 test!(test_call_indirect, "call_indirect");
 test!(test_comments, "comments");
 test!(test_const, "const");
-test!(
-    test_conversions,
-    "conversions",
-    &deny_float_nan_case(0, &["i32.reinterpret_f32", "i64.reinterpret_f64"])
-);
+test!(test_conversions, "conversions");
 test!(test_custom, "custom");
 test!(test_data, "data");
 test!(test_elem, "elem");
@@ -69,56 +65,25 @@ test!(test_f32, "f32");
 test!(
     test_f32_bitwise,
     "f32_bitwise",
-    &deny_float_nan_case(1, &["copysign"])
+    &deny_float_nan_case(&["copysign"])
 );
 test!(test_f32_cmp, "f32_cmp");
 test!(test_f64, "f64");
 test!(
     test_f64_bitwise,
     "f64_bitwise",
-    &deny_float_nan_case(1, &["copysign"])
+    &deny_float_nan_case(&["copysign"])
 );
 test!(test_f64_cmp, "f64_cmp");
 test!(test_fac, "fac");
+test!(test_float_exprs, "float_exprs");
+test!(test_float_literals, "float_literals");
+test!(test_float_memory, "float_memory");
 test!(
-    test_float_exprs,
-    "float_exprs",
-    &deny_int_nan_case(&[
-        "f32.nonarithmetic_nan_bitpattern",
-        "f64.nonarithmetic_nan_bitpattern"
-    ])
+    test_float_misc,
+    "float_misc",
+    &deny_float_nan_case(&["f32.copysign", "f64.copysign"])
 );
-test!(
-    test_float_literals,
-    "float_literals",
-    &deny_assert_return(
-        &[
-            "f32.nan",
-            "f32.positive_nan",
-            "f32.plain_nan",
-            "f32.informally_known_as_plain_snan",
-            "f32.all_ones_nan",
-            "f32.misc_nan",
-            "f32.misc_positive_nan",
-            "f32.misc_negative_nan",
-            "f64.nan",
-            "f64.positive_nan",
-            "f64.plain_nan",
-            "f64.informally_known_as_plain_snan",
-            "f64.all_ones_nan",
-            "f64.misc_nan",
-            "f64.misc_positive_nan",
-            "f64.misc_negative_nan",
-        ],
-        |_, _| false
-    )
-);
-test!(
-    test_float_memory,
-    "float_memory",
-    &deny_int_result_nan_case(&["i32.load", "i64.load"])
-);
-test!(test_float_misc, "float_misc");
 test!(test_forward, "forward");
 test!(test_func, "func");
 test!(test_func_ptrs, "func_ptrs");
@@ -192,17 +157,17 @@ where
     }
 }
 
-// indexで指定された引数がNaNなら処理しない
-fn deny_float_nan_case(index: usize, names: &'static [&'static str]) -> impl Filter {
+// いずれかの引数がNaNなら処理しない
+fn deny_float_nan_case(names: &'static [&'static str]) -> impl Filter {
     deny_assert_return(names, move |invoke, _| {
-        !(match &invoke.args[index] {
+        !(invoke.args.iter().any(|x| match x {
             WastArg::Core(x) => match x {
                 WastArgCore::F32(x) => f32::from_bits(x.bits).is_nan(),
                 WastArgCore::F64(x) => f64::from_bits(x.bits).is_nan(),
                 _ => false,
             },
             _ => false,
-        })
+        }))
     })
 }
 
@@ -213,34 +178,6 @@ fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Filter {
             WastArg::Core(x) => match x {
                 WastArgCore::I32(x) => *x as u32 == 0x80000000,
                 WastArgCore::I64(x) => *x as u64 == 0x8000000000000000,
-                _ => false,
-            },
-            _ => false,
-        })
-    })
-}
-
-// 最初の引数が整数型で、reinterpretした後にNaNになるなら処理しない
-fn deny_int_nan_case(names: &'static [&'static str]) -> impl Filter {
-    deny_assert_return(names, move |invoke, _| {
-        !(match &invoke.args[0] {
-            WastArg::Core(x) => match x {
-                WastArgCore::I32(x) => (f32::from_bits(*x as u32)).is_nan(),
-                WastArgCore::I64(x) => (f64::from_bits(*x as u64)).is_nan(),
-                _ => false,
-            },
-            _ => false,
-        })
-    })
-}
-
-// 最初の引数が整数型で、reinterpretした後にNaNになるなら処理しない
-fn deny_int_result_nan_case(names: &'static [&'static str]) -> impl Filter {
-    deny_assert_return(names, move |_, results| {
-        !(match &results[0] {
-            WastRet::Core(x) => match x {
-                WastRetCore::I32(x) => (f32::from_bits(*x as u32)).is_nan(),
-                WastRetCore::I64(x) => (f64::from_bits(*x as u64)).is_nan(),
                 _ => false,
             },
             _ => false,
@@ -308,19 +245,40 @@ fn test_wast(name: &str, filter: Option<&dyn Filter>) {
             Invoke(invoke) => {
                 invoke_func(invoke, &mut cs_proj_exec);
             }
-            AssertReturn { exec, results, .. } => assert_eq!(
-                match exec {
+            AssertReturn { exec, results, .. } => {
+                let actual = match exec {
                     WastExecute::Invoke(invoke) => invoke_func(invoke, &mut cs_proj_exec),
-                    WastExecute::Get { module, global } =>
-                        get_global(module, global, &mut cs_proj_exec),
+                    WastExecute::Get { module, global } => {
+                        get_global(module, global, &mut cs_proj_exec)
+                    }
                     _ => panic!(),
-                },
-                results
+                };
+
+                let expected = results
                     .into_iter()
-                    .map(WastRetEq)
-                    .map(|x| x.normalize_nan())
-                    .collect::<Vec<_>>()
-            ),
+                    .map(|x| match x {
+                        WastRet::Core(x) => x,
+                        WastRet::Component(_) => panic!("component-model is not supported"),
+                    })
+                    .collect::<Vec<_>>();
+
+                assert_eq!(
+                    actual.len(),
+                    expected.len(),
+                    "assertion failed\n   actual = {:?}\n expected = {:?}",
+                    actual,
+                    expected
+                );
+                assert!(
+                    expected
+                        .iter()
+                        .zip(actual.iter())
+                        .all(|(e, a)| wast_ret_core_contains(e, a)),
+                    "assertion failed\n   actual = {:?}\n expected = {:?}",
+                    actual,
+                    expected
+                );
+            }
             AssertMalformed { .. }
             | AssertInvalid { .. }
             | AssertTrap { .. }
@@ -347,7 +305,7 @@ fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> Option<Id<'a>> {
 fn invoke_func<'input>(
     invoke: WastInvoke<'input>,
     exec: &mut CsProjExec<'input, '_>,
-) -> Vec<WastRetEq<'static>> {
+) -> Vec<WastArgCore<'static>> {
     use wast::core::WastArgCore::*;
     println!("Invoking: {} {:?}", invoke.name, invoke.args);
 
@@ -378,7 +336,7 @@ fn get_global<'input>(
     module: Option<Id<'input>>,
     global: &'input str,
     exec: &mut CsProjExec<'input, '_>,
-) -> Vec<WastRetEq<'static>> {
+) -> Vec<WastArgCore<'static>> {
     println!("Get: {global}");
 
     let line = exec.get_global(module, global);
@@ -386,7 +344,7 @@ fn get_global<'input>(
     parse_results(&line)
 }
 
-fn parse_results(line: &str) -> Vec<WastRetEq<'static>> {
+fn parse_results(line: &str) -> Vec<WastArgCore<'static>> {
     let mut results = Vec::new();
 
     // スペースで区切った1つ目が型で、2つ目が値のビットを数値で表現した文字列
@@ -397,17 +355,17 @@ fn parse_results(line: &str) -> Vec<WastRetEq<'static>> {
         assert!(sp.next().is_none());
 
         results.push(match ty {
-            "i32" => WastRetCore::I32(val.parse::<i32>().unwrap()),
-            "i64" => WastRetCore::I64(val.parse::<i64>().unwrap()),
-            "f32" => f32_to_wasm_ret_core(val.parse::<u32>().unwrap()),
-            "f64" => f64_to_wasm_ret_core(val.parse::<u64>().unwrap()),
+            "i32" => WastArgCore::I32(val.parse::<i32>().unwrap()),
+            "i64" => WastArgCore::I64(val.parse::<i64>().unwrap()),
+            "f32" => WastArgCore::F32(Float32 {
+                bits: val.parse::<u32>().unwrap(),
+            }),
+            "f64" => WastArgCore::F64(Float64 {
+                bits: val.parse::<u64>().unwrap(),
+            }),
             _ => panic!("unknown return type"),
         });
     }
 
     results
-        .into_iter()
-        .map(WastRet::Core)
-        .map(WastRetEq)
-        .collect()
 }

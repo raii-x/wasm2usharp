@@ -619,16 +619,25 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         let (opnd, result) = self.un_op_vars(result_ty);
 
         let cast_ty = result_ty.cast();
+
         if signed {
             self.push_line(format!("{result} = {cast_ty}({opnd});"));
         } else {
             let bits = opnd.ty().int_bits();
             let only_msb = 1u64 << (bits - 1);
 
-            self.push_line(format!(
-                "{result} = {opnd} < 0 ? {cast_ty}({opnd} & {}) + {only_msb} : {cast_ty}({opnd});",
-                only_msb - 1
-            ));
+            if matches!(result_ty, CsType::Float | CsType::Double) {
+                let opnd_ty_u = opnd.ty().to_unsigned();
+                self.push_line(format!(
+                    "{result} = {opnd} < 0 ? {cast_ty}(({opnd_ty_u})({opnd} & {}) + {only_msb}) : {cast_ty}({opnd});",
+                    only_msb - 1
+                ));
+            } else {
+                self.push_line(format!(
+                    "{result} = {opnd} < 0 ? {cast_ty}({opnd} & {}) + {only_msb} : {cast_ty}({opnd});",
+                    only_msb - 1
+                ));
+            }
         }
         Ok(())
     }
