@@ -203,8 +203,6 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             })
         });
 
-        // TODO: ループ変数を追加
-
         locals.chain(stack_vars).collect()
     }
 
