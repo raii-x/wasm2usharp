@@ -10,7 +10,7 @@ use crate::{
     convert::code::CodeConverter,
     ir::{
         func::{Code, Func, FuncHeader, Primary},
-        instr::{Call, Instr},
+        instr::{Call, Instr, InstrKind},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
@@ -369,9 +369,11 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
-                code.instrs.push(Instr::Line(format!(
-                    "if ({table_name}[{index_var}] is uint) {{"
-                )));
+                code.instrs.push(Instr {
+                    pattern: format!("if ({table_name}[$p0] is uint) {{"),
+                    params: vec![index_var.into()],
+                    ..Default::default()
+                });
             }
 
             // 関数呼び出し用の引数リスト
@@ -391,16 +393,20 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             if cases.is_empty() {
                 if use_delegate {
                     code.instrs
-                        .push(Instr::Line(trap(self.module, "invalid table value")));
+                        .push(Instr::line(trap(self.module, "invalid table value")));
                 } else {
                     // call_indirect関数を生成しない
                     continue;
                 }
             } else {
-                code.instrs.push(Instr::Line(format!(
-                    "switch ({}{table_name}[{index_var}]) {{",
-                    if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
-                )));
+                code.instrs.push(Instr {
+                    pattern: format!(
+                        "switch ({}{table_name}[$p0]) {{",
+                        if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
+                    ),
+                    params: vec![index_var.into()],
+                    ..Default::default()
+                });
 
                 let result = if ty.results().is_empty() {
                     None
@@ -409,54 +415,70 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 };
 
                 for i in cases {
-                    code.instrs.push(Instr::Line(format!("case {}:", i + 1)));
+                    code.instrs.push(Instr::line(format!("case {}:", i + 1)));
                     let call = Call {
                         func: i,
-                        params: call_params.clone(),
                         recursive: false,
                         save_vars: vec![],
                         save_loop_vars: vec![],
                     };
-                    code.instrs.push(call.into_instr(result));
+                    code.instrs
+                        .push(Instr::call(call, call_params.clone(), result));
 
                     match result {
-                        Some(x) => code.instrs.push(Instr::Line(format!("return {x};"))),
-                        None => code.instrs.push(Instr::Line("return;".to_string())),
+                        Some(x) => code.instrs.push(Instr::return_(Some(x.into()))),
+                        None => code.instrs.push(Instr::return_(None)),
                     }
                 }
 
-                code.instrs.push(Instr::Line("default:".to_string()));
+                code.instrs.push(Instr::line("default:"));
                 code.instrs
-                    .push(Instr::Line(trap(self.module, "invalid table value")));
-                if ty.results().is_empty() {
-                    code.instrs.push(Instr::Line("return;".to_string()));
-                } else {
-                    code.instrs.push(Instr::Line("return 0;".to_string()));
+                    .push(Instr::line(trap(self.module, "invalid table value")));
+                match result {
+                    Some(x) => code
+                        .instrs
+                        .push(Instr::return_(Some(x.ty.default().into()))),
+                    None => code.instrs.push(Instr::return_(None)),
                 }
 
-                code.instrs.push(Instr::Line("}".to_string()));
+                code.instrs.push(Instr::line("}"));
             }
 
             if use_delegate {
-                code.instrs.push(Instr::Line("} else {".to_string()));
+                code.instrs.push(Instr::line("} else {"));
+
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
-                let call_params = call_params
-                    .iter()
-                    .map(|x| x.to_string())
+                let call_params_pat = (0..call_params.len())
+                    .map(|i| format!("$p{}", i))
                     .collect::<Vec<_>>()
                     .join(", ");
+                let pattern = format!(
+                    "(({del}){table_name}[$p{}])({call_params_pat})",
+                    call_params.len()
+                );
+
+                let mut params = call_params.clone();
+                params.push(index_var.into());
 
                 if ty.results().is_empty() {
-                    code.instrs.push(Instr::Line(format!(
-                        "(({del}){table_name}[{index_var}])({call_params}); return;",
-                    )));
+                    code.instrs.push(Instr {
+                        kind: InstrKind::Expr,
+                        pattern,
+                        params,
+                        ..Default::default()
+                    });
+                    code.instrs.push(Instr::return_(None));
                 } else {
-                    code.instrs.push(Instr::Line(format!(
-                        "return (({del}){table_name}[{index_var}])({call_params});",
-                    )));
+                    code.instrs.push(Instr {
+                        kind: InstrKind::Return,
+                        pattern,
+                        params,
+                        ..Default::default()
+                    });
                 }
-                code.instrs.push(Instr::Line("}".to_string()));
+
+                code.instrs.push(Instr::line("}"));
             }
 
             let index = self.module.all_funcs.len();
@@ -489,7 +511,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             // グローバル変数の初期値を代入
             if let Some(init_expr) = &global.init_expr {
                 code.instrs
-                    .push(Instr::Line(format!("{} = {init_expr};", global.name)));
+                    .push(Instr::line(format!("{} = {init_expr};", global.name)));
             }
         }
 
@@ -497,7 +519,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             if !table.import {
                 // テーブル配列の作成
                 let elem_cs_ty = if self.module.test { "object" } else { "uint" };
-                code.instrs.push(Instr::Line(format!(
+                code.instrs.push(Instr::line(format!(
                     "{} = new {elem_cs_ty}[{}];",
                     table.name, table.ty.initial
                 )));
@@ -506,7 +528,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
         for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
-            code.instrs.push(Instr::Line(format!(
+            code.instrs.push(Instr::line(format!(
                 "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
                 self.module.table.as_ref().unwrap().name,
                 items.len()
@@ -516,7 +538,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         if let Some(memory) = &self.module.memory {
             if !memory.import {
                 // メモリ配列の作成
-                code.instrs.push(Instr::Line(format!(
+                code.instrs.push(Instr::line(format!(
                     "{} = new byte[{}];",
                     memory.name,
                     memory.ty.initial * PAGE_SIZE as u64
@@ -526,7 +548,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
         for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
             // メモリへのデータのコピー
-            code.instrs.push(Instr::Line(format!(
+            code.instrs.push(Instr::line(format!(
                 "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
                 self.module.memory.as_ref().unwrap().name,
                 data.len()
@@ -535,13 +557,13 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
         if let Some(start_func) = self.module.start_func {
             // start関数の呼び出し
-            code.instrs.push(Instr::Call(Call {
+            let call = Call {
                 func: start_func,
-                params: vec![],
                 recursive: false,
                 save_vars: vec![],
                 save_loop_vars: vec![],
-            }));
+            };
+            code.instrs.push(Instr::call(call, vec![], None));
         }
 
         self.module.all_funcs.push(Func {

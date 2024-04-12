@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::ir::{
-    instr::{Call, Expr, Instr},
+    instr::{Call, Instr},
     module::Module,
 };
 
@@ -47,18 +47,8 @@ pub fn recursive(module: &mut Module<'_>) {
 
 fn iterate_call(instrs: &mut Vec<Instr>, mut f: impl FnMut(&mut Call)) {
     for instr in instrs {
-        match instr {
-            Instr::Call(call) => {
-                f(call);
-            }
-            Instr::Set { rhs, .. } => match rhs {
-                Expr::Call(call) => {
-                    f(call);
-                }
-                Expr::Primary(_) => (),
-                Expr::Line(_) => (),
-            },
-            Instr::Line(_) => (),
+        if let Some(call) = &mut instr.call {
+            f(call);
         }
     }
 }
