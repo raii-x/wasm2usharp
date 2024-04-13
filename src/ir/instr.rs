@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::ir::{STACK, STACK_TOP};
+use crate::ir::{BREAK_DEPTH, STACK, STACK_TOP};
 
 use super::{
     func::{Primary, Var},
@@ -22,12 +22,31 @@ pub struct Instr {
     pub call: Option<Call>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub enum InstrKind {
     #[default]
     Stmt,
     Expr,
     Return,
+    Block(Vec<Instr>),
+    Loop {
+        loop_var: usize,
+        block: Vec<Instr>,
+    },
+    If {
+        then: Vec<Instr>,
+        else_: Option<Vec<Instr>>,
+    },
+    Br(u32),
+    BrIf(u32),
+    Switch(Vec<Case>),
+}
+
+#[derive(Debug)]
+pub struct Case {
+    /// Noneならdefault
+    pub value: Option<u32>,
+    pub block: Vec<Instr>,
 }
 
 #[derive(Debug)]
@@ -56,7 +75,7 @@ impl Instr {
             .to_string(),
             params: match param {
                 Some(param) => vec![param],
-                None => vec![],
+                None => Vec::new(),
             },
             ..Default::default()
         }
@@ -100,6 +119,15 @@ impl Instr {
     }
 
     pub fn write(&self, f: &mut dyn io::Write, module: &Module<'_>) -> io::Result<()> {
+        self.write_inner(f, module, false)
+    }
+
+    fn write_inner(
+        &self,
+        f: &mut dyn io::Write,
+        module: &Module<'_>,
+        in_block: bool,
+    ) -> io::Result<()> {
         let mut pattern = self.pattern.clone();
 
         // $p1などが$p10を置換しないように、番号の大きい側から置換する
@@ -115,8 +143,8 @@ impl Instr {
                     pattern += ";";
                 }
             }
-            InstrKind::Stmt => (),
             InstrKind::Return => pattern = format!("return {pattern};"),
+            _ => (),
         }
 
         if let Some(result) = self.result {
@@ -126,9 +154,99 @@ impl Instr {
         if let Some(call) = &self.call {
             call.write_pattern(f, pattern, module)
         } else {
-            writeln!(f, "{}", pattern)
+            match &self.kind {
+                InstrKind::Block(block) => {
+                    writeln!(f, "do {{")?;
+                    for instr in block {
+                        instr.write_inner(f, module, true)?;
+                    }
+                    writeln!(f, "}} while (false);")?;
+                    write_multi_break(f, in_block)
+                }
+                InstrKind::Loop { loop_var, block } => {
+                    writeln!(f, "{LOOP}{loop_var} = true;")?;
+                    writeln!(f, "do {{")?;
+                    writeln!(f, "do {{")?;
+
+                    for instr in block {
+                        instr.write_inner(f, module, true)?;
+                    }
+
+                    writeln!(f, "{LOOP}{loop_var} = false;")?;
+                    writeln!(f, "}} while (false);")?;
+                    writeln!(f, "if ({BREAK_DEPTH} > 0) break;")?;
+                    writeln!(f, "}} while ({LOOP}{});", loop_var)?;
+                    write_multi_break(f, in_block)
+                }
+                InstrKind::If { then, else_ } => {
+                    writeln!(f, "do if ({pattern}) {{")?;
+                    for instr in then {
+                        instr.write_inner(f, module, true)?;
+                    }
+
+                    if let Some(else_) = else_ {
+                        writeln!(f, "}} else {{")?;
+                        for instr in else_ {
+                            instr.write_inner(f, module, true)?;
+                        }
+                    }
+
+                    writeln!(f, "}} while (false);")?;
+                    write_multi_break(f, in_block)
+                }
+                InstrKind::Br(depth) => write_break(f, *depth),
+                InstrKind::BrIf(depth) => {
+                    writeln!(f, "if ({pattern}) {{")?;
+                    write_break(f, *depth)?;
+                    writeln!(f, "}}")
+                }
+                InstrKind::Switch(cases) => {
+                    writeln!(f, "switch ({pattern}) {{")?;
+
+                    for case in cases {
+                        if let Some(value) = case.value {
+                            writeln!(f, "case {value}:")?;
+                        } else {
+                            writeln!(f, "default:")?;
+                        }
+
+                        for instr in &case.block {
+                            instr.write_inner(f, module, in_block)?;
+                        }
+
+                        // 命令がない、または最後の命令がbrではない場合にbreak
+                        if case
+                            .block
+                            .last()
+                            .map(|i| !matches!(i.kind, InstrKind::Br(..)))
+                            .unwrap_or(true)
+                        {
+                            writeln!(f, "break;")?;
+                        }
+                    }
+
+                    writeln!(f, "}}")
+                }
+                _ => writeln!(f, "{}", pattern),
+            }
         }
     }
+}
+
+fn write_multi_break(f: &mut dyn io::Write, in_block: bool) -> io::Result<()> {
+    // 最も外側のブロックのendでない場合のみ
+    if in_block {
+        // 多重break
+        writeln!(f, "if ({BREAK_DEPTH} > 0) {{ {BREAK_DEPTH}--; break; }}")?;
+    }
+    Ok(())
+}
+
+fn write_break(f: &mut dyn io::Write, depth: u32) -> io::Result<()> {
+    if depth > 0 {
+        writeln!(f, "{BREAK_DEPTH} = {depth};")?;
+    }
+    writeln!(f, "break;")
 }
 
 impl Call {
@@ -172,5 +290,90 @@ impl Call {
         }
 
         Ok(())
+    }
+}
+
+pub struct Builder {
+    instr_blocks: Vec<Vec<Instr>>,
+}
+
+impl Builder {
+    pub fn new() -> Self {
+        Self {
+            instr_blocks: vec![Vec::new()],
+        }
+    }
+
+    pub fn push(&mut self, instr: Instr) {
+        let create_block = matches!(
+            instr.kind,
+            InstrKind::Block(_)
+                | InstrKind::Loop { .. }
+                | InstrKind::If { .. }
+                | InstrKind::Switch(_)
+        );
+
+        self.instr_blocks.last_mut().unwrap().push(instr);
+
+        if create_block {
+            self.instr_blocks.push(Vec::new());
+        }
+    }
+
+    pub fn else_(&mut self) {
+        let then = self.instr_blocks.pop().unwrap();
+        let instr = self.instr_blocks.last_mut().unwrap().last_mut().unwrap();
+
+        instr.kind = InstrKind::If {
+            then,
+            else_: Some(Vec::new()),
+        };
+
+        self.instr_blocks.push(Vec::new());
+    }
+
+    pub fn end(&mut self) {
+        let block = self.instr_blocks.pop().unwrap();
+        let instr = self.instr_blocks.last_mut().unwrap().last_mut().unwrap();
+
+        match &mut instr.kind {
+            InstrKind::Block(x)
+            | InstrKind::Loop { block: x, .. }
+            | InstrKind::If {
+                then: x,
+                else_: None,
+            }
+            | InstrKind::If { else_: Some(x), .. } => *x = block,
+            InstrKind::Switch(_) => (),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn end_case(&mut self, value: Option<u32>) {
+        let block = self.instr_blocks.pop().unwrap();
+        let InstrKind::Switch(cases) = &mut self
+            .instr_blocks
+            .last_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()
+            .kind
+        else {
+            unreachable!()
+        };
+
+        cases.push(Case { value, block });
+        self.instr_blocks.push(Vec::new());
+    }
+
+    pub fn build(self) -> Vec<Instr> {
+        assert!(self.instr_blocks.len() == 1);
+        self.instr_blocks.into_iter().next().unwrap()
+    }
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        Self::new()
     }
 }
