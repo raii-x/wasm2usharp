@@ -231,6 +231,49 @@ impl Instr {
             }
         }
     }
+
+    pub fn all_calls(&mut self) -> Vec<&mut Call> {
+        let mut calls = Vec::new();
+        self.all_calls_inner(&mut calls);
+        calls
+    }
+
+    fn all_calls_inner<'a>(&'a mut self, calls: &mut Vec<&'a mut Call>) {
+        if let Some(call) = &mut self.call {
+            calls.push(call);
+        };
+
+        match &mut self.kind {
+            InstrKind::Block(block) => {
+                for instr in block {
+                    instr.all_calls_inner(calls);
+                }
+            }
+            InstrKind::Loop { block, .. } => {
+                for instr in block {
+                    instr.all_calls_inner(calls);
+                }
+            }
+            InstrKind::If { then, else_ } => {
+                for instr in then {
+                    instr.all_calls_inner(calls);
+                }
+                if let Some(else_) = else_ {
+                    for instr in else_ {
+                        instr.all_calls_inner(calls);
+                    }
+                }
+            }
+            InstrKind::Switch(cases) => {
+                for case in cases {
+                    for instr in &mut case.block {
+                        instr.all_calls_inner(calls);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
 }
 
 fn write_multi_break(f: &mut dyn io::Write, in_block: bool) -> io::Result<()> {

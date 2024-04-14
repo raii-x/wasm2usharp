@@ -47,7 +47,8 @@ pub fn recursive(module: &mut Module<'_>) {
 
 fn iterate_call(instrs: &mut Vec<Instr>, mut f: impl FnMut(&mut Call)) {
     for instr in instrs {
-        if let Some(call) = &mut instr.call {
+        let calls = instr.all_calls();
+        for call in calls {
             f(call);
         }
     }
