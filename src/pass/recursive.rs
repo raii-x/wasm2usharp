@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::ir::{
-    instr::{Call, Instr},
+    instr::{Call, InstrNode},
     module::Module,
 };
 
@@ -21,7 +21,7 @@ pub fn recursive(module: &mut Module<'_>) {
     // 関数呼び出しに対応するエッジを追加
     for (i_caller, caller) in module.all_funcs.iter_mut().enumerate() {
         if let Some(code) = &mut caller.code {
-            iterate_call(&mut code.instrs, |call| {
+            iterate_call(&mut code.instr_nodes, |call| {
                 graph.add_edge(nodes[i_caller], nodes[call.func], ());
             });
         }
@@ -34,7 +34,7 @@ pub fn recursive(module: &mut Module<'_>) {
         let nodes_set: HashSet<usize> = HashSet::from_iter(nodes.iter().map(|x| x.index()));
         for node in nodes {
             if let Some(code) = &mut module.all_funcs[node.index()].code {
-                iterate_call(&mut code.instrs, |call| {
+                iterate_call(&mut code.instr_nodes, |call| {
                     if nodes_set.contains(&call.func) {
                         // 同じ強連結成分に含まれる関数の呼び出しをrecursiveとする
                         call.recursive = true;
@@ -45,9 +45,9 @@ pub fn recursive(module: &mut Module<'_>) {
     }
 }
 
-fn iterate_call(instrs: &mut Vec<Instr>, mut f: impl FnMut(&mut Call)) {
-    for instr in instrs {
-        let calls = instr.all_calls();
+fn iterate_call(nodes: &mut Vec<InstrNode>, mut f: impl FnMut(&mut Call)) {
+    for node in nodes {
+        let calls = node.all_calls();
         for call in calls {
             f(call);
         }

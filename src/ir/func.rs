@@ -4,7 +4,7 @@ use wasmparser::FuncType;
 
 use super::{
     func_header,
-    instr::Instr,
+    instr::InstrNode,
     module::Module,
     result_cs_ty,
     ty::{Const, CsType},
@@ -58,7 +58,7 @@ impl Func {
         }
 
         // 本体
-        for instr in &code.instrs {
+        for instr in &code.instr_nodes {
             instr.write(f, module)?;
         }
 
@@ -76,7 +76,7 @@ pub struct FuncHeader {
 }
 
 pub struct Code {
-    pub instrs: Vec<Instr>,
+    pub instr_nodes: Vec<InstrNode>,
     pub var_decls: Vec<VarDecl>,
     pub loop_var_count: usize,
 }
@@ -84,7 +84,7 @@ pub struct Code {
 impl Code {
     pub fn new(header: &FuncHeader) -> Self {
         let mut this = Self {
-            instrs: Vec::new(),
+            instr_nodes: Vec::new(),
             var_decls: Vec::new(),
             loop_var_count: 0,
         };

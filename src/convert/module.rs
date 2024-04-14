@@ -10,7 +10,7 @@ use crate::{
     convert::code::CodeConverter,
     ir::{
         func::{Code, Func, FuncHeader, Primary},
-        instr::{Call, Instr, InstrKind},
+        instr::{Builder, Call, Instr, InstrKind},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
@@ -361,6 +361,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             };
 
             let mut code = Code::new(&header);
+            let mut builder = Builder::new();
 
             let table_name = &table.name;
             let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
@@ -369,7 +370,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
-                code.instrs.push(Instr {
+                builder.push(Instr {
                     pattern: format!("if ({table_name}[$p0] is uint) {{"),
                     params: vec![index_var.into()],
                     ..Default::default()
@@ -392,14 +393,13 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
             if cases.is_empty() {
                 if use_delegate {
-                    code.instrs
-                        .push(Instr::line(trap(self.module, "invalid table value")));
+                    builder.push(Instr::line(trap(self.module, "invalid table value")));
                 } else {
                     // call_indirect関数を生成しない
                     continue;
                 }
             } else {
-                code.instrs.push(Instr {
+                builder.push(Instr {
                     pattern: format!(
                         "switch ({}{table_name}[$p0]) {{",
                         if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
@@ -415,37 +415,33 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 };
 
                 for i in cases {
-                    code.instrs.push(Instr::line(format!("case {}:", i + 1)));
+                    builder.push(Instr::line(format!("case {}:", i + 1)));
                     let call = Call {
                         func: i,
                         recursive: false,
                         save_vars: vec![],
                         save_loop_vars: vec![],
                     };
-                    code.instrs
-                        .push(Instr::call(call, call_params.clone(), result));
+                    builder.push(Instr::call(call, call_params.clone(), result));
 
                     match result {
-                        Some(x) => code.instrs.push(Instr::return_(Some(x.into()))),
-                        None => code.instrs.push(Instr::return_(None)),
+                        Some(x) => builder.push(Instr::return_(Some(x.into()))),
+                        None => builder.push(Instr::return_(None)),
                     }
                 }
 
-                code.instrs.push(Instr::line("default:"));
-                code.instrs
-                    .push(Instr::line(trap(self.module, "invalid table value")));
+                builder.push(Instr::line("default:"));
+                builder.push(Instr::line(trap(self.module, "invalid table value")));
                 match result {
-                    Some(x) => code
-                        .instrs
-                        .push(Instr::return_(Some(x.ty.default().into()))),
-                    None => code.instrs.push(Instr::return_(None)),
+                    Some(x) => builder.push(Instr::return_(Some(x.ty.default().into()))),
+                    None => builder.push(Instr::return_(None)),
                 }
 
-                code.instrs.push(Instr::line("}"));
+                builder.push(Instr::line("}"));
             }
 
             if use_delegate {
-                code.instrs.push(Instr::line("} else {"));
+                builder.push(Instr::line("} else {"));
 
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
@@ -462,15 +458,15 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 params.push(index_var.into());
 
                 if ty.results().is_empty() {
-                    code.instrs.push(Instr {
+                    builder.push(Instr {
                         kind: InstrKind::Expr,
                         pattern,
                         params,
                         ..Default::default()
                     });
-                    code.instrs.push(Instr::return_(None));
+                    builder.push(Instr::return_(None));
                 } else {
-                    code.instrs.push(Instr {
+                    builder.push(Instr {
                         kind: InstrKind::Return,
                         pattern,
                         params,
@@ -478,8 +474,10 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                     });
                 }
 
-                code.instrs.push(Instr::line("}"));
+                builder.push(Instr::line("}"));
             }
+
+            code.instr_nodes = builder.build();
 
             let index = self.module.all_funcs.len();
             let func = Func {
@@ -502,6 +500,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         };
 
         let mut code = Code::new(&header);
+        let mut builder = Builder::new();
 
         for global in &self.module.globals {
             if global.import {
@@ -510,8 +509,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
             // グローバル変数の初期値を代入
             if let Some(init_expr) = &global.init_expr {
-                code.instrs
-                    .push(Instr::line(format!("{} = {init_expr};", global.name)));
+                builder.push(Instr::line(format!("{} = {init_expr};", global.name)));
             }
         }
 
@@ -519,7 +517,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             if !table.import {
                 // テーブル配列の作成
                 let elem_cs_ty = if self.module.test { "object" } else { "uint" };
-                code.instrs.push(Instr::line(format!(
+                builder.push(Instr::line(format!(
                     "{} = new {elem_cs_ty}[{}];",
                     table.name, table.ty.initial
                 )));
@@ -528,7 +526,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
         for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
-            code.instrs.push(Instr::line(format!(
+            builder.push(Instr::line(format!(
                 "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
                 self.module.table.as_ref().unwrap().name,
                 items.len()
@@ -538,7 +536,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         if let Some(memory) = &self.module.memory {
             if !memory.import {
                 // メモリ配列の作成
-                code.instrs.push(Instr::line(format!(
+                builder.push(Instr::line(format!(
                     "{} = new byte[{}];",
                     memory.name,
                     memory.ty.initial * PAGE_SIZE as u64
@@ -548,7 +546,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
 
         for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
             // メモリへのデータのコピー
-            code.instrs.push(Instr::line(format!(
+            builder.push(Instr::line(format!(
                 "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
                 self.module.memory.as_ref().unwrap().name,
                 data.len()
@@ -563,9 +561,10 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                 save_vars: vec![],
                 save_loop_vars: vec![],
             };
-            code.instrs.push(Instr::call(call, vec![], None));
+            builder.push(Instr::call(call, vec![], None));
         }
 
+        code.instr_nodes = builder.build();
         self.module.all_funcs.push(Func {
             header,
             code: Some(code),

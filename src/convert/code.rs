@@ -109,7 +109,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
             self.builder.push(Instr::return_(Some(res.into())));
         }
 
-        self.code.instrs = self.builder.build();
+        self.code.instr_nodes = self.builder.build();
         Ok(self.code)
     }
 
@@ -799,10 +799,12 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let result = self.new_block(blockty, false).result;
 
         self.builder.push(Instr {
-            kind: InstrKind::Block(Vec::new()),
+            kind: InstrKind::Block,
             result,
             ..Default::default()
         });
+        self.builder.start_block();
+
         Ok(())
     }
 
@@ -817,13 +819,12 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         let result = block.result;
 
         self.builder.push(Instr {
-            kind: InstrKind::Loop {
-                loop_var,
-                block: Vec::new(),
-            },
+            kind: InstrKind::Loop(loop_var),
             result,
             ..Default::default()
         });
+        self.builder.start_block();
+
         Ok(())
     }
 
@@ -837,14 +838,13 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         self.new_block(blockty, false);
 
         self.builder.push(Instr {
-            kind: InstrKind::If {
-                then: Vec::new(),
-                else_: None,
-            },
+            kind: InstrKind::If,
             pattern: "$p0 != 0".to_string(),
             params: vec![opnd],
             ..Default::default()
         });
+        self.builder.start_block();
+
         Ok(())
     }
 
@@ -857,7 +857,9 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
 
         self.blocks.last_mut().unwrap().stack.clear();
 
-        self.builder.else_();
+        self.builder.end_block();
+        self.builder.start_block();
+
         Ok(())
     }
 
@@ -880,7 +882,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
             }
         }
 
-        self.builder.end();
+        self.builder.end_block();
         Ok(())
     }
 
@@ -912,34 +914,38 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
         self.unreachable = 1;
         let opnd = self.pop_stack();
 
+        let values = targets.targets().collect::<Result<Vec<_>, _>>()?;
+
+        let mut cases: Vec<Option<u32>> = (0..values.len() as u32).map(Some).collect();
+        cases.push(None);
+
         self.builder.push(Instr {
-            kind: InstrKind::Switch(Vec::new()),
+            kind: InstrKind::Switch(cases),
             pattern: "$p0".to_string(),
             params: vec![opnd],
             ..Default::default()
         });
 
-        for (i, target) in targets.targets().enumerate() {
-            let target = target?;
-
+        for target in values {
             // case i:
+            self.builder.start_block();
             self.block_result(target, true);
             self.builder.push(Instr {
                 kind: InstrKind::Br(target),
                 ..Default::default()
             });
-            self.builder.end_case(Some(i as u32));
+            self.builder.end_block();
         }
 
         // default:
+        self.builder.start_block();
         self.block_result(targets.default(), true);
         self.builder.push(Instr {
             kind: InstrKind::Br(targets.default()),
             ..Default::default()
         });
-        self.builder.end_case(None);
+        self.builder.end_block();
 
-        self.builder.end();
         Ok(())
     }
 
