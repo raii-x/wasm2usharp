@@ -1,7 +1,7 @@
 use std::io;
 
 use crate::ir::{
-    instr::{Call, InstrKind, InstrNode},
+    instr::{Breakable, Call, InstrKind, InstrNode},
     module::Module,
     BREAK_DEPTH, LOOP, STACK, STACK_TOP,
 };
@@ -64,10 +64,10 @@ fn codegen_inner(
         InstrKind::If => {
             let child = node.child.as_ref().unwrap();
 
-            if child.breakable {
-                writeln!(f, "do if ({pattern}) {{")?;
-            } else {
+            if child.breakable == Breakable::No {
                 writeln!(f, "if ({pattern}) {{")?;
+            } else {
+                writeln!(f, "do if ({pattern}) {{")?;
             }
 
             for instr in &child.blocks[0] {
@@ -81,14 +81,17 @@ fn codegen_inner(
                 }
             }
 
-            if child.breakable {
-                writeln!(f, "}} while (false);")?;
-            } else {
+            if child.breakable == Breakable::No {
                 writeln!(f, "}}")?;
+            } else {
+                writeln!(f, "}} while (false);")?;
             }
         }
         InstrKind::Br(depth) => {
-            write_break(f, *depth)?;
+            if *depth > 0 {
+                writeln!(f, "{BREAK_DEPTH} = {depth};")?;
+            }
+            writeln!(f, "break;")?;
         }
         InstrKind::Switch(cases) => {
             writeln!(f, "switch ({pattern}) {{")?;
@@ -120,8 +123,14 @@ fn codegen_inner(
         }
     }
 
-    if node.child.as_ref().map_or(false, |c| c.breakable) {
-        write_multi_break(f, in_block)?;
+    // 最も外側のブロックのendでない、かつ多重breakが可能な場合のみ
+    if in_block
+        && node
+            .child
+            .as_ref()
+            .map_or(false, |c| c.breakable == Breakable::Multi)
+    {
+        writeln!(f, "if ({BREAK_DEPTH} > 0) {{ {BREAK_DEPTH}--; break; }}")?;
     }
 
     if let Some(call) = &node.instr.call {
@@ -130,21 +139,6 @@ fn codegen_inner(
     Ok(())
 }
 
-fn write_multi_break(f: &mut dyn io::Write, in_block: bool) -> io::Result<()> {
-    // 最も外側のブロックのendでない場合のみ
-    if in_block {
-        // 多重break
-        writeln!(f, "if ({BREAK_DEPTH} > 0) {{ {BREAK_DEPTH}--; break; }}")?;
-    }
-    Ok(())
-}
-
-fn write_break(f: &mut dyn io::Write, depth: u32) -> io::Result<()> {
-    if depth > 0 {
-        writeln!(f, "{BREAK_DEPTH} = {depth};")?;
-    }
-    writeln!(f, "break;")
-}
 fn push_save_vars(call: &Call, f: &mut dyn io::Write) -> io::Result<()> {
     if call.recursive && !call.save_vars.is_empty() {
         // ローカル変数保存用のスタックにプッシュ

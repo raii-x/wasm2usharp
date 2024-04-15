@@ -1,6 +1,6 @@
 use super::{
     func::{Primary, Var},
-    instr::{Call, Instr, InstrChild, InstrKind, InstrNode},
+    instr::{Breakable, Call, Instr, InstrChild, InstrKind, InstrNode},
 };
 
 pub struct Builder {
@@ -21,7 +21,7 @@ impl Builder {
             .push(InstrNode { instr, child: None });
     }
 
-    pub fn push_with_child(&mut self, instr: Instr, breakable: bool) {
+    pub fn push_with_child(&mut self, instr: Instr, breakable: Breakable) {
         self.blocks.last_mut().unwrap().push(InstrNode {
             instr,
             child: Some(InstrChild {
@@ -91,7 +91,7 @@ impl Builder {
         });
     }
 
-    pub fn push_if(&mut self, cond: Primary, breakable: bool) {
+    pub fn push_if(&mut self, cond: Primary, breakable: Breakable) {
         self.push_with_child(
             Instr {
                 kind: InstrKind::If,

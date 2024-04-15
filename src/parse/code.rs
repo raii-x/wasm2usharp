@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::ir::{
     builder::Builder,
     func::{Code, FuncVars, Primary, Var},
-    instr::{Call, Instr, InstrKind},
+    instr::{Breakable, Call, Instr, InstrKind},
     module::Module,
     trap,
     ty::{Const, CsType},
@@ -780,7 +780,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
                 result,
                 ..Default::default()
             },
-            true,
+            Breakable::Multi,
         );
         self.builder.start_block();
 
@@ -803,7 +803,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
                 result,
                 ..Default::default()
             },
-            true,
+            Breakable::Multi,
         );
         self.builder.start_block();
 
@@ -819,7 +819,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let opnd = self.pop_stack();
         self.new_block(blockty, false);
 
-        self.builder.push_if(opnd, true);
+        self.builder.push_if(opnd, Breakable::Multi);
         self.builder.start_block();
 
         Ok(())
@@ -874,7 +874,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     fn visit_br_if(&mut self, relative_depth: u32) -> Self::Output {
         let opnd = self.pop_stack();
 
-        self.builder.push_if(opnd, false);
+        self.builder.push_if(opnd, Breakable::No);
         self.builder.start_block();
         self.block_result(relative_depth, true);
         self.builder.push_br(relative_depth);
@@ -898,7 +898,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
                 params: vec![opnd],
                 ..Default::default()
             },
-            false,
+            Breakable::No,
         );
 
         for target in values {

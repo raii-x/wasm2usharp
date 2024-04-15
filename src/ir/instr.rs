@@ -3,6 +3,7 @@ use super::{
     module::Module,
 };
 
+#[derive(Debug)]
 pub struct InstrNode {
     pub instr: Instr,
     pub child: Option<InstrChild>,
@@ -45,9 +46,20 @@ pub struct Call {
     pub save_loop_vars: Vec<usize>,
 }
 
+#[derive(Debug)]
 pub struct InstrChild {
     pub blocks: Vec<Vec<InstrNode>>,
-    pub breakable: bool,
+    pub breakable: Breakable,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Breakable {
+    /// breakが不可能
+    No,
+    /// 1段階のbreakのみ可能
+    Single,
+    /// 複数段階のbreakが可能
+    Multi,
 }
 
 impl Instr {
