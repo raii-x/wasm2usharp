@@ -90,11 +90,6 @@ fn codegen_inner(
         InstrKind::Br(depth) => {
             write_break(f, *depth)?;
         }
-        InstrKind::BrIf(depth) => {
-            writeln!(f, "if ({pattern}) {{")?;
-            write_break(f, *depth)?;
-            writeln!(f, "}}")?;
-        }
         InstrKind::Switch(cases) => {
             writeln!(f, "switch ({pattern}) {{")?;
 

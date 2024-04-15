@@ -871,14 +871,12 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
 
     fn visit_br_if(&mut self, relative_depth: u32) -> Self::Output {
         let opnd = self.pop_stack();
-        self.block_result(relative_depth, true);
 
-        self.builder.push(Instr {
-            kind: InstrKind::BrIf(relative_depth),
-            pattern: "$p0 != 0".to_string(),
-            params: vec![opnd],
-            ..Default::default()
-        });
+        self.builder.push_if(opnd, false);
+        self.builder.start_block();
+        self.block_result(relative_depth, true);
+        self.builder.push_br(relative_depth);
+        self.builder.end_block();
         Ok(())
     }
 

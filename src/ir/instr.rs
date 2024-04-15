@@ -33,7 +33,6 @@ pub enum InstrKind {
     Loop(usize),
     If,
     Br(u32),
-    BrIf(u32),
     /// 各caseの値、Noneならdefault
     Switch(Vec<Option<u32>>),
 }
