@@ -64,7 +64,12 @@ fn codegen_inner(
         InstrKind::If => {
             let child = node.child.as_ref().unwrap();
 
-            writeln!(f, "do if ({pattern}) {{")?;
+            if child.breakable {
+                writeln!(f, "do if ({pattern}) {{")?;
+            } else {
+                writeln!(f, "if ({pattern}) {{")?;
+            }
+
             for instr in &child.blocks[0] {
                 codegen_inner(instr, f, module, true)?;
             }
@@ -76,7 +81,11 @@ fn codegen_inner(
                 }
             }
 
-            writeln!(f, "}} while (false);")?;
+            if child.breakable {
+                writeln!(f, "}} while (false);")?;
+            } else {
+                writeln!(f, "}}")?;
+            }
         }
         InstrKind::Br(depth) => {
             write_break(f, *depth)?;
