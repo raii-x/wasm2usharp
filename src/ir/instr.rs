@@ -254,22 +254,20 @@ impl InstrNode {
         Ok(())
     }
 
-    pub fn all_calls(&mut self) -> Vec<&mut Call> {
-        let mut calls = Vec::new();
-        self.all_calls_inner(&mut calls);
-        calls
+    pub fn all_instrs(&mut self) -> Vec<&mut Instr> {
+        let mut instrs = Vec::new();
+        self.all_instrs_inner(&mut instrs);
+        instrs
     }
 
-    fn all_calls_inner<'a>(&'a mut self, calls: &mut Vec<&'a mut Call>) {
-        if let Some(call) = &mut self.instr.call {
-            calls.push(call);
-        };
+    fn all_instrs_inner<'a>(&'a mut self, instrs: &mut Vec<&'a mut Instr>) {
+        instrs.push(&mut self.instr);
 
         let Some(child) = &mut self.child else { return };
 
         for block in &mut child.blocks {
             for instr in block {
-                instr.all_calls_inner(calls);
+                instr.all_instrs_inner(instrs);
             }
         }
     }
