@@ -33,7 +33,7 @@ macro_rules! define_visit_operator {
     }
 }
 
-pub struct CodeConverter<'input, 'module> {
+pub struct CodeParser<'input, 'module> {
     module: &'module Module<'input>,
     func: usize,
     blocks: Vec<Block>,
@@ -53,7 +53,7 @@ struct Block {
     loop_var: Option<usize>,
 }
 
-impl<'input, 'module> CodeConverter<'input, 'module> {
+impl<'input, 'module> CodeParser<'input, 'module> {
     pub(super) fn new(module: &'module Module<'input>, func: usize) -> Self {
         let header = &module.all_funcs[func].header;
         let code = Code::new(header);
@@ -68,7 +68,7 @@ impl<'input, 'module> CodeConverter<'input, 'module> {
         }
     }
 
-    pub fn convert(mut self, body: FunctionBody<'_>) -> Result<Code> {
+    pub fn parse(mut self, body: FunctionBody<'_>) -> Result<Code> {
         for local in body.get_locals_reader()? {
             let (count, ty) = local?;
             for _ in 0..count {
@@ -773,7 +773,7 @@ fn index_pattern(offset: u64) -> String {
     }
 }
 
-impl<'a, 'input, 'module> VisitOperator<'a> for CodeConverter<'input, 'module> {
+impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     type Output = Result<()>;
 
     for_each_operator!(define_visit_operator);

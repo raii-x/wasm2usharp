@@ -6,10 +6,7 @@ use std::{
 };
 
 use tempfile::{tempdir, TempDir};
-use wasm2usharp::{
-    convert::{convert, convert_to_ident},
-    ir::INIT,
-};
+use wasm2usharp::{convert, ir::INIT, parse::convert_to_ident};
 use wast::token::Id;
 
 pub struct CsProj<'input> {

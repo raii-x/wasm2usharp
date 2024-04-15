@@ -1,22 +1,27 @@
 #![warn(rust_2018_idioms, clippy::clone_on_ref_ptr)]
 
 pub mod codegen;
-pub mod convert;
 pub mod ir;
+pub mod parse;
 pub mod pass;
 pub mod util;
 
 use std::{
+    collections::HashSet,
     fs,
     io::{BufWriter, Write},
     path::Path,
     process::ExitCode,
 };
 
+use anyhow::Result;
 use clap::Parser;
+use codegen::codegen_module;
+use ir::module::Module;
+use pass::run_passes;
 use wasmparser::validate;
 
-use convert::{convert, convert_to_ident};
+use parse::{convert_to_ident, parse_module};
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -58,4 +63,20 @@ pub fn lib_main() -> ExitCode {
     .unwrap();
 
     ExitCode::SUCCESS
+}
+
+pub fn convert<'input>(
+    buf: &'input [u8],
+    class_name: String,
+    test: bool,
+    out_file: &mut dyn Write,
+    import_map: &dyn Fn(&str) -> String,
+) -> Result<HashSet<&'input str>> {
+    let mut module = Module::new(buf, class_name, test);
+
+    let ret = parse_module(&mut module, import_map)?;
+    run_passes(&mut module);
+    codegen_module(&module, out_file)?;
+
+    Ok(ret)
 }

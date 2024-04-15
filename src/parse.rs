@@ -1,32 +1,22 @@
 mod code;
 mod module;
 
-use std::{collections::HashSet, io::Write};
+use std::collections::HashSet;
 
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::{codegen::codegen_module, ir::module::Module, pass::run_passes};
+use crate::ir::module::Module;
 
-use self::module::ModuleConverter;
+use self::module::ModuleParser;
 
-pub fn convert<'input>(
-    buf: &'input [u8],
-    class_name: String,
-    test: bool,
-    out_file: &mut dyn Write,
+pub fn parse_module<'input>(
+    module: &mut Module<'input>,
     import_map: &dyn Fn(&str) -> String,
 ) -> Result<HashSet<&'input str>> {
-    let mut module = Module::new(buf, class_name, test);
-    let mut conv = ModuleConverter::new(&mut module);
-
-    let ret = conv.convert(import_map)?;
-    run_passes(&mut module);
-
-    codegen_module(&module, out_file)?;
-
-    Ok(ret)
+    let mut conv = ModuleParser::new(module);
+    conv.parse(import_map)
 }
 
 pub fn convert_to_ident(name: &str) -> String {

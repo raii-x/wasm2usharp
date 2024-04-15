@@ -7,7 +7,6 @@ use wasmparser::{
 };
 
 use crate::{
-    convert::code::CodeConverter,
     ir::{
         func::{Code, Func, FuncHeader, Primary},
         instr::{Builder, Call, Instr, InstrKind},
@@ -16,16 +15,17 @@ use crate::{
         ty::{Const, CsType},
         CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE, W2US_PREFIX,
     },
+    parse::code::CodeParser,
 };
 
 use super::convert_to_ident;
 
-pub struct ModuleConverter<'input, 'module> {
+pub struct ModuleParser<'input, 'module> {
     module: &'module mut Module<'input>,
     code_idx: usize,
 }
 
-impl<'input, 'module> ModuleConverter<'input, 'module> {
+impl<'input, 'module> ModuleParser<'input, 'module> {
     pub fn new(module: &'module mut Module<'input>) -> Self {
         Self {
             module,
@@ -34,11 +34,11 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
     }
 
     /// import_mapはモジュール名をモジュールと対応するクラス型の名前に変換する関数
-    pub fn convert(&mut self, import_map: &dyn Fn(&str) -> String) -> Result<HashSet<&'input str>> {
+    pub fn parse(&mut self, import_map: &dyn Fn(&str) -> String) -> Result<HashSet<&'input str>> {
         let mut import_modules = HashSet::new();
 
         for payload in Parser::new(0).parse_all(self.module.buf) {
-            self.convert_payload(payload?, &mut import_modules, &import_map)?;
+            self.parse_payload(payload?, &mut import_modules, &import_map)?;
         }
 
         self.add_init_method();
@@ -46,7 +46,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         Ok(import_modules)
     }
 
-    fn convert_payload(
+    fn parse_payload(
         &mut self,
         payload: wasmparser::Payload<'input>,
         import_modules: &mut HashSet<&'input str>,
@@ -162,7 +162,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                             offset_expr,
                         } => {
                             assert!(table_index.is_none());
-                            self.convert_const_expr(&offset_expr)
+                            self.parse_const_expr(&offset_expr)
                         }
                         _ => panic!("Not supported element kind"),
                     };
@@ -192,7 +192,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
                             if memory_index != 0 {
                                 panic!("Multi memory is not supported");
                             }
-                            self.convert_const_expr(&offset_expr)
+                            self.parse_const_expr(&offset_expr)
                         }
                         DataKind::Passive => panic!("Passive data segment is not supported"),
                     };
@@ -207,8 +207,8 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             }
             CodeSectionEntry(s) => {
                 let code = {
-                    let code_conv = CodeConverter::new(self.module, self.code_idx);
-                    code_conv.convert(s)?
+                    let code_conv = CodeParser::new(self.module, self.code_idx);
+                    code_conv.parse(s)?
                 };
 
                 self.module.all_funcs[self.code_idx].code = Some(code);
@@ -300,7 +300,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
             Some(x) => x,
             None => format!("{W2US_PREFIX}global{}", self.module.globals.len()),
         };
-        let init_expr = init_expr.map(|x| self.convert_const_expr(&x));
+        let init_expr = init_expr.map(|x| self.parse_const_expr(&x));
 
         self.module.globals.push(Global {
             ty,
@@ -311,7 +311,7 @@ impl<'input, 'module> ModuleConverter<'input, 'module> {
         });
     }
 
-    fn convert_const_expr(&self, expr: &ConstExpr<'_>) -> String {
+    fn parse_const_expr(&self, expr: &ConstExpr<'_>) -> String {
         use wasmparser::Operator::*;
         let mut op_iter = expr.get_operators_reader().into_iter();
         let value = match op_iter.next().unwrap().unwrap() {
