@@ -15,15 +15,16 @@ impl Builder {
     }
 
     pub fn push(&mut self, instr: Instr) {
-        let breakable = match instr.kind {
-            InstrKind::Block | InstrKind::Loop { .. } | InstrKind::If { .. } => Some(true),
-            InstrKind::Switch(_) => Some(false),
-            _ => None,
-        };
+        self.blocks
+            .last_mut()
+            .unwrap()
+            .push(InstrNode { instr, child: None });
+    }
 
+    pub fn push_with_child(&mut self, instr: Instr, breakable: bool) {
         self.blocks.last_mut().unwrap().push(InstrNode {
             instr,
-            child: breakable.map(|breakable| InstrChild {
+            child: Some(InstrChild {
                 blocks: Vec::new(),
                 breakable,
             }),

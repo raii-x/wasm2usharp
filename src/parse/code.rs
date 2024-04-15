@@ -772,11 +772,14 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
 
         let result = self.new_block(blockty, false).result;
 
-        self.builder.push(Instr {
-            kind: InstrKind::Block,
-            result,
-            ..Default::default()
-        });
+        self.builder.push_with_child(
+            Instr {
+                kind: InstrKind::Block,
+                result,
+                ..Default::default()
+            },
+            true,
+        );
         self.builder.start_block();
 
         Ok(())
@@ -792,11 +795,14 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let loop_var = block.loop_var.unwrap();
         let result = block.result;
 
-        self.builder.push(Instr {
-            kind: InstrKind::Loop(loop_var),
-            result,
-            ..Default::default()
-        });
+        self.builder.push_with_child(
+            Instr {
+                kind: InstrKind::Loop(loop_var),
+                result,
+                ..Default::default()
+            },
+            true,
+        );
         self.builder.start_block();
 
         Ok(())
@@ -811,12 +817,15 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let opnd = self.pop_stack();
         self.new_block(blockty, false);
 
-        self.builder.push(Instr {
-            kind: InstrKind::If,
-            pattern: "$p0 != 0".to_string(),
-            params: vec![opnd],
-            ..Default::default()
-        });
+        self.builder.push_with_child(
+            Instr {
+                kind: InstrKind::If,
+                pattern: "$p0 != 0".to_string(),
+                params: vec![opnd],
+                ..Default::default()
+            },
+            true,
+        );
         self.builder.start_block();
 
         Ok(())
@@ -893,12 +902,15 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let mut cases: Vec<Option<u32>> = (0..values.len() as u32).map(Some).collect();
         cases.push(None);
 
-        self.builder.push(Instr {
-            kind: InstrKind::Switch(cases),
-            pattern: "$p0".to_string(),
-            params: vec![opnd],
-            ..Default::default()
-        });
+        self.builder.push_with_child(
+            Instr {
+                kind: InstrKind::Switch(cases),
+                pattern: "$p0".to_string(),
+                params: vec![opnd],
+                ..Default::default()
+            },
+            false,
+        );
 
         for target in values {
             // case i:
