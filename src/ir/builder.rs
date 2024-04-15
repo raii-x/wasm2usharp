@@ -103,6 +103,13 @@ impl Builder {
         );
     }
 
+    pub fn push_br(&mut self, depth: u32) {
+        self.push(Instr {
+            kind: InstrKind::Br(depth),
+            ..Default::default()
+        });
+    }
+
     pub fn start_block(&mut self) {
         self.blocks.push(Vec::new());
     }

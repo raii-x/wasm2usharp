@@ -865,10 +865,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         self.block_result(relative_depth, true);
         self.unreachable = 1;
 
-        self.builder.push(Instr {
-            kind: InstrKind::Br(relative_depth),
-            ..Default::default()
-        });
+        self.builder.push_br(relative_depth);
         Ok(())
     }
 
@@ -908,20 +905,14 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
             // case i:
             self.builder.start_block();
             self.block_result(target, true);
-            self.builder.push(Instr {
-                kind: InstrKind::Br(target),
-                ..Default::default()
-            });
+            self.builder.push_br(target);
             self.builder.end_block();
         }
 
         // default:
         self.builder.start_block();
         self.block_result(targets.default(), true);
-        self.builder.push(Instr {
-            kind: InstrKind::Br(targets.default()),
-            ..Default::default()
-        });
+        self.builder.push_br(targets.default());
         self.builder.end_block();
 
         Ok(())
