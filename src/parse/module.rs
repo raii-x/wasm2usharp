@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::{
     ir::{
         builder::Builder,
-        func::{Code, Func, FuncHeader, Primary},
+        func::{Code, Func, FuncHeader, FuncVars, Primary},
         instr::{Call, Instr, InstrKind},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
@@ -361,13 +361,13 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 export: false,
             };
 
-            let mut code = Code::new(&header);
+            let mut vars = FuncVars::new(&header);
             let mut builder = Builder::new();
 
             let table_name = &table.name;
             let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
 
-            let index_var = code.var_decls.last().unwrap().var;
+            let index_var = vars.var_decls.last().unwrap().var;
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
@@ -379,7 +379,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             }
 
             // 関数呼び出し用の引数リスト
-            let call_params: Vec<Primary> = code.var_decls[0..code.var_decls.len() - 1]
+            let call_params: Vec<Primary> = vars.var_decls[0..vars.var_decls.len() - 1]
                 .iter()
                 .map(|x| x.var.into())
                 .collect();
@@ -412,7 +412,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 let result = if ty.results().is_empty() {
                     None
                 } else {
-                    Some(code.new_var(CsType::get(ty.results()[0]), None))
+                    Some(vars.new_var(CsType::get(ty.results()[0]), None))
                 };
 
                 for i in cases {
@@ -478,12 +478,13 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 builder.push_line("}");
             }
 
-            code.instr_nodes = builder.build();
-
             let index = self.module.all_funcs.len();
             let func = Func {
                 header,
-                code: Some(code),
+                code: Some(Code {
+                    instr_nodes: builder.build(),
+                    vars,
+                }),
                 in_table: false,
             };
 
@@ -500,7 +501,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             export: true,
         };
 
-        let mut code = Code::new(&header);
+        let vars = FuncVars::new(&header);
         let mut builder = Builder::new();
 
         for global in &self.module.globals {
@@ -565,10 +566,12 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             builder.push_call(call, vec![], None);
         }
 
-        code.instr_nodes = builder.build();
         self.module.all_funcs.push(Func {
             header,
-            code: Some(code),
+            code: Some(Code {
+                instr_nodes: builder.build(),
+                vars,
+            }),
             in_table: false,
         });
     }

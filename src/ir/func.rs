@@ -22,14 +22,17 @@ pub struct FuncHeader {
 
 pub struct Code {
     pub instr_nodes: Vec<InstrNode>,
+    pub vars: FuncVars,
+}
+
+pub struct FuncVars {
     pub var_decls: Vec<VarDecl>,
     pub loop_var_count: usize,
 }
 
-impl Code {
+impl FuncVars {
     pub fn new(header: &FuncHeader) -> Self {
         let mut this = Self {
-            instr_nodes: Vec::new(),
             var_decls: Vec::new(),
             loop_var_count: 0,
         };

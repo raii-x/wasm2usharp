@@ -25,7 +25,7 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
         .params()
         .iter()
         .map(|&ty| CsType::get(ty))
-        .zip(code.var_decls.iter().map(|x| &x.var))
+        .zip(code.vars.var_decls.iter().map(|x| &x.var))
         .collect();
     write!(
         f,
@@ -38,12 +38,12 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
     writeln!(f, "int {BREAK_DEPTH} = 0;")?;
 
     // ループ変数
-    for i in 0..code.loop_var_count {
+    for i in 0..code.vars.loop_var_count {
         writeln!(f, "bool {LOOP}{i};")?;
     }
 
     // 一時変数
-    for decl in code.var_decls.iter().skip(func_ty.params().len()) {
+    for decl in code.vars.var_decls.iter().skip(func_ty.params().len()) {
         match decl.default {
             Some(def) => writeln!(f, "{} {} = {def};", decl.var.ty, decl.var)?,
             None => writeln!(f, "{} {};", decl.var.ty, decl.var)?,
