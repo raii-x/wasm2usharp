@@ -1,5 +1,6 @@
 #![warn(rust_2018_idioms, clippy::clone_on_ref_ptr)]
 
+pub mod codegen;
 pub mod convert;
 pub mod ir;
 pub mod pass;
