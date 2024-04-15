@@ -817,15 +817,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let opnd = self.pop_stack();
         self.new_block(blockty, false);
 
-        self.builder.push_with_child(
-            Instr {
-                kind: InstrKind::If,
-                pattern: "$p0 != 0".to_string(),
-                params: vec![opnd],
-                ..Default::default()
-            },
-            true,
-        );
+        self.builder.push_if(opnd, true);
         self.builder.start_block();
 
         Ok(())

@@ -91,6 +91,18 @@ impl Builder {
         });
     }
 
+    pub fn push_if(&mut self, cond: Primary, breakable: bool) {
+        self.push_with_child(
+            Instr {
+                kind: InstrKind::If,
+                pattern: "$p0 != 0".to_string(),
+                params: vec![cond],
+                ..Default::default()
+            },
+            breakable,
+        );
+    }
+
     pub fn start_block(&mut self) {
         self.blocks.push(Vec::new());
     }
