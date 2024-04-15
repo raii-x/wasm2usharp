@@ -394,7 +394,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
 
             if cases.is_empty() {
                 if use_delegate {
-                    builder.push(Instr::line(trap(self.module, "invalid table value")));
+                    builder.push_line(trap(self.module, "invalid table value"));
                 } else {
                     // call_indirect関数を生成しない
                     continue;
@@ -416,33 +416,33 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 };
 
                 for i in cases {
-                    builder.push(Instr::line(format!("case {}:", i + 1)));
+                    builder.push_line(format!("case {}:", i + 1));
                     let call = Call {
                         func: i,
                         recursive: false,
                         save_vars: vec![],
                         save_loop_vars: vec![],
                     };
-                    builder.push(Instr::call(call, call_params.clone(), result));
+                    builder.push_call(call, call_params.clone(), result);
 
                     match result {
-                        Some(x) => builder.push(Instr::return_(Some(x.into()))),
-                        None => builder.push(Instr::return_(None)),
+                        Some(x) => builder.push_return(Some(x.into())),
+                        None => builder.push_return(None),
                     }
                 }
 
-                builder.push(Instr::line("default:"));
-                builder.push(Instr::line(trap(self.module, "invalid table value")));
+                builder.push_line("default:");
+                builder.push_line(trap(self.module, "invalid table value"));
                 match result {
-                    Some(x) => builder.push(Instr::return_(Some(x.ty.default().into()))),
-                    None => builder.push(Instr::return_(None)),
+                    Some(x) => builder.push_return(Some(x.ty.default().into())),
+                    None => builder.push_return(None),
                 }
 
-                builder.push(Instr::line("}"));
+                builder.push_line("}");
             }
 
             if use_delegate {
-                builder.push(Instr::line("} else {"));
+                builder.push_line("} else {");
 
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
@@ -465,7 +465,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                         params,
                         ..Default::default()
                     });
-                    builder.push(Instr::return_(None));
+                    builder.push_return(None);
                 } else {
                     builder.push(Instr {
                         kind: InstrKind::Return,
@@ -475,7 +475,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     });
                 }
 
-                builder.push(Instr::line("}"));
+                builder.push_line("}");
             }
 
             code.instr_nodes = builder.build();
@@ -510,7 +510,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
 
             // グローバル変数の初期値を代入
             if let Some(init_expr) = &global.init_expr {
-                builder.push(Instr::line(format!("{} = {init_expr};", global.name)));
+                builder.push_line(format!("{} = {init_expr};", global.name));
             }
         }
 
@@ -518,40 +518,40 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             if !table.import {
                 // テーブル配列の作成
                 let elem_cs_ty = if self.module.test { "object" } else { "uint" };
-                builder.push(Instr::line(format!(
+                builder.push_line(format!(
                     "{} = new {elem_cs_ty}[{}];",
                     table.name, table.ty.initial
-                )));
+                ));
             }
         }
 
         for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
-            builder.push(Instr::line(format!(
+            builder.push_line(format!(
                 "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
                 self.module.table.as_ref().unwrap().name,
                 items.len()
-            )));
+            ));
         }
 
         if let Some(memory) = &self.module.memory {
             if !memory.import {
                 // メモリ配列の作成
-                builder.push(Instr::line(format!(
+                builder.push_line(format!(
                     "{} = new byte[{}];",
                     memory.name,
                     memory.ty.initial * PAGE_SIZE as u64
-                )));
+                ));
             }
         }
 
         for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
             // メモリへのデータのコピー
-            builder.push(Instr::line(format!(
+            builder.push_line(format!(
                 "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
                 self.module.memory.as_ref().unwrap().name,
                 data.len()
-            )));
+            ));
         }
 
         if let Some(start_func) = self.module.start_func {
@@ -562,7 +562,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 save_vars: vec![],
                 save_loop_vars: vec![],
             };
-            builder.push(Instr::call(call, vec![], None));
+            builder.push_call(call, vec![], None);
         }
 
         code.instr_nodes = builder.build();
