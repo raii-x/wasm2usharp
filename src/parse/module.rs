@@ -8,8 +8,9 @@ use wasmparser::{
 
 use crate::{
     ir::{
+        builder::Builder,
         func::{Code, Func, FuncHeader, Primary},
-        instr::{Builder, Call, Instr, InstrKind},
+        instr::{Call, Instr, InstrKind},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
