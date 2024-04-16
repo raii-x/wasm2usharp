@@ -482,7 +482,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             let func = Func {
                 header,
                 code: Some(Code {
-                    instr_nodes: builder.build(),
+                    instr_tree: builder.build(),
                     vars,
                 }),
                 in_table: false,
@@ -569,7 +569,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
         self.module.all_funcs.push(Func {
             header,
             code: Some(Code {
-                instr_nodes: builder.build(),
+                instr_tree: builder.build(),
                 vars,
             }),
             in_table: false,

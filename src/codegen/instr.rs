@@ -1,25 +1,28 @@
 use std::io;
 
 use crate::ir::{
-    instr::{Breakable, Call, InstrKind, InstrNode},
+    instr::{Breakable, Call, InstrKind, InstrNodeId, InstrTree},
     module::Module,
     BREAK_DEPTH, LOOP, STACK, STACK_TOP,
 };
 
 pub fn codegen_instr_node(
-    node: &InstrNode,
     f: &mut dyn io::Write,
+    tree: &InstrTree,
+    id: InstrNodeId,
     module: &Module<'_>,
 ) -> io::Result<()> {
-    codegen_inner(node, f, module, false)
+    codegen_inner(f, tree, id, module, false)
 }
 
 fn codegen_inner(
-    node: &InstrNode,
     f: &mut dyn io::Write,
+    tree: &InstrTree,
+    id: InstrNodeId,
     module: &Module<'_>,
     in_block: bool,
 ) -> io::Result<()> {
+    let node = tree.get(id).unwrap();
     let pattern = node.instr.expand_pattern(module);
 
     if let Some(call) = &node.instr.call {
@@ -42,8 +45,8 @@ fn codegen_inner(
         }
         InstrKind::Block => {
             writeln!(f, "do {{")?;
-            for instr in &node.child.as_ref().unwrap().blocks[0] {
-                codegen_inner(instr, f, module, true)?;
+            for id in &node.child.as_ref().unwrap().blocks[0] {
+                codegen_inner(f, tree, *id, module, true)?;
             }
             writeln!(f, "}} while (false);")?;
         }
@@ -52,8 +55,8 @@ fn codegen_inner(
             writeln!(f, "do {{")?;
             writeln!(f, "do {{")?;
 
-            for instr in &node.child.as_ref().unwrap().blocks[0] {
-                codegen_inner(instr, f, module, true)?;
+            for id in &node.child.as_ref().unwrap().blocks[0] {
+                codegen_inner(f, tree, *id, module, true)?;
             }
 
             writeln!(f, "{LOOP}{loop_var} = false;")?;
@@ -70,14 +73,14 @@ fn codegen_inner(
                 writeln!(f, "do if ({pattern}) {{")?;
             }
 
-            for instr in &child.blocks[0] {
-                codegen_inner(instr, f, module, true)?;
+            for id in &child.blocks[0] {
+                codegen_inner(f, tree, *id, module, true)?;
             }
 
             if let Some(else_) = child.blocks.get(1) {
                 writeln!(f, "}} else {{")?;
-                for instr in else_ {
-                    codegen_inner(instr, f, module, true)?;
+                for id in else_ {
+                    codegen_inner(f, tree, *id, module, true)?;
                 }
             }
 
@@ -106,15 +109,14 @@ fn codegen_inner(
                     writeln!(f, "default:")?;
                 }
 
-                for instr in block {
-                    codegen_inner(instr, f, module, in_block)?;
+                for id in block {
+                    codegen_inner(f, tree, *id, module, in_block)?;
                 }
 
                 // 命令がない、または最後の命令がbrではない場合にbreak
-                if block
-                    .last()
-                    .map_or(true, |n| !matches!(n.instr.kind, InstrKind::Br(..)))
-                {
+                if block.last().map_or(true, |id| {
+                    !matches!(tree.get(*id).unwrap().instr.kind, InstrKind::Br(..))
+                }) {
                     writeln!(f, "break;")?;
                 }
             }

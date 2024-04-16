@@ -51,8 +51,8 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
     }
 
     // 本体
-    for instr in &code.instr_nodes {
-        codegen_instr_node(instr, f, module)?;
+    for id in &code.instr_tree.root {
+        codegen_instr_node(f, &code.instr_tree, *id, module)?;
     }
 
     writeln!(f, "}}")?;

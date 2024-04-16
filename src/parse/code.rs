@@ -111,7 +111,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         }
 
         Ok(Code {
-            instr_nodes: self.builder.build(),
+            instr_tree: self.builder.build(),
             vars: self.vars,
         })
     }

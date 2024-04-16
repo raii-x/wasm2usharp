@@ -1,34 +1,35 @@
 use super::{
     func::{Primary, Var},
-    instr::{Breakable, Call, Instr, InstrChild, InstrKind, InstrNode},
+    instr::{Breakable, Call, Instr, InstrChild, InstrKind, InstrNode, InstrNodeId, InstrTree},
 };
 
 pub struct Builder {
-    blocks: Vec<Vec<InstrNode>>,
+    tree: InstrTree,
+    blocks: Vec<Vec<InstrNodeId>>,
 }
 
 impl Builder {
     pub fn new() -> Self {
         Self {
+            tree: InstrTree::new(),
             blocks: vec![Vec::new()],
         }
     }
 
     pub fn push(&mut self, instr: Instr) {
-        self.blocks
-            .last_mut()
-            .unwrap()
-            .push(InstrNode { instr, child: None });
+        let id = self.tree.push(InstrNode { instr, child: None });
+        self.blocks.last_mut().unwrap().push(id);
     }
 
     pub fn push_with_child(&mut self, instr: Instr, breakable: Breakable) {
-        self.blocks.last_mut().unwrap().push(InstrNode {
+        let id = self.tree.push(InstrNode {
             instr,
             child: Some(InstrChild {
                 blocks: Vec::new(),
                 breakable,
             }),
         });
+        self.blocks.last_mut().unwrap().push(id);
     }
 
     pub fn push_line(&mut self, line: impl Into<String>) {
@@ -116,14 +117,16 @@ impl Builder {
 
     pub fn end_block(&mut self) {
         let block = self.blocks.pop().unwrap();
-        let instr = self.blocks.last_mut().unwrap().last_mut().unwrap();
+        let id = self.blocks.last().unwrap().last().unwrap();
+        let instr = self.tree.get_mut(*id).unwrap();
 
         instr.child.as_mut().unwrap().blocks.push(block);
     }
 
-    pub fn build(self) -> Vec<InstrNode> {
-        assert!(self.blocks.len() == 1);
-        self.blocks.into_iter().next().unwrap()
+    pub fn build(mut self) -> InstrTree {
+        assert_eq!(self.blocks.len(), 1);
+        self.tree.root = self.blocks.into_iter().next().unwrap();
+        self.tree
     }
 }
 

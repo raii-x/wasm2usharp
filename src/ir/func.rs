@@ -3,7 +3,7 @@ use std::fmt;
 use wasmparser::FuncType;
 
 use super::{
-    instr::InstrNode,
+    instr::InstrTree,
     ty::{Const, CsType},
 };
 
@@ -21,7 +21,7 @@ pub struct FuncHeader {
 }
 
 pub struct Code {
-    pub instr_nodes: Vec<InstrNode>,
+    pub instr_tree: InstrTree,
     pub vars: FuncVars,
 }
 

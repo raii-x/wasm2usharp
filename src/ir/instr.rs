@@ -3,6 +3,14 @@ use super::{
     module::Module,
 };
 
+pub struct InstrTree {
+    nodes: Vec<Option<InstrNode>>,
+    pub root: Vec<InstrNodeId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct InstrNodeId(usize);
+
 #[derive(Debug)]
 pub struct InstrNode {
     pub instr: Instr,
@@ -48,7 +56,7 @@ pub struct Call {
 
 #[derive(Debug)]
 pub struct InstrChild {
-    pub blocks: Vec<Vec<InstrNode>>,
+    pub blocks: Vec<Vec<InstrNodeId>>,
     pub breakable: Breakable,
 }
 
@@ -60,6 +68,53 @@ pub enum Breakable {
     Single,
     /// 複数段階のbreakが可能
     Multi,
+}
+
+impl InstrTree {
+    pub fn new() -> Self {
+        Self {
+            nodes: Vec::new(),
+            root: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, node: InstrNode) -> InstrNodeId {
+        let id = InstrNodeId(self.nodes.len());
+        self.nodes.push(Some(node));
+        id
+    }
+
+    pub fn remove(&mut self, id: InstrNodeId) -> Option<InstrNode> {
+        self.nodes[id.0].take()
+    }
+
+    pub fn get(&self, id: InstrNodeId) -> Option<&InstrNode> {
+        self.nodes.get(id.0).and_then(|node| node.as_ref())
+    }
+
+    pub fn get_mut(&mut self, id: InstrNodeId) -> Option<&mut InstrNode> {
+        self.nodes.get_mut(id.0).and_then(|node| node.as_mut())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (InstrNodeId, &InstrNode)> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, node)| node.as_ref().map(|node| (InstrNodeId(i), node)))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (InstrNodeId, &mut InstrNode)> {
+        self.nodes
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(i, node)| node.as_mut().map(|node| (InstrNodeId(i), node)))
+    }
+}
+
+impl Default for InstrTree {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Instr {
@@ -80,25 +135,5 @@ impl Instr {
         }
 
         pattern
-    }
-}
-
-impl InstrNode {
-    pub fn all_instrs(&mut self) -> Vec<&mut Instr> {
-        let mut instrs = Vec::new();
-        self.all_instrs_inner(&mut instrs);
-        instrs
-    }
-
-    fn all_instrs_inner<'a>(&'a mut self, instrs: &mut Vec<&'a mut Instr>) {
-        instrs.push(&mut self.instr);
-
-        let Some(child) = &mut self.child else { return };
-
-        for block in &mut child.blocks {
-            for instr in block {
-                instr.all_instrs_inner(instrs);
-            }
-        }
     }
 }
