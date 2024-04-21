@@ -17,14 +17,11 @@ fn codegen_block(
     module: &Module<'_>,
     in_block: bool,
 ) -> io::Result<()> {
-    let mut inst_id = code.blocks[id].first_inst;
-    loop {
-        if inst_id.is_none() {
-            break;
-        }
-        codegen_inst(f, code, inst_id.unwrap(), module, in_block)?;
+    let mut next_inst_id = code.blocks[id].first_inst;
+    while let Some(inst_id) = next_inst_id.expand() {
+        codegen_inst(f, code, inst_id, module, in_block)?;
 
-        inst_id = code.insts[inst_id.unwrap()].next;
+        next_inst_id = code.insts[inst_id].next;
     }
     Ok(())
 }
@@ -104,22 +101,18 @@ fn codegen_inst(
         InstKind::Switch(cases) => {
             writeln!(f, "switch ({pattern}) {{")?;
 
-            let mut block_id = inst.first_block;
+            let mut next_block_id = inst.first_block;
             let mut i = 0;
-            loop {
-                if block_id.is_none() {
-                    break;
-                }
-
+            while let Some(block_id) = next_block_id.expand() {
                 if let Some(case) = cases[i] {
                     writeln!(f, "case {case}:")?;
                 } else {
                     writeln!(f, "default:")?;
                 }
 
-                codegen_block(f, code, block_id.unwrap(), module, in_block)?;
+                codegen_block(f, code, block_id, module, in_block)?;
 
-                let block = &code.blocks[block_id.unwrap()];
+                let block = &code.blocks[block_id];
 
                 // 命令がない、または最後の命令がbrではない場合にbreak
                 if block
@@ -130,7 +123,7 @@ fn codegen_inst(
                     writeln!(f, "break;")?;
                 }
 
-                block_id = block.next;
+                next_block_id = block.next;
                 i += 1;
             }
 
