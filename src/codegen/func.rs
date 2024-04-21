@@ -1,11 +1,11 @@
 use std::io;
 
 use crate::ir::{
-    func::{Func, Var},
     func_header,
-    module::Module,
+    module::{Func, Module},
     result_cs_ty,
     ty::CsType,
+    var::Var,
     BREAK_DEPTH, LOOP,
 };
 

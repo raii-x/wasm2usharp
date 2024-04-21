@@ -6,9 +6,9 @@ use self::{module::Module, ty::CsType};
 
 pub mod builder;
 pub mod code;
-pub mod func;
 pub mod module;
 pub mod ty;
+pub mod var;
 
 pub const PAGE_SIZE: u32 = 65536;
 pub const MAX_PARAMS: usize = 16;

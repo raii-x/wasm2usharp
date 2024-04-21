@@ -1,9 +1,31 @@
 use cranelift_entity::{entity_impl, packed_option::PackedOption, PrimaryMap};
 
 use super::{
-    func::{Primary, Var},
     module::Module,
+    var::{FuncVars, Primary, Var},
 };
+
+pub struct Code {
+    pub blocks: Blocks,
+    pub insts: Insts,
+    pub root: BlockId,
+    pub vars: FuncVars,
+}
+
+pub type Blocks = PrimaryMap<BlockId, Block>;
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlockId(u32);
+entity_impl!(BlockId, "block");
+
+#[derive(Default)]
+pub struct Block {
+    pub parent: PackedOption<InstId>,
+    pub prev: PackedOption<BlockId>,
+    pub next: PackedOption<BlockId>,
+    pub first_inst: PackedOption<InstId>,
+    pub last_inst: PackedOption<InstId>,
+}
 
 pub type Insts = PrimaryMap<InstId, Inst>;
 
@@ -84,19 +106,4 @@ impl Inst {
 
         pattern
     }
-}
-
-pub type Blocks = PrimaryMap<BlockId, Block>;
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct BlockId(u32);
-entity_impl!(BlockId, "block");
-
-#[derive(Default)]
-pub struct Block {
-    pub parent: PackedOption<InstId>,
-    pub prev: PackedOption<BlockId>,
-    pub next: PackedOption<BlockId>,
-    pub first_inst: PackedOption<InstId>,
-    pub last_inst: PackedOption<InstId>,
 }

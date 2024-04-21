@@ -8,11 +8,11 @@ use wasmparser::{
 
 use crate::ir::{
     builder::Builder,
-    code::{Breakable, Call, Inst, InstKind},
-    func::{Code, FuncVars, Primary, Var},
+    code::{Breakable, Call, Code, Inst, InstKind},
     module::Module,
     trap,
     ty::{Const, CsType},
+    var::{FuncVars, Primary, Var},
     PAGE_SIZE,
 };
 

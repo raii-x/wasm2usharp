@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use wasmparser::{FuncType, GlobalType, MemoryType, TableType};
 
-use super::{func::Func, ty::CsType};
+use super::{code::Code, ty::CsType};
 
 pub struct Module<'input> {
     pub buf: &'input [u8],
@@ -92,4 +92,17 @@ pub struct Element {
 pub struct Data<'a> {
     pub offset_expr: String,
     pub data: &'a [u8],
+}
+
+pub struct Func {
+    pub header: FuncHeader,
+    pub code: Option<Code>,
+    pub in_table: bool,
+}
+
+pub struct FuncHeader {
+    pub name: String,
+    pub ty: FuncType,
+    pub import: bool,
+    pub export: bool,
 }

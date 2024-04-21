@@ -10,10 +10,10 @@ use crate::{
     ir::{
         builder::Builder,
         code::{Call, Inst, InstKind},
-        func::{Func, FuncHeader, FuncVars, Primary},
-        module::{Data, Element, Global, Memory, Module, Table},
+        module::{Data, Element, Func, FuncHeader, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
+        var::{FuncVars, Primary},
         CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE, W2US_PREFIX,
     },
     parse::code::CodeParser,

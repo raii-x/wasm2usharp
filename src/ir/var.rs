@@ -1,31 +1,9 @@
 use std::fmt;
 
-use wasmparser::FuncType;
-
 use super::{
-    code::{BlockId, Blocks, Insts},
+    module::FuncHeader,
     ty::{Const, CsType},
 };
-
-pub struct Func {
-    pub header: FuncHeader,
-    pub code: Option<Code>,
-    pub in_table: bool,
-}
-
-pub struct FuncHeader {
-    pub name: String,
-    pub ty: FuncType,
-    pub import: bool,
-    pub export: bool,
-}
-
-pub struct Code {
-    pub blocks: Blocks,
-    pub insts: Insts,
-    pub root: BlockId,
-    pub vars: FuncVars,
-}
 
 pub struct FuncVars {
     pub var_decls: Vec<VarDecl>,
