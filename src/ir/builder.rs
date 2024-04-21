@@ -1,47 +1,54 @@
 use super::{
-    func::{Primary, Var},
-    instr::{Breakable, Call, Instr, InstrChild, InstrKind, InstrNode, InstrNodeId, InstrTree},
+    func::{Code, FuncVars, Primary, Var},
+    instr::{Block, BlockId, Blocks, Breakable, Call, Inst, InstKind, Insts},
 };
 
 pub struct Builder {
-    tree: InstrTree,
-    blocks: Vec<Vec<InstrNodeId>>,
+    pub code: Code,
+    cursor: BlockId,
 }
 
 impl Builder {
-    pub fn new() -> Self {
+    pub fn new(vars: FuncVars) -> Self {
+        let mut blocks = Blocks::new();
+        let root = blocks.push(Default::default());
+
         Self {
-            tree: InstrTree::new(),
-            blocks: vec![Vec::new()],
+            code: Code {
+                blocks,
+                insts: Insts::new(),
+                root,
+                vars,
+            },
+            cursor: root,
         }
     }
 
-    pub fn push(&mut self, instr: Instr) {
-        let id = self.tree.push(InstrNode { instr, child: None });
-        self.blocks.last_mut().unwrap().push(id);
-    }
+    /// カーソルのブロックの最後に命令を追加
+    pub fn push(&mut self, mut inst: Inst) {
+        inst.parent = self.cursor.into();
+        let new_id = self.code.insts.push(inst);
 
-    pub fn push_with_child(&mut self, instr: Instr, breakable: Breakable) {
-        let id = self.tree.push(InstrNode {
-            instr,
-            child: Some(InstrChild {
-                blocks: Vec::new(),
-                breakable,
-            }),
-        });
-        self.blocks.last_mut().unwrap().push(id);
+        let block = &mut self.code.blocks[self.cursor];
+        if let Some(last_id) = block.last_inst.expand() {
+            self.code.insts[last_id].next = new_id.into();
+            self.code.insts[new_id].prev = last_id.into();
+        } else {
+            block.first_inst = new_id.into();
+        }
+        block.last_inst = new_id.into();
     }
 
     pub fn push_line(&mut self, line: impl Into<String>) {
-        self.push(Instr {
+        self.push(Inst {
             pattern: line.into(),
             ..Default::default()
         });
     }
 
     pub fn push_return(&mut self, param: Option<Primary>) {
-        self.push(Instr {
-            kind: InstrKind::Return,
+        self.push(Inst {
+            kind: InstKind::Return,
             pattern: match param {
                 Some(_) => "$p0",
                 None => "",
@@ -56,8 +63,8 @@ impl Builder {
     }
 
     pub fn push_set(&mut self, lhs: Var, rhs: Primary) {
-        self.push(Instr {
-            kind: InstrKind::Expr,
+        self.push(Inst {
+            kind: InstKind::Expr,
             pattern: "$p0".to_string(),
             params: vec![rhs],
             result: Some(lhs),
@@ -66,8 +73,8 @@ impl Builder {
     }
 
     pub fn push_set_pattern(&mut self, lhs: Var, pattern: impl Into<String>, params: Vec<Primary>) {
-        self.push(Instr {
-            kind: InstrKind::Expr,
+        self.push(Inst {
+            kind: InstKind::Expr,
             pattern: pattern.into(),
             params,
             result: Some(lhs),
@@ -83,55 +90,61 @@ impl Builder {
             .join(", ");
         pattern += ")";
 
-        self.push(Instr {
-            kind: InstrKind::Expr,
+        self.push(Inst {
+            kind: InstKind::Expr,
             pattern,
             params,
             result,
             call: Some(call),
-        });
-    }
-
-    pub fn push_if(&mut self, cond: Primary, breakable: Breakable) {
-        self.push_with_child(
-            Instr {
-                kind: InstrKind::If,
-                pattern: "$p0 != 0".to_string(),
-                params: vec![cond],
-                ..Default::default()
-            },
-            breakable,
-        );
-    }
-
-    pub fn push_br(&mut self, depth: u32) {
-        self.push(Instr {
-            kind: InstrKind::Br(depth),
             ..Default::default()
         });
     }
 
+    pub fn push_if(&mut self, cond: Primary, breakable: Breakable) {
+        self.push(Inst {
+            kind: InstKind::If,
+            pattern: "$p0 != 0".to_string(),
+            params: vec![cond],
+            breakable,
+            ..Default::default()
+        });
+    }
+
+    pub fn push_br(&mut self, depth: u32) {
+        self.push(Inst {
+            kind: InstKind::Br(depth),
+            ..Default::default()
+        });
+    }
+
+    /// カーソルのブロックの最後の命令の子としてブロックを追加し、カーソルを追加したブロックに移動
     pub fn start_block(&mut self) {
-        self.blocks.push(Vec::new());
+        let inst_id = self.code.blocks[self.cursor].last_inst.unwrap();
+        let new_id = self.code.blocks.push(Block {
+            parent: inst_id.into(),
+            ..Default::default()
+        });
+
+        let inst = &mut self.code.insts[inst_id];
+        if let Some(last_id) = inst.last_block.expand() {
+            self.code.blocks[last_id].next = new_id.into();
+            self.code.blocks[new_id].prev = last_id.into();
+        } else {
+            inst.first_block = new_id.into();
+        }
+        inst.last_block = new_id.into();
+
+        self.cursor = new_id;
     }
 
+    /// カーソルを現在のカーソルのブロックを持つ命令を含むブロックに移動
     pub fn end_block(&mut self) {
-        let block = self.blocks.pop().unwrap();
-        let id = self.blocks.last().unwrap().last().unwrap();
-        let instr = self.tree.get_mut(*id).unwrap();
-
-        instr.child.as_mut().unwrap().blocks.push(block);
+        let inst_id = self.code.blocks[self.cursor].parent.unwrap();
+        self.cursor = self.code.insts[inst_id].parent.unwrap();
     }
 
-    pub fn build(mut self) -> InstrTree {
-        assert_eq!(self.blocks.len(), 1);
-        self.tree.root = self.blocks.into_iter().next().unwrap();
-        self.tree
-    }
-}
-
-impl Default for Builder {
-    fn default() -> Self {
-        Self::new()
+    pub fn build(self) -> Code {
+        assert!(self.code.blocks[self.cursor].parent.is_none());
+        self.code
     }
 }

@@ -1,26 +1,26 @@
+use cranelift_entity::{entity_impl, packed_option::PackedOption, PrimaryMap};
+
 use super::{
     func::{Primary, Var},
     module::Module,
 };
 
-pub struct InstrTree {
-    nodes: Vec<Option<InstrNode>>,
-    pub root: Vec<InstrNodeId>,
-}
+pub type Insts = PrimaryMap<InstId, Inst>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct InstrNodeId(usize);
-
-#[derive(Debug)]
-pub struct InstrNode {
-    pub instr: Instr,
-    pub child: Option<InstrChild>,
-}
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct InstId(u32);
+entity_impl!(InstId);
 
 /// Instruction
-#[derive(Debug, Default)]
-pub struct Instr {
-    pub kind: InstrKind,
+#[derive(Default)]
+pub struct Inst {
+    /// この命令を含むブロック、`None`なら命令は挿入されていない
+    pub parent: PackedOption<BlockId>,
+    pub prev: PackedOption<InstId>,
+    pub next: PackedOption<InstId>,
+    pub first_block: PackedOption<BlockId>,
+    pub last_block: PackedOption<BlockId>,
+    pub kind: InstKind,
     /// 文字列内の以下のパターンが置換される  
     /// 引数: $p0, $p1, ...  
     /// 戻り値: $r  
@@ -29,10 +29,11 @@ pub struct Instr {
     pub params: Vec<Primary>,
     pub result: Option<Var>,
     pub call: Option<Call>,
+    pub breakable: Breakable,
 }
 
-#[derive(Debug, Default)]
-pub enum InstrKind {
+#[derive(Default)]
+pub enum InstKind {
     #[default]
     Stmt,
     Expr,
@@ -46,7 +47,6 @@ pub enum InstrKind {
     Switch(Vec<Option<u32>>),
 }
 
-#[derive(Debug)]
 pub struct Call {
     pub func: usize,
     pub recursive: bool,
@@ -54,14 +54,9 @@ pub struct Call {
     pub save_loop_vars: Vec<usize>,
 }
 
-#[derive(Debug)]
-pub struct InstrChild {
-    pub blocks: Vec<Vec<InstrNodeId>>,
-    pub breakable: Breakable,
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq, Default)]
 pub enum Breakable {
+    #[default]
     /// breakが不可能
     No,
     /// 1段階のbreakのみ可能
@@ -70,54 +65,7 @@ pub enum Breakable {
     Multi,
 }
 
-impl InstrTree {
-    pub fn new() -> Self {
-        Self {
-            nodes: Vec::new(),
-            root: Vec::new(),
-        }
-    }
-
-    pub fn push(&mut self, node: InstrNode) -> InstrNodeId {
-        let id = InstrNodeId(self.nodes.len());
-        self.nodes.push(Some(node));
-        id
-    }
-
-    pub fn remove(&mut self, id: InstrNodeId) -> Option<InstrNode> {
-        self.nodes[id.0].take()
-    }
-
-    pub fn get(&self, id: InstrNodeId) -> Option<&InstrNode> {
-        self.nodes.get(id.0).and_then(|node| node.as_ref())
-    }
-
-    pub fn get_mut(&mut self, id: InstrNodeId) -> Option<&mut InstrNode> {
-        self.nodes.get_mut(id.0).and_then(|node| node.as_mut())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (InstrNodeId, &InstrNode)> {
-        self.nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(i, node)| node.as_ref().map(|node| (InstrNodeId(i), node)))
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (InstrNodeId, &mut InstrNode)> {
-        self.nodes
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, node)| node.as_mut().map(|node| (InstrNodeId(i), node)))
-    }
-}
-
-impl Default for InstrTree {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Instr {
+impl Inst {
     pub fn expand_pattern(&self, module: &Module<'_>) -> String {
         let mut pattern = self.pattern.clone();
 
@@ -136,4 +84,19 @@ impl Instr {
 
         pattern
     }
+}
+
+pub type Blocks = PrimaryMap<BlockId, Block>;
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct BlockId(u32);
+entity_impl!(BlockId, "block");
+
+#[derive(Default)]
+pub struct Block {
+    pub parent: PackedOption<InstId>,
+    pub prev: PackedOption<BlockId>,
+    pub next: PackedOption<BlockId>,
+    pub first_inst: PackedOption<InstId>,
+    pub last_inst: PackedOption<InstId>,
 }

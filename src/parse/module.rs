@@ -9,8 +9,8 @@ use wasmparser::{
 use crate::{
     ir::{
         builder::Builder,
-        func::{Code, Func, FuncHeader, FuncVars, Primary},
-        instr::{Call, Instr, InstrKind},
+        func::{Func, FuncHeader, FuncVars, Primary},
+        instr::{Call, Inst, InstKind},
         module::{Data, Element, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
@@ -361,17 +361,16 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 export: false,
             };
 
-            let mut vars = FuncVars::new(&header);
-            let mut builder = Builder::new();
+            let mut builder = Builder::new(FuncVars::new(&header));
 
             let table_name = &table.name;
             let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
 
-            let index_var = vars.var_decls.last().unwrap().var;
+            let index_var = builder.code.vars.var_decls.last().unwrap().var;
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
-                builder.push(Instr {
+                builder.push(Inst {
                     pattern: format!("if ({table_name}[$p0] is uint) {{"),
                     params: vec![index_var.into()],
                     ..Default::default()
@@ -379,7 +378,8 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             }
 
             // 関数呼び出し用の引数リスト
-            let call_params: Vec<Primary> = vars.var_decls[0..vars.var_decls.len() - 1]
+            let call_params: Vec<Primary> = builder.code.vars.var_decls
+                [0..builder.code.vars.var_decls.len() - 1]
                 .iter()
                 .map(|x| x.var.into())
                 .collect();
@@ -400,7 +400,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     continue;
                 }
             } else {
-                builder.push(Instr {
+                builder.push(Inst {
                     pattern: format!(
                         "switch ({}{table_name}[$p0]) {{",
                         if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
@@ -412,7 +412,12 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 let result = if ty.results().is_empty() {
                     None
                 } else {
-                    Some(vars.new_var(CsType::get(ty.results()[0]), None))
+                    Some(
+                        builder
+                            .code
+                            .vars
+                            .new_var(CsType::get(ty.results()[0]), None),
+                    )
                 };
 
                 for i in cases {
@@ -459,16 +464,16 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 params.push(index_var.into());
 
                 if ty.results().is_empty() {
-                    builder.push(Instr {
-                        kind: InstrKind::Expr,
+                    builder.push(Inst {
+                        kind: InstKind::Expr,
                         pattern,
                         params,
                         ..Default::default()
                     });
                     builder.push_return(None);
                 } else {
-                    builder.push(Instr {
-                        kind: InstrKind::Return,
+                    builder.push(Inst {
+                        kind: InstKind::Return,
                         pattern,
                         params,
                         ..Default::default()
@@ -481,10 +486,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             let index = self.module.all_funcs.len();
             let func = Func {
                 header,
-                code: Some(Code {
-                    instr_tree: builder.build(),
-                    vars,
-                }),
+                code: Some(builder.build()),
                 in_table: false,
             };
 
@@ -501,8 +503,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             export: true,
         };
 
-        let vars = FuncVars::new(&header);
-        let mut builder = Builder::new();
+        let mut builder = Builder::new(FuncVars::new(&header));
 
         for global in &self.module.globals {
             if global.import {
@@ -568,10 +569,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
 
         self.module.all_funcs.push(Func {
             header,
-            code: Some(Code {
-                instr_tree: builder.build(),
-                vars,
-            }),
+            code: Some(builder.build()),
             in_table: false,
         });
     }

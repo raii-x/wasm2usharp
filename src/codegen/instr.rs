@@ -1,124 +1,138 @@
 use std::io;
 
 use crate::ir::{
-    instr::{Breakable, Call, InstrKind, InstrNodeId, InstrTree},
+    func::Code,
+    instr::{BlockId, Breakable, Call, InstId, InstKind},
     module::Module,
     BREAK_DEPTH, LOOP, STACK, STACK_TOP,
 };
 
-pub fn codegen_instr_node(
-    f: &mut dyn io::Write,
-    tree: &InstrTree,
-    id: InstrNodeId,
-    module: &Module<'_>,
-) -> io::Result<()> {
-    codegen_inner(f, tree, id, module, false)
+pub fn codegen_code(f: &mut dyn io::Write, code: &Code, module: &Module<'_>) -> io::Result<()> {
+    codegen_block(f, code, code.root, module, false)
 }
 
-fn codegen_inner(
+fn codegen_block(
     f: &mut dyn io::Write,
-    tree: &InstrTree,
-    id: InstrNodeId,
+    code: &Code,
+    id: BlockId,
     module: &Module<'_>,
     in_block: bool,
 ) -> io::Result<()> {
-    let node = tree.get(id).unwrap();
-    let pattern = node.instr.expand_pattern(module);
+    let mut inst_id = code.blocks[id].first_inst;
+    loop {
+        if inst_id.is_none() {
+            break;
+        }
+        codegen_inst(f, code, inst_id.unwrap(), module, in_block)?;
 
-    if let Some(call) = &node.instr.call {
+        inst_id = code.insts[inst_id.unwrap()].next;
+    }
+    Ok(())
+}
+
+fn codegen_inst(
+    f: &mut dyn io::Write,
+    code: &Code,
+    id: InstId,
+    module: &Module<'_>,
+    in_block: bool,
+) -> io::Result<()> {
+    let inst = &code.insts[id];
+    let pattern = inst.expand_pattern(module);
+
+    if let Some(call) = &inst.call {
         push_save_vars(call, f)?;
     }
 
-    match &node.instr.kind {
-        InstrKind::Stmt => {
+    match &inst.kind {
+        InstKind::Stmt => {
             writeln!(f, "{}", pattern)?;
         }
-        InstrKind::Expr => {
-            if let Some(result) = node.instr.result {
+        InstKind::Expr => {
+            if let Some(result) = inst.result {
                 writeln!(f, "{result} = {pattern};")?;
             } else {
                 writeln!(f, "{pattern};")?;
             }
         }
-        InstrKind::Return => {
+        InstKind::Return => {
             writeln!(f, "return {pattern};")?;
         }
-        InstrKind::Block => {
+        InstKind::Block => {
             writeln!(f, "do {{")?;
-            for id in &node.child.as_ref().unwrap().blocks[0] {
-                codegen_inner(f, tree, *id, module, true)?;
-            }
+            codegen_block(f, code, inst.first_block.unwrap(), module, true)?;
             writeln!(f, "}} while (false);")?;
         }
-        InstrKind::Loop(loop_var) => {
+        InstKind::Loop(loop_var) => {
             writeln!(f, "{LOOP}{loop_var} = true;")?;
             writeln!(f, "do {{")?;
             writeln!(f, "do {{")?;
 
-            for id in &node.child.as_ref().unwrap().blocks[0] {
-                codegen_inner(f, tree, *id, module, true)?;
-            }
+            codegen_block(f, code, inst.first_block.unwrap(), module, true)?;
 
             writeln!(f, "{LOOP}{loop_var} = false;")?;
             writeln!(f, "}} while (false);")?;
             writeln!(f, "if ({BREAK_DEPTH} > 0) break;")?;
             writeln!(f, "}} while ({LOOP}{});", loop_var)?;
         }
-        InstrKind::If => {
-            let child = node.child.as_ref().unwrap();
-
-            if child.breakable == Breakable::No {
+        InstKind::If => {
+            if inst.breakable == Breakable::No {
                 writeln!(f, "if ({pattern}) {{")?;
             } else {
                 writeln!(f, "do if ({pattern}) {{")?;
             }
 
-            for id in &child.blocks[0] {
-                codegen_inner(f, tree, *id, module, true)?;
-            }
+            let then = inst.first_block.unwrap();
+            codegen_block(f, code, then, module, true)?;
 
-            if let Some(else_) = child.blocks.get(1) {
+            if let Some(else_) = code.blocks[then].next.expand() {
                 writeln!(f, "}} else {{")?;
-                for id in else_ {
-                    codegen_inner(f, tree, *id, module, true)?;
-                }
+                codegen_block(f, code, else_, module, true)?;
             }
 
-            if child.breakable == Breakable::No {
+            if inst.breakable == Breakable::No {
                 writeln!(f, "}}")?;
             } else {
                 writeln!(f, "}} while (false);")?;
             }
         }
-        InstrKind::Br(depth) => {
+        InstKind::Br(depth) => {
             if *depth > 0 {
                 writeln!(f, "{BREAK_DEPTH} = {depth};")?;
             }
             writeln!(f, "break;")?;
         }
-        InstrKind::Switch(cases) => {
+        InstKind::Switch(cases) => {
             writeln!(f, "switch ({pattern}) {{")?;
 
-            let blocks = &node.child.as_ref().unwrap().blocks;
-            assert_eq!(cases.len(), blocks.len());
+            let mut block_id = inst.first_block;
+            let mut i = 0;
+            loop {
+                if block_id.is_none() {
+                    break;
+                }
 
-            for (case, block) in cases.iter().zip(blocks) {
-                if let Some(case) = case {
+                if let Some(case) = cases[i] {
                     writeln!(f, "case {case}:")?;
                 } else {
                     writeln!(f, "default:")?;
                 }
 
-                for id in block {
-                    codegen_inner(f, tree, *id, module, in_block)?;
-                }
+                codegen_block(f, code, block_id.unwrap(), module, in_block)?;
+
+                let block = &code.blocks[block_id.unwrap()];
 
                 // 命令がない、または最後の命令がbrではない場合にbreak
-                if block.last().map_or(true, |id| {
-                    !matches!(tree.get(*id).unwrap().instr.kind, InstrKind::Br(..))
-                }) {
+                if block
+                    .last_inst
+                    .expand()
+                    .map_or(true, |id| !matches!(code.insts[id].kind, InstKind::Br(..)))
+                {
                     writeln!(f, "break;")?;
                 }
+
+                block_id = block.next;
+                i += 1;
             }
 
             writeln!(f, "}}")?;
@@ -126,16 +140,11 @@ fn codegen_inner(
     }
 
     // 最も外側のブロックのendでない、かつ多重breakが可能な場合のみ
-    if in_block
-        && node
-            .child
-            .as_ref()
-            .map_or(false, |c| c.breakable == Breakable::Multi)
-    {
+    if in_block && inst.breakable == Breakable::Multi {
         writeln!(f, "if ({BREAK_DEPTH} > 0) {{ {BREAK_DEPTH}--; break; }}")?;
     }
 
-    if let Some(call) = &node.instr.call {
+    if let Some(call) = &inst.call {
         pop_save_vars(call, f)?;
     }
     Ok(())

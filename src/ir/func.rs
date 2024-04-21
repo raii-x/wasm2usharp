@@ -3,7 +3,7 @@ use std::fmt;
 use wasmparser::FuncType;
 
 use super::{
-    instr::InstrTree,
+    instr::{BlockId, Blocks, Insts},
     ty::{Const, CsType},
 };
 
@@ -21,7 +21,9 @@ pub struct FuncHeader {
 }
 
 pub struct Code {
-    pub instr_tree: InstrTree,
+    pub blocks: Blocks,
+    pub insts: Insts,
+    pub root: BlockId,
     pub vars: FuncVars,
 }
 

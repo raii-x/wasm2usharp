@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::ir::{
     builder::Builder,
     func::{Code, FuncVars, Primary, Var},
-    instr::{Breakable, Call, Instr, InstrKind},
+    instr::{Breakable, Call, Inst, InstKind},
     module::Module,
     trap,
     ty::{Const, CsType},
@@ -38,7 +38,6 @@ pub struct CodeParser<'input, 'module> {
     module: &'module Module<'input>,
     func: usize,
     blocks: Vec<Block>,
-    vars: FuncVars,
     builder: Builder,
     local_count: usize,
     /// brの後など、到達不可能なコードの処理時に1加算。
@@ -57,13 +56,11 @@ struct Block {
 impl<'input, 'module> CodeParser<'input, 'module> {
     pub(super) fn new(module: &'module Module<'input>, func: usize) -> Self {
         let header = &module.all_funcs[func].header;
-        let code = FuncVars::new(header);
         Self {
             module,
             func,
             blocks: Vec::new(),
-            vars: code,
-            builder: Builder::new(),
+            builder: Builder::new(FuncVars::new(header)),
             local_count: header.ty.params().len(),
             unreachable: 0,
         }
@@ -74,7 +71,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             let (count, ty) = local?;
             for _ in 0..count {
                 let cs_ty = CsType::get(ty);
-                self.vars.new_var(cs_ty, Some(cs_ty.default()));
+                self.builder.code.vars.new_var(cs_ty, Some(cs_ty.default()));
             }
             self.local_count += count as usize;
         }
@@ -110,10 +107,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             self.builder.push_return(Some(res.into()));
         }
 
-        Ok(Code {
-            instr_tree: self.builder.build(),
-            vars: self.vars,
-        })
+        Ok(self.builder.build())
     }
 
     fn new_block(&mut self, blockty: BlockType, is_loop: bool) -> &Block {
@@ -121,15 +115,15 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             BlockType::Empty => None,
             BlockType::Type(ty) => {
                 let cs_ty = CsType::get(ty);
-                Some(self.vars.new_var(cs_ty, Some(cs_ty.default())))
+                Some(self.builder.code.vars.new_var(cs_ty, Some(cs_ty.default())))
             }
             BlockType::FuncType(..) => panic!("func type blocks are not supported"),
         };
 
         let loop_var = if is_loop {
             Some({
-                self.vars.loop_var_count += 1;
-                self.vars.loop_var_count - 1
+                self.builder.code.vars.loop_var_count += 1;
+                self.builder.code.vars.loop_var_count - 1
             })
         } else {
             None
@@ -188,7 +182,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
     }
 
     fn get_save_vars(&self) -> Vec<Var> {
-        let locals = self.vars.var_decls[0..self.local_count]
+        let locals = self.builder.code.vars.var_decls[0..self.local_count]
             .iter()
             .map(|x| x.var);
 
@@ -213,7 +207,11 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         match ty.results().len() {
             0 => None,
             1 => {
-                let var = self.vars.new_var(CsType::get(ty.results()[0]), None);
+                let var = self
+                    .builder
+                    .code
+                    .vars
+                    .new_var(CsType::get(ty.results()[0]), None);
                 self.push_stack(var.into());
                 Some(var)
             }
@@ -233,18 +231,18 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         use {StorageType::*, ValType::*};
 
         let idx = self.pop_stack();
-        let result = self.vars.new_var(result_ty, None);
+        let result = self.builder.code.vars.new_var(result_ty, None);
         self.push_stack(result.into());
 
         let memory = &self.module.memory.as_ref().unwrap().name;
         let idx_pat = index_pattern(memarg.offset);
 
-        let mut kind = InstrKind::Expr;
+        let mut kind = InstKind::Expr;
 
         let pattern = match (storage_ty, signed) {
             (I8, Some(false)) => format!("{memory}[{idx_pat}]"),
             (I8, Some(true)) => {
-                kind = InstrKind::Stmt;
+                kind = InstKind::Stmt;
                 format!("$r = {memory}[{idx_pat}]; if ($r >= 0x80) $r |= -0x100;")
             }
             (I16, Some(false)) => format!("BitConverter.ToUInt16({memory}, {idx_pat})"),
@@ -257,7 +255,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             _ => unreachable!(),
         };
 
-        self.builder.push(Instr {
+        self.builder.push(Inst {
             kind,
             pattern,
             params: vec![idx],
@@ -294,8 +292,8 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             _ => unreachable!(),
         };
 
-        self.builder.push(Instr {
-            kind: InstrKind::Stmt,
+        self.builder.push(Inst {
+            kind: InstKind::Stmt,
             pattern,
             params: vec![idx, var],
             ..Default::default()
@@ -306,7 +304,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
     /// (opnd, result)を返す
     fn un_op_vars(&mut self, result_ty: CsType) -> (Primary, Var) {
         let opnd = self.pop_stack();
-        let result = self.vars.new_var(result_ty, None);
+        let result = self.builder.code.vars.new_var(result_ty, None);
         self.push_stack(result.into());
 
         (opnd, result)
@@ -315,7 +313,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
     /// (opnd, result)を返し、opndの型をresultの型とする
     fn un_op_vars_auto_ty(&mut self) -> (Primary, Var) {
         let opnd = self.pop_stack();
-        let result = self.vars.new_var(opnd.ty(), None);
+        let result = self.builder.code.vars.new_var(opnd.ty(), None);
         self.push_stack(result.into());
 
         (opnd, result)
@@ -325,7 +323,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
     fn bin_op_vars_auto_ty(&mut self) -> (Primary, Primary, Var) {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
-        let result = self.vars.new_var(lhs.ty(), None);
+        let result = self.builder.code.vars.new_var(lhs.ty(), None);
         self.push_stack(result.into());
 
         (lhs, rhs, result)
@@ -359,6 +357,8 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         let rhs = self.pop_stack();
         let lhs = self.pop_stack();
         let result = self
+            .builder
+            .code
             .vars
             .new_var(if logical { CsType::Int } else { lhs.ty() }, None);
         self.push_stack(result.into());
@@ -375,9 +375,11 @@ impl<'input, 'module> CodeParser<'input, 'module> {
                     .push_set_pattern(result, format!("$p0 {op} $p1"), vec![lhs, rhs]);
             }
         } else {
-            let lhs_u = self.vars.new_var(lhs.ty().to_unsigned(), None);
-            let rhs_u = self.vars.new_var(rhs.ty().to_unsigned(), None);
+            let lhs_u = self.builder.code.vars.new_var(lhs.ty().to_unsigned(), None);
+            let rhs_u = self.builder.code.vars.new_var(rhs.ty().to_unsigned(), None);
             let tmp = self
+                .builder
+                .code
                 .vars
                 .new_var(if logical { CsType::Bool } else { lhs_u.ty }, None);
 
@@ -410,9 +412,9 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             self.builder
                 .push_set_pattern(result, "$p0 - $p0 / $p1 * $p1", vec![lhs, rhs]);
         } else {
-            let lhs_u = self.vars.new_var(lhs.ty().to_unsigned(), None);
-            let rhs_u = self.vars.new_var(rhs.ty().to_unsigned(), None);
-            let tmp = self.vars.new_var(lhs_u.ty, None);
+            let lhs_u = self.builder.code.vars.new_var(lhs.ty().to_unsigned(), None);
+            let rhs_u = self.builder.code.vars.new_var(rhs.ty().to_unsigned(), None);
+            let tmp = self.builder.code.vars.new_var(lhs_u.ty, None);
 
             self.cast_sign(lhs, lhs_u);
             self.cast_sign(rhs, rhs_u);
@@ -453,7 +455,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         let rhs_int = if rhs.ty() == CsType::Int {
             rhs
         } else {
-            let rhs_int = self.vars.new_var(CsType::Int, None);
+            let rhs_int = self.builder.code.vars.new_var(CsType::Int, None);
             self.wrap(rhs, rhs_int);
             rhs_int.into()
         };
@@ -490,16 +492,16 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         let rhs_int = if rhs.ty() == CsType::Int {
             rhs
         } else {
-            let rhs_int = self.vars.new_var(CsType::Int, None);
+            let rhs_int = self.builder.code.vars.new_var(CsType::Int, None);
             self.wrap(rhs, rhs_int);
             rhs_int.into()
         };
 
-        let bits_m_rhs = self.vars.new_var(CsType::Int, None);
+        let bits_m_rhs = self.builder.code.vars.new_var(CsType::Int, None);
         self.builder
             .push_set_pattern(bits_m_rhs, format!("{bits} - $p0"), vec![rhs_int]);
 
-        let shr = self.vars.new_var(lhs.ty(), None);
+        let shr = self.builder.code.vars.new_var(lhs.ty(), None);
         if right {
             self.shr_u(lhs, rhs_int, shr);
             self.builder.push_set_pattern(
@@ -622,8 +624,8 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         let mut pattern = format!("$r = {}($p0 & 0x7fffffff); ", CsType::Int.cast());
         pattern += "if (($p0 & 0x80000000) != 0) $r |= -0x7fffffff - 1;";
 
-        self.builder.push(Instr {
-            kind: InstrKind::Stmt,
+        self.builder.push(Inst {
+            kind: InstKind::Stmt,
             pattern,
             params: vec![opnd],
             result: Some(result),
@@ -637,7 +639,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         signed: bool,
     ) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(result_ty);
-        let tmp = self.vars.new_var(CsType::Double, None);
+        let tmp = self.builder.code.vars.new_var(CsType::Double, None);
 
         self.builder.push_set_pattern(
             tmp,
@@ -717,7 +719,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
 
     fn visit_extend(&mut self, ty: StorageType) -> <Self as VisitOperator<'_>>::Output {
         let opnd = self.pop_stack();
-        let result = self.vars.new_var(opnd.ty(), None);
+        let result = self.builder.code.vars.new_var(opnd.ty(), None);
         self.push_stack(result.into());
 
         use {StorageType::*, ValType::*};
@@ -731,8 +733,8 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         let mut pattern = format!("$r = $p0 & {and}; ");
         pattern += &format!("if ($r >= {ge}) $r |= {or};");
 
-        self.builder.push(Instr {
-            kind: InstrKind::Stmt,
+        self.builder.push(Inst {
+            kind: InstKind::Stmt,
             pattern,
             params: vec![opnd],
             result: Some(result),
@@ -774,14 +776,12 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
 
         let result = self.new_block(blockty, false).result;
 
-        self.builder.push_with_child(
-            Instr {
-                kind: InstrKind::Block,
-                result,
-                ..Default::default()
-            },
-            Breakable::Multi,
-        );
+        self.builder.push(Inst {
+            kind: InstKind::Block,
+            result,
+            breakable: Breakable::Multi,
+            ..Default::default()
+        });
         self.builder.start_block();
 
         Ok(())
@@ -797,14 +797,12 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let loop_var = block.loop_var.unwrap();
         let result = block.result;
 
-        self.builder.push_with_child(
-            Instr {
-                kind: InstrKind::Loop(loop_var),
-                result,
-                ..Default::default()
-            },
-            Breakable::Multi,
-        );
+        self.builder.push(Inst {
+            kind: InstKind::Loop(loop_var),
+            result,
+            breakable: Breakable::Multi,
+            ..Default::default()
+        });
         self.builder.start_block();
 
         Ok(())
@@ -891,15 +889,13 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let mut cases: Vec<Option<u32>> = (0..values.len() as u32).map(Some).collect();
         cases.push(None);
 
-        self.builder.push_with_child(
-            Instr {
-                kind: InstrKind::Switch(cases),
-                pattern: "$p0".to_string(),
-                params: vec![opnd],
-                ..Default::default()
-            },
-            Breakable::No,
-        );
+        self.builder.push(Inst {
+            kind: InstKind::Switch(cases),
+            pattern: "$p0".to_string(),
+            params: vec![opnd],
+            breakable: Breakable::No,
+            ..Default::default()
+        });
 
         for target in values {
             // case i:
@@ -985,7 +981,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let val2 = self.pop_stack();
         let val1 = self.pop_stack();
 
-        let result = self.vars.new_var(val1.ty(), None);
+        let result = self.builder.code.vars.new_var(val1.ty(), None);
         self.push_stack(result.into());
 
         self.builder
@@ -995,8 +991,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_local_get(&mut self, local_index: u32) -> Self::Output {
-        let local = self.vars.var_decls[local_index as usize].var;
-        let var = self.vars.new_var(local.ty, None);
+        let local = self.builder.code.vars.var_decls[local_index as usize].var;
+        let var = self.builder.code.vars.new_var(local.ty, None);
         self.push_stack(var.into());
 
         self.builder.push_set(var, local.into());
@@ -1004,21 +1000,25 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_local_set(&mut self, local_index: u32) -> Self::Output {
-        let local = self.vars.var_decls[local_index as usize].var;
+        let local = self.builder.code.vars.var_decls[local_index as usize].var;
         let var = self.pop_stack();
         self.builder.push_set(local, var);
         Ok(())
     }
 
     fn visit_local_tee(&mut self, local_index: u32) -> Self::Output {
-        let local = self.vars.var_decls[local_index as usize].var;
+        let local = self.builder.code.vars.var_decls[local_index as usize].var;
         self.builder.push_set(local, self.last_stack());
         Ok(())
     }
 
     fn visit_global_get(&mut self, global_index: u32) -> Self::Output {
         let global = &self.module.globals[global_index as usize];
-        let var = self.vars.new_var(CsType::get(global.ty.content_type), None);
+        let var = self
+            .builder
+            .code
+            .vars
+            .new_var(CsType::get(global.ty.content_type), None);
         self.push_stack(var.into());
 
         self.builder
@@ -1030,8 +1030,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let global = &self.module.globals[global_index as usize];
         let var = self.pop_stack();
 
-        self.builder.push(Instr {
-            kind: InstrKind::Stmt,
+        self.builder.push(Inst {
+            kind: InstKind::Stmt,
             pattern: format!("{} = $p0;", global.name),
             params: vec![var],
             ..Default::default()
@@ -1147,7 +1147,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         }
         assert!(mem_byte == 0);
 
-        let result = self.vars.new_var(CsType::Int, None);
+        let result = self.builder.code.vars.new_var(CsType::Int, None);
         self.push_stack(result.into());
 
         let memory = &self.module.memory.as_ref().unwrap().name;
@@ -1164,7 +1164,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         assert!(mem_byte == 0);
 
         let size = self.pop_stack();
-        let result = self.vars.new_var(CsType::Int, None);
+        let result = self.builder.code.vars.new_var(CsType::Int, None);
         self.push_stack(result.into());
 
         let memory = &self.module.memory.as_ref().unwrap().name;
@@ -1194,8 +1194,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         }
         pattern += "}";
 
-        self.builder.push(Instr {
-            kind: InstrKind::Stmt,
+        self.builder.push(Inst {
+            kind: InstKind::Stmt,
             pattern,
             params: vec![size],
             result: Some(result),

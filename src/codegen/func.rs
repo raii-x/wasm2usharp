@@ -9,7 +9,7 @@ use crate::ir::{
     BREAK_DEPTH, LOOP,
 };
 
-use super::instr::codegen_instr_node;
+use super::instr::codegen_code;
 
 pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> io::Result<()> {
     // 関数ヘッダ
@@ -51,9 +51,7 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
     }
 
     // 本体
-    for id in &code.instr_tree.root {
-        codegen_instr_node(f, &code.instr_tree, *id, module)?;
-    }
+    codegen_code(f, code, module)?;
 
     writeln!(f, "}}")?;
 
