@@ -8,8 +8,8 @@ use wasmparser::{
 
 use crate::ir::{
     builder::Builder,
+    code::{Breakable, Call, Inst, InstKind},
     func::{Code, FuncVars, Primary, Var},
-    instr::{Breakable, Call, Inst, InstKind},
     module::Module,
     trap,
     ty::{Const, CsType},

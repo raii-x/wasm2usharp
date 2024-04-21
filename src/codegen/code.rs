@@ -1,8 +1,8 @@
 use std::io;
 
 use crate::ir::{
+    code::{BlockId, Breakable, Call, InstId, InstKind},
     func::Code,
-    instr::{BlockId, Breakable, Call, InstId, InstKind},
     module::Module,
     BREAK_DEPTH, LOOP, STACK, STACK_TOP,
 };

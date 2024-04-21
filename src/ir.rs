@@ -5,8 +5,8 @@ use wasmparser::ValType;
 use self::{module::Module, ty::CsType};
 
 pub mod builder;
+pub mod code;
 pub mod func;
-pub mod instr;
 pub mod module;
 pub mod ty;
 

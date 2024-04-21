@@ -3,7 +3,7 @@ use std::fmt;
 use wasmparser::FuncType;
 
 use super::{
-    instr::{BlockId, Blocks, Insts},
+    code::{BlockId, Blocks, Insts},
     ty::{Const, CsType},
 };
 

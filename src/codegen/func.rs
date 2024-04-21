@@ -9,7 +9,7 @@ use crate::ir::{
     BREAK_DEPTH, LOOP,
 };
 
-use super::instr::codegen_code;
+use super::code::codegen_code;
 
 pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> io::Result<()> {
     // 関数ヘッダ

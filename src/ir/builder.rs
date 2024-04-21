@@ -1,6 +1,6 @@
 use super::{
+    code::{Block, BlockId, Blocks, Breakable, Call, Inst, InstKind, Insts},
     func::{Code, FuncVars, Primary, Var},
-    instr::{Block, BlockId, Blocks, Breakable, Call, Inst, InstKind, Insts},
 };
 
 pub struct Builder {

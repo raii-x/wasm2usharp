@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::ir::{
-    instr::{Call, Insts},
+    code::{Call, Insts},
     module::Module,
 };
 
