@@ -1,4 +1,4 @@
-use cranelift_entity::{entity_impl, packed_option::PackedOption, PrimaryMap};
+use cranelift_entity::{entity_impl, packed_option::PackedOption, PrimaryMap, SecondaryMap};
 
 use super::{
     module::Module,
@@ -8,6 +8,7 @@ use super::{
 pub struct Code {
     pub blocks: Blocks,
     pub insts: Insts,
+    pub inst_nodes: SecondaryMap<InstId, InstNode>,
     pub root: BlockId,
     pub vars: FuncVars,
 }
@@ -36,12 +37,6 @@ entity_impl!(InstId);
 /// Instruction
 #[derive(Default)]
 pub struct Inst {
-    /// この命令を含むブロック、`None`なら命令は挿入されていない
-    pub parent: PackedOption<BlockId>,
-    pub prev: PackedOption<InstId>,
-    pub next: PackedOption<InstId>,
-    pub first_block: PackedOption<BlockId>,
-    pub last_block: PackedOption<BlockId>,
     pub kind: InstKind,
     /// 文字列内の以下のパターンが置換される  
     /// 引数: $p0, $p1, ...  
@@ -52,6 +47,15 @@ pub struct Inst {
     pub result: Option<Var>,
     pub call: Option<Call>,
     pub breakable: Breakable,
+}
+
+#[derive(Clone, Default)]
+pub struct InstNode {
+    pub parent: PackedOption<BlockId>,
+    pub prev: PackedOption<InstId>,
+    pub next: PackedOption<InstId>,
+    pub first_block: PackedOption<BlockId>,
+    pub last_block: PackedOption<BlockId>,
 }
 
 #[derive(Default)]

@@ -21,7 +21,7 @@ fn codegen_block(
     while let Some(inst_id) = next_inst_id.expand() {
         codegen_inst(f, code, inst_id, module, in_block)?;
 
-        next_inst_id = code.insts[inst_id].next;
+        next_inst_id = code.inst_nodes[inst_id].next;
     }
     Ok(())
 }
@@ -34,6 +34,7 @@ fn codegen_inst(
     in_block: bool,
 ) -> io::Result<()> {
     let inst = &code.insts[id];
+    let node = &code.inst_nodes[id];
     let pattern = inst.expand_pattern(module);
 
     if let Some(call) = &inst.call {
@@ -58,7 +59,7 @@ fn codegen_inst(
             if inst.breakable != Breakable::No {
                 writeln!(f, "do {{")?;
             }
-            codegen_block(f, code, inst.first_block.unwrap(), module, true)?;
+            codegen_block(f, code, node.first_block.unwrap(), module, true)?;
             if inst.breakable != Breakable::No {
                 writeln!(f, "}} while (false);")?;
             }
@@ -68,7 +69,7 @@ fn codegen_inst(
             writeln!(f, "do {{")?;
             writeln!(f, "do {{")?;
 
-            codegen_block(f, code, inst.first_block.unwrap(), module, true)?;
+            codegen_block(f, code, node.first_block.unwrap(), module, true)?;
 
             writeln!(f, "{LOOP}{loop_var} = false;")?;
             writeln!(f, "}} while (false);")?;
@@ -84,7 +85,7 @@ fn codegen_inst(
                 writeln!(f, "do if ({pattern}) {{")?;
             }
 
-            let then = inst.first_block.unwrap();
+            let then = node.first_block.unwrap();
             codegen_block(f, code, then, module, true)?;
 
             if let Some(else_) = code.blocks[then].next.expand() {
@@ -107,7 +108,7 @@ fn codegen_inst(
         InstKind::Switch(cases) => {
             writeln!(f, "switch ({pattern}) {{")?;
 
-            let mut next_block_id = inst.first_block;
+            let mut next_block_id = node.first_block;
             let mut i = 0;
             while let Some(block_id) = next_block_id.expand() {
                 if let Some(case) = cases[i] {

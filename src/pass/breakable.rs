@@ -30,7 +30,7 @@ impl<'a> BreakablePass<'a> {
             let depth = self.run_inst(inst_id);
             max_depth = max_depth.max(depth);
 
-            next_inst_id = self.code.insts[inst_id].next;
+            next_inst_id = self.code.inst_nodes[inst_id].next;
         }
 
         max_depth
@@ -44,7 +44,7 @@ impl<'a> BreakablePass<'a> {
         }
 
         let mut max_depth = 0;
-        let mut next_block_id = self.code.insts[id].first_block;
+        let mut next_block_id = self.code.inst_nodes[id].first_block;
 
         // 命令の子ブロックの最大のbreak段階数を求める
         while let Some(block_id) = next_block_id.expand() {

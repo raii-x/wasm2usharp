@@ -1,3 +1,5 @@
+use cranelift_entity::SecondaryMap;
+
 use super::{
     code::{Block, BlockId, Blocks, Breakable, Call, Code, Inst, InstKind, Insts},
     var::{FuncVars, Primary, Var},
@@ -17,6 +19,7 @@ impl Builder {
             code: Code {
                 blocks,
                 insts: Insts::new(),
+                inst_nodes: SecondaryMap::new(),
                 root,
                 vars,
             },
@@ -25,14 +28,14 @@ impl Builder {
     }
 
     /// カーソルのブロックの最後に命令を追加
-    pub fn push(&mut self, mut inst: Inst) {
-        inst.parent = self.cursor.into();
+    pub fn push(&mut self, inst: Inst) {
         let new_id = self.code.insts.push(inst);
+        self.code.inst_nodes[new_id].parent = self.cursor.into();
 
         let block = &mut self.code.blocks[self.cursor];
         if let Some(last_id) = block.last_inst.expand() {
-            self.code.insts[last_id].next = new_id.into();
-            self.code.insts[new_id].prev = last_id.into();
+            self.code.inst_nodes[last_id].next = new_id.into();
+            self.code.inst_nodes[new_id].prev = last_id.into();
         } else {
             block.first_inst = new_id.into();
         }
@@ -125,14 +128,14 @@ impl Builder {
             ..Default::default()
         });
 
-        let inst = &mut self.code.insts[inst_id];
-        if let Some(last_id) = inst.last_block.expand() {
+        let node = &mut self.code.inst_nodes[inst_id];
+        if let Some(last_id) = node.last_block.expand() {
             self.code.blocks[last_id].next = new_id.into();
             self.code.blocks[new_id].prev = last_id.into();
         } else {
-            inst.first_block = new_id.into();
+            node.first_block = new_id.into();
         }
-        inst.last_block = new_id.into();
+        node.last_block = new_id.into();
 
         self.cursor = new_id;
     }
@@ -140,7 +143,7 @@ impl Builder {
     /// カーソルを現在のカーソルのブロックを持つ命令を含むブロックに移動
     pub fn end_block(&mut self) {
         let inst_id = self.code.blocks[self.cursor].parent.unwrap();
-        self.cursor = self.code.insts[inst_id].parent.unwrap();
+        self.cursor = self.code.inst_nodes[inst_id].parent.unwrap();
     }
 
     pub fn build(self) -> Code {
