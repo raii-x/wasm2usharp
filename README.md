@@ -20,12 +20,12 @@ Options:
 
 ## Wasm型とU#型の対応
 
-|Wasm|U#    |
-|----|------|
-|i32 |int   |
-|i64 |long  |
-|f32 |float |
-|f64 |double|
+| Wasm | U#     |
+| ---- | ------ |
+| i32  | int    |
+| i64  | long   |
+| f32  | float  |
+| f64  | double |
 
 ## 対応しているWasm proposal
 
