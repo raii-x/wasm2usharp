@@ -742,6 +742,19 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         });
         Ok(())
     }
+
+    fn visit_br_table_case(&mut self, target: u32) {
+        self.builder.start_block();
+        self.block_result(target, true);
+        // targetが0の場合、switchブロックがbreakされた後に続きの外のブロックが
+        // そのまま実行されるので再度breakする必要はない。
+        // targetが1以上の場合、Wasmでは存在しないswitchブロックをbreakするため、
+        // targetにswitchブロックの分の1を足している
+        if target != 0 {
+            self.builder.push_br(target + 1);
+        }
+        self.builder.end_block();
+    }
 }
 
 fn index_pattern(offset: u64) -> String {
@@ -893,23 +906,17 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
             kind: InstKind::Switch(cases),
             pattern: "$p0".to_string(),
             params: vec![opnd],
-            breakable: Breakable::No,
+            breakable: Breakable::Single,
             ..Default::default()
         });
 
         for target in values {
             // case i:
-            self.builder.start_block();
-            self.block_result(target, true);
-            self.builder.push_br(target);
-            self.builder.end_block();
+            self.visit_br_table_case(target);
         }
 
         // default:
-        self.builder.start_block();
-        self.block_result(targets.default(), true);
-        self.builder.push_br(targets.default());
-        self.builder.end_block();
+        self.visit_br_table_case(targets.default());
 
         Ok(())
     }
