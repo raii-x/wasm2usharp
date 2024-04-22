@@ -55,9 +55,13 @@ fn codegen_inst(
             writeln!(f, "return {pattern};")?;
         }
         InstKind::Block => {
-            writeln!(f, "do {{")?;
+            if inst.breakable != Breakable::No {
+                writeln!(f, "do {{")?;
+            }
             codegen_block(f, code, inst.first_block.unwrap(), module, true)?;
-            writeln!(f, "}} while (false);")?;
+            if inst.breakable != Breakable::No {
+                writeln!(f, "}} while (false);")?;
+            }
         }
         InstKind::Loop(loop_var) => {
             writeln!(f, "{LOOP}{loop_var} = true;")?;
@@ -68,7 +72,9 @@ fn codegen_inst(
 
             writeln!(f, "{LOOP}{loop_var} = false;")?;
             writeln!(f, "}} while (false);")?;
-            writeln!(f, "if ({BREAK_DEPTH} > 0) break;")?;
+            if inst.breakable == Breakable::Multi {
+                writeln!(f, "if ({BREAK_DEPTH} > 0) break;")?;
+            }
             writeln!(f, "}} while ({LOOP}{});", loop_var)?;
         }
         InstKind::If => {

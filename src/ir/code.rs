@@ -76,7 +76,7 @@ pub struct Call {
     pub save_loop_vars: Vec<usize>,
 }
 
-#[derive(PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Breakable {
     #[default]
     /// breakが不可能
