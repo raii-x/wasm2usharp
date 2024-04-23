@@ -5,7 +5,7 @@ use crate::ir::{
     module::{Func, Module},
     result_cs_ty,
     ty::CsType,
-    var::Var,
+    var::VarId,
     BREAK_DEPTH, LOOP,
 };
 
@@ -21,11 +21,11 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
 
     let code = func.code.as_ref().unwrap();
 
-    let params: Vec<(CsType, &Var)> = func_ty
+    let params: Vec<(CsType, VarId)> = func_ty
         .params()
         .iter()
         .map(|&ty| CsType::get(ty))
-        .zip(code.vars.var_decls.iter().map(|x| &x.var))
+        .zip(code.vars.iter().map(|(id, _)| id))
         .collect();
     write!(
         f,
@@ -38,15 +38,15 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
     writeln!(f, "int {BREAK_DEPTH} = 0;")?;
 
     // ループ変数
-    for i in 0..code.vars.loop_var_count {
+    for i in 0..code.loop_var_count {
         writeln!(f, "bool {LOOP}{i};")?;
     }
 
     // 一時変数
-    for decl in code.vars.var_decls.iter().skip(func_ty.params().len()) {
-        match decl.default {
-            Some(def) => writeln!(f, "{} {} = {def};", decl.var.ty, decl.var)?,
-            None => writeln!(f, "{} {};", decl.var.ty, decl.var)?,
+    for (id, var) in code.vars.iter().skip(func_ty.params().len()) {
+        match var.default {
+            Some(def) => writeln!(f, "{} {} = {def};", var.ty, id)?,
+            None => writeln!(f, "{} {};", var.ty, id)?,
         }
     }
 

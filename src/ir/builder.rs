@@ -2,7 +2,9 @@ use cranelift_entity::SecondaryMap;
 
 use super::{
     code::{Block, BlockId, Blocks, Breakable, Call, Code, Inst, InstKind, Insts},
-    var::{FuncVars, Primary, Var},
+    module::FuncHeader,
+    ty::CsType,
+    var::{Primary, Var, VarId, Vars},
 };
 
 pub struct Builder {
@@ -11,7 +13,17 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn new(vars: FuncVars) -> Self {
+    pub fn new(header: &FuncHeader) -> Self {
+        let mut vars = Vars::new();
+
+        for &ty in header.ty.params() {
+            vars.push(Var {
+                ty: CsType::get(ty),
+                local: true,
+                default: None,
+            });
+        }
+
         let mut blocks = Blocks::new();
         let root = blocks.push(Default::default());
 
@@ -22,9 +34,14 @@ impl Builder {
                 inst_nodes: SecondaryMap::new(),
                 root,
                 vars,
+                loop_var_count: 0,
             },
             cursor: root,
         }
+    }
+
+    pub fn new_var(&mut self, var: Var) -> VarId {
+        self.code.vars.push(var)
     }
 
     /// カーソルのブロックの最後に命令を追加
@@ -65,7 +82,7 @@ impl Builder {
         });
     }
 
-    pub fn push_set(&mut self, lhs: Var, rhs: Primary) {
+    pub fn push_set(&mut self, lhs: VarId, rhs: Primary) {
         self.push(Inst {
             kind: InstKind::Expr,
             pattern: "$p0".to_string(),
@@ -75,7 +92,12 @@ impl Builder {
         });
     }
 
-    pub fn push_set_pattern(&mut self, lhs: Var, pattern: impl Into<String>, params: Vec<Primary>) {
+    pub fn push_set_pattern(
+        &mut self,
+        lhs: VarId,
+        pattern: impl Into<String>,
+        params: Vec<Primary>,
+    ) {
         self.push(Inst {
             kind: InstKind::Expr,
             pattern: pattern.into(),
@@ -85,7 +107,7 @@ impl Builder {
         });
     }
 
-    pub fn push_call(&mut self, call: Call, params: Vec<Primary>, result: Option<Var>) {
+    pub fn push_call(&mut self, call: Call, params: Vec<Primary>, result: Option<VarId>) {
         let mut pattern = "$c(".to_string();
         pattern += &(0..params.len())
             .map(|i| format!("$p{}", i))

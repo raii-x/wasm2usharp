@@ -38,7 +38,7 @@ fn codegen_inst(
     let pattern = inst.expand_pattern(module);
 
     if let Some(call) = &inst.call {
-        push_save_vars(call, f)?;
+        push_save_vars(f, call)?;
     }
 
     match &inst.kind {
@@ -144,12 +144,12 @@ fn codegen_inst(
     }
 
     if let Some(call) = &inst.call {
-        pop_save_vars(call, f)?;
+        pop_save_vars(f, call, code)?;
     }
     Ok(())
 }
 
-fn push_save_vars(call: &Call, f: &mut dyn io::Write) -> io::Result<()> {
+fn push_save_vars(f: &mut dyn io::Write, call: &Call) -> io::Result<()> {
     if call.recursive && !call.save_vars.is_empty() {
         // ローカル変数保存用のスタックにプッシュ
         for (i, &var) in call.save_vars.iter().enumerate() {
@@ -164,12 +164,16 @@ fn push_save_vars(call: &Call, f: &mut dyn io::Write) -> io::Result<()> {
     Ok(())
 }
 
-fn pop_save_vars(call: &Call, f: &mut dyn io::Write) -> io::Result<()> {
+fn pop_save_vars(f: &mut dyn io::Write, call: &Call, code: &Code) -> io::Result<()> {
     if call.recursive && !call.save_vars.is_empty() {
         writeln!(f, "{STACK_TOP} -= {};", call.save_vars.len())?;
         // ローカル変数保存用のスタックからポップ
-        for (i, &var) in call.save_vars.iter().enumerate() {
-            write!(f, "{var} = ({}){STACK}[{STACK_TOP}", var.ty)?;
+        for (i, &var_id) in call.save_vars.iter().enumerate() {
+            write!(
+                f,
+                "{var_id} = ({}){STACK}[{STACK_TOP}",
+                code.vars[var_id].ty
+            )?;
             if i != 0 {
                 write!(f, " + {i}")?;
             }

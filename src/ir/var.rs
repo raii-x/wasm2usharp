@@ -1,73 +1,48 @@
 use std::fmt;
 
-use super::{
-    module::FuncHeader,
-    ty::{Const, CsType},
-};
+use cranelift_entity::{entity_impl, EntityRef, PrimaryMap};
 
-pub struct FuncVars {
-    pub var_decls: Vec<VarDecl>,
-    pub loop_var_count: usize,
-}
+use super::ty::{Const, CsType};
 
-impl FuncVars {
-    pub fn new(header: &FuncHeader) -> Self {
-        let mut this = Self {
-            var_decls: Vec::new(),
-            loop_var_count: 0,
-        };
+pub type Vars = PrimaryMap<VarId, Var>;
 
-        for &ty in header.ty.params() {
-            this.new_var_with_local(CsType::get(ty), None, true);
-        }
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VarId(u32);
+entity_impl!(VarId);
 
-        this
-    }
-
-    fn new_var_with_local(&mut self, ty: CsType, default: Option<Const>, local: bool) -> Var {
-        let var = Var {
-            index: self.var_decls.len(),
-            ty,
-            local,
-        };
-        self.var_decls.push(VarDecl { var, default });
-        var
-    }
-
-    pub fn new_var(&mut self, ty: CsType, default: Option<Const>) -> Var {
-        self.new_var_with_local(ty, default, false)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct VarDecl {
-    pub var: Var,
+#[derive(Clone, Copy)]
+pub struct Var {
+    pub ty: CsType,
+    pub local: bool,
     pub default: Option<Const>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Var {
-    pub index: usize,
-    pub ty: CsType,
-    pub local: bool,
-}
-
-impl fmt::Display for Var {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "var{}", self.index)
+impl Default for Var {
+    fn default() -> Self {
+        Self {
+            ty: CsType::Int,
+            local: false,
+            default: None,
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl fmt::Display for VarId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "var{}", self.index())
+    }
+}
+
+#[derive(Clone, Copy)]
 pub enum Primary {
-    Var(Var),
+    Var(VarId),
     Const(Const),
 }
 
 impl Primary {
-    pub fn ty(&self) -> CsType {
+    pub fn ty(&self, vars: &Vars) -> CsType {
         match self {
-            Self::Var(x) => x.ty,
+            Self::Var(x) => vars[*x].ty,
             Self::Const(x) => x.ty(),
         }
     }
@@ -82,8 +57,8 @@ impl fmt::Display for Primary {
     }
 }
 
-impl From<Var> for Primary {
-    fn from(value: Var) -> Self {
+impl From<VarId> for Primary {
+    fn from(value: VarId) -> Self {
         Self::Var(value)
     }
 }

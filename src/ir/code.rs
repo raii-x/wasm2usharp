@@ -2,7 +2,7 @@ use cranelift_entity::{entity_impl, packed_option::PackedOption, PrimaryMap, Sec
 
 use super::{
     module::Module,
-    var::{FuncVars, Primary, Var},
+    var::{Primary, VarId, Vars},
 };
 
 pub struct Code {
@@ -10,7 +10,8 @@ pub struct Code {
     pub insts: Insts,
     pub inst_nodes: SecondaryMap<InstId, InstNode>,
     pub root: BlockId,
-    pub vars: FuncVars,
+    pub vars: Vars,
+    pub loop_var_count: usize,
 }
 
 pub type Blocks = PrimaryMap<BlockId, Block>;
@@ -44,7 +45,7 @@ pub struct Inst {
     /// 呼び出す関数: $c
     pub pattern: String,
     pub params: Vec<Primary>,
-    pub result: Option<Var>,
+    pub result: Option<VarId>,
     pub call: Option<Call>,
     pub breakable: Breakable,
 }
@@ -76,7 +77,7 @@ pub enum InstKind {
 pub struct Call {
     pub func: usize,
     pub recursive: bool,
-    pub save_vars: Vec<Var>,
+    pub save_vars: Vec<VarId>,
     pub save_loop_vars: Vec<usize>,
 }
 

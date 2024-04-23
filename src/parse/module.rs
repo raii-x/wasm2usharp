@@ -13,7 +13,7 @@ use crate::{
         module::{Data, Element, Func, FuncHeader, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
-        var::{FuncVars, Primary},
+        var::{Primary, Var},
         CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE, W2US_PREFIX,
     },
     parse::code::CodeParser,
@@ -361,28 +361,26 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 export: false,
             };
 
-            let mut builder = Builder::new(FuncVars::new(&header));
+            let mut builder = Builder::new(&header);
 
             let table_name = &table.name;
             let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
 
-            let index_var = builder.code.vars.var_decls.last().unwrap().var;
+            let (index_var_id, _) = builder.code.vars.last().unwrap();
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
                 builder.push(Inst {
                     pattern: format!("if ({table_name}[$p0] is uint) {{"),
-                    params: vec![index_var.into()],
+                    params: vec![index_var_id.into()],
                     ..Default::default()
                 });
             }
 
             // 関数呼び出し用の引数リスト
-            let call_params: Vec<Primary> = builder.code.vars.var_decls
-                [0..builder.code.vars.var_decls.len() - 1]
-                .iter()
-                .map(|x| x.var.into())
-                .collect();
+            let params: Vec<Primary> = builder.code.vars.iter().map(|(id, _)| id.into()).collect();
+            let mut params_no_index = params.clone();
+            params_no_index.pop();
 
             // 呼び出される関数のインデックスのリスト
             let cases: Vec<usize> = (0..self.module.wasm_func_count)
@@ -405,19 +403,17 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                         "switch ({}{table_name}[$p0]) {{",
                         if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
                     ),
-                    params: vec![index_var.into()],
+                    params: vec![index_var_id.into()],
                     ..Default::default()
                 });
 
                 let result = if ty.results().is_empty() {
                     None
                 } else {
-                    Some(
-                        builder
-                            .code
-                            .vars
-                            .new_var(CsType::get(ty.results()[0]), None),
-                    )
+                    Some(builder.new_var(Var {
+                        ty: CsType::get(ty.results()[0]),
+                        ..Default::default()
+                    }))
                 };
 
                 for i in cases {
@@ -428,10 +424,10 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                         save_vars: vec![],
                         save_loop_vars: vec![],
                     };
-                    builder.push_call(call, call_params.clone(), result);
+                    builder.push_call(call, params_no_index.clone(), result);
 
                     match result {
-                        Some(x) => builder.push_return(Some(x.into())),
+                        Some(id) => builder.push_return(Some(id.into())),
                         None => builder.push_return(None),
                     }
                 }
@@ -439,7 +435,9 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 builder.push_line("default:");
                 builder.push_line(trap(self.module, "invalid table value"));
                 match result {
-                    Some(x) => builder.push_return(Some(x.ty.default().into())),
+                    Some(id) => {
+                        builder.push_return(Some(builder.code.vars[id].ty.default().into()))
+                    }
                     None => builder.push_return(None),
                 }
 
@@ -451,17 +449,14 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
 
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
-                let call_params_pat = (0..call_params.len())
+                let call_params_pat = (0..params_no_index.len())
                     .map(|i| format!("$p{}", i))
                     .collect::<Vec<_>>()
                     .join(", ");
                 let pattern = format!(
                     "(({del}){table_name}[$p{}])({call_params_pat})",
-                    call_params.len()
+                    params_no_index.len()
                 );
-
-                let mut params = call_params.clone();
-                params.push(index_var.into());
 
                 if ty.results().is_empty() {
                     builder.push(Inst {
@@ -503,7 +498,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             export: true,
         };
 
-        let mut builder = Builder::new(FuncVars::new(&header));
+        let mut builder = Builder::new(&header);
 
         for global in &self.module.globals {
             if global.import {
