@@ -15,6 +15,7 @@ pub struct Var {
     pub ty: CsType,
     pub local: bool,
     pub default: Option<Const>,
+    pub used: bool,
 }
 
 impl Default for Var {
@@ -23,6 +24,7 @@ impl Default for Var {
             ty: CsType::Int,
             local: false,
             default: None,
+            used: true,
         }
     }
 }

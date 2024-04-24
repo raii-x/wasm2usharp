@@ -21,6 +21,7 @@ impl Builder {
                 ty: CsType::get(ty),
                 local: true,
                 default: None,
+                used: true,
             });
         }
 

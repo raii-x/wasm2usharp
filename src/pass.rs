@@ -1,9 +1,10 @@
 mod breakable;
 mod recursive;
+mod var;
 
 use crate::ir::module::Module;
 
-use self::{breakable::breakable, recursive::recursive};
+use self::{breakable::breakable, recursive::recursive, var::remove_unused_vars};
 
 pub fn run_passes(module: &mut Module<'_>) {
     for func in module.all_funcs.iter_mut() {
@@ -12,6 +13,7 @@ pub fn run_passes(module: &mut Module<'_>) {
         };
 
         breakable(code);
+        remove_unused_vars(code);
     }
 
     recursive(module);

@@ -44,6 +44,9 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
 
     // 一時変数
     for (id, var) in code.vars.iter().skip(func_ty.params().len()) {
+        if !var.used {
+            continue;
+        }
         match var.default {
             Some(def) => writeln!(f, "{} {} = {def};", var.ty, id)?,
             None => writeln!(f, "{} {};", var.ty, id)?,
