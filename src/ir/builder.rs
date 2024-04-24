@@ -1,8 +1,8 @@
 use cranelift_entity::{PrimaryMap, SecondaryMap};
+use wasmparser::ValType;
 
 use super::{
     code::{Block, BlockId, BlockNode, Breakable, Call, Code, Inst, InstKind},
-    module::FuncHeader,
     ty::CsType,
     var::{Primary, Var, VarId, Vars},
 };
@@ -13,10 +13,10 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn new(header: &FuncHeader) -> Self {
+    pub fn new(params: &[ValType]) -> Self {
         let mut vars = Vars::new();
 
-        for &ty in header.ty.params() {
+        for &ty in params {
             vars.push(Var {
                 ty: CsType::get(ty),
                 local: true,

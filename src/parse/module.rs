@@ -361,7 +361,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 export: false,
             };
 
-            let mut builder = Builder::new(&header);
+            let mut builder = Builder::new(header.ty.params());
 
             let table_name = &table.name;
             let use_delegate = self.module.test && ty.params().len() <= MAX_PARAMS;
@@ -498,7 +498,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             export: true,
         };
 
-        let mut builder = Builder::new(&header);
+        let mut builder = Builder::new(header.ty.params());
 
         for global in &self.module.globals {
             if global.import {

@@ -59,7 +59,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             module,
             func,
             blocks: Vec::new(),
-            builder: Builder::new(header),
+            builder: Builder::new(header.ty.params()),
             local_count: header.ty.params().len(),
             unreachable: 0,
         }
