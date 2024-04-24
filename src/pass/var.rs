@@ -1,6 +1,9 @@
 use cranelift_entity::EntitySet;
 
-use crate::ir::{code::Code, var::Primary};
+use crate::ir::{
+    code::{Breakable, Code, InstKind},
+    var::Primary,
+};
 
 /// 未使用の変数を削除する
 pub fn remove_unused_vars(code: &mut Code) {
@@ -31,6 +34,23 @@ pub fn remove_unused_vars(code: &mut Code) {
             call.save_vars.retain(|var_id| used_vars.contains(*var_id));
         }
     }
+}
+
+/// 未使用のBREAK_DEPTH変数を削除する
+pub fn remove_unused_break_depth(code: &mut Code) {
+    // break_depthを使用する命令を使用していればreturn
+    for (_, inst) in code.insts.iter() {
+        if inst.breakable == Breakable::Multi {
+            return;
+        }
+        if let InstKind::Br(depth) = &inst.kind {
+            if *depth > 0 {
+                return;
+            }
+        }
+    }
+
+    code.break_depth_used = false;
 }
 
 #[cfg(test)]

@@ -37,6 +37,7 @@ impl Builder {
                 root,
                 vars,
                 loop_var_count: 0,
+                break_depth_used: true,
             },
             cursor: root,
         }

@@ -14,6 +14,7 @@ pub struct Code {
     pub root: BlockId,
     pub vars: Vars,
     pub loop_var_count: usize,
+    pub break_depth_used: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]

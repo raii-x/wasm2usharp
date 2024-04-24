@@ -35,7 +35,9 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
 
     writeln!(f, " {{")?;
 
-    writeln!(f, "int {BREAK_DEPTH} = 0;")?;
+    if code.break_depth_used {
+        writeln!(f, "int {BREAK_DEPTH} = 0;")?;
+    }
 
     // ループ変数
     for i in 0..code.loop_var_count {
