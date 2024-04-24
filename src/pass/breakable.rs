@@ -1,6 +1,9 @@
 use cranelift_entity::EntitySet;
 
-use crate::ir::code::{BlockId, Breakable, Code, InstId, InstKind};
+use crate::ir::{
+    code::{BlockId, Breakable, Code, InstId, InstKind},
+    node::Node,
+};
 
 /// ブロックを作る命令のbreakableを最適化する
 pub fn breakable(code: &mut Code) {
@@ -27,131 +30,111 @@ impl<'a> BreakablePass<'a> {
     }
 
     fn run(&mut self) {
-        self.mark_target_block(self.code.root);
-        self.reduce_depth_block(self.code.root);
+        self.mark_target(self.code.root);
+        self.reduce_depth(self.code.root);
         self.set_breakable_block(self.code.root);
     }
 
     /// break先の命令をtargetsに追加
-    fn mark_target_block(&mut self, id: BlockId) {
-        let mut next_inst_id = self.code.block_nodes[id].first_child;
-        while let Some(inst_id) = next_inst_id.expand() {
-            self.mark_target_inst(inst_id);
-            next_inst_id = self.code.inst_nodes[inst_id].next;
-        }
-    }
-
-    /// break先の命令をtargetsに追加
-    fn mark_target_inst(&mut self, id: InstId) {
-        let inst = &self.code.insts[id];
-        if let InstKind::Br(depth) = inst.kind {
-            // break先となる命令のIDをtargetsに追加
-            let target_id = self.inst_stack[self.inst_stack.len() - 1 - depth as usize];
-            self.targets.insert(target_id);
-        }
-
-        let breakable = inst.breakable != Breakable::No;
-        if breakable {
-            self.inst_stack.push(id);
-        }
-
-        let mut next_block_id = self.code.inst_nodes[id].first_child;
-        while let Some(block_id) = next_block_id.expand() {
-            self.mark_target_block(block_id);
-            next_block_id = self.code.block_nodes[block_id].next;
-        }
-
-        if breakable {
-            self.inst_stack.pop();
-        }
-    }
-
-    /// br命令のbreak量を減らす
-    fn reduce_depth_block(&mut self, id: BlockId) {
-        let mut next_inst_id = self.code.block_nodes[id].first_child;
-        while let Some(inst_id) = next_inst_id.expand() {
-            self.reduce_depth_inst(inst_id);
-            next_inst_id = self.code.inst_nodes[inst_id].next;
-        }
-    }
-
-    /// br命令のbreak量を減らす
-    fn reduce_depth_inst(&mut self, id: InstId) {
-        let inst = &mut self.code.insts[id];
-        if let InstKind::Br(depth) = &mut inst.kind {
-            // reduction_stackの (最後の値 - 最後からdepth番目の値) がbreakの減少量となる
-            *depth -= self.reduction_stack.last().unwrap()
-                - self.reduction_stack[self.reduction_stack.len() - 1 - *depth as usize];
-        }
-
-        let breakable = inst.breakable != Breakable::No;
-        if breakable {
-            let mut reduction = if let Some(last) = self.reduction_stack.last() {
-                *last
-            } else {
-                0
-            };
-
-            if !matches!(inst.kind, InstKind::Loop(_) | InstKind::Switch(_))
-                && !self.targets.contains(id)
-            {
-                // この命令の子孫のbreakを1減らす
-                inst.breakable = Breakable::No;
-                reduction += 1;
+    fn mark_target(&mut self, block_id: BlockId) {
+        let mut inst_iter = self.code.block_nodes[block_id].iter();
+        while let Some(inst_id) = inst_iter.next(&self.code.inst_nodes) {
+            let inst = &self.code.insts[inst_id];
+            if let InstKind::Br(depth) = inst.kind {
+                // break先となる命令のIDをtargetsに追加
+                let target_id = self.inst_stack[self.inst_stack.len() - 1 - depth as usize];
+                self.targets.insert(target_id);
             }
 
-            self.reduction_stack.push(reduction);
-        }
+            let breakable = inst.breakable != Breakable::No;
+            if breakable {
+                self.inst_stack.push(inst_id);
+            }
 
-        // 命令の子ブロックに対して処理
-        let mut next_block_id = self.code.inst_nodes[id].first_child;
-        while let Some(block_id) = next_block_id.expand() {
-            self.reduce_depth_block(block_id);
-            next_block_id = self.code.block_nodes[block_id].next;
-        }
+            let mut block_iter = self.code.inst_nodes[inst_id].iter();
+            while let Some(block_id) = block_iter.next(&self.code.block_nodes) {
+                self.mark_target(block_id);
+            }
 
-        if breakable {
-            self.reduction_stack.pop();
+            if breakable {
+                self.inst_stack.pop();
+            }
+        }
+    }
+
+    /// br命令のbreak量を減らす
+    fn reduce_depth(&mut self, block_id: BlockId) {
+        let mut inst_iter = self.code.block_nodes[block_id].iter();
+        while let Some(inst_id) = inst_iter.next(&self.code.inst_nodes) {
+            let inst = &mut self.code.insts[inst_id];
+            if let InstKind::Br(depth) = &mut inst.kind {
+                // reduction_stackの (最後の値 - 最後からdepth番目の値) がbreakの減少量となる
+                *depth -= self.reduction_stack.last().unwrap()
+                    - self.reduction_stack[self.reduction_stack.len() - 1 - *depth as usize];
+            }
+
+            let breakable = inst.breakable != Breakable::No;
+            if breakable {
+                let mut reduction = if let Some(last) = self.reduction_stack.last() {
+                    *last
+                } else {
+                    0
+                };
+
+                if !matches!(inst.kind, InstKind::Loop(_) | InstKind::Switch(_))
+                    && !self.targets.contains(inst_id)
+                {
+                    // この命令の子孫のbreakを1減らす
+                    inst.breakable = Breakable::No;
+                    reduction += 1;
+                }
+
+                self.reduction_stack.push(reduction);
+            }
+
+            // 命令の子ブロックに対して処理
+            let mut block_iter = self.code.inst_nodes[inst_id].iter();
+            while let Some(block_id) = block_iter.next(&self.code.block_nodes) {
+                self.reduce_depth(block_id);
+            }
+
+            if breakable {
+                self.reduction_stack.pop();
+            }
         }
     }
 
     /// breakableを最適化し、ブロックの最大break段階数を返す
-    fn set_breakable_block(&mut self, id: BlockId) -> u32 {
-        let block = &mut self.code.block_nodes[id];
-
+    fn set_breakable_block(&mut self, block_id: BlockId) -> u32 {
         let mut max_depth = 0;
-        let mut next_inst_id = block.first_child;
 
         // ブロック内の命令の最大のbreak段階数を求める
-        while let Some(inst_id) = next_inst_id.expand() {
+        let mut inst_iter = self.code.block_nodes[block_id].iter();
+        while let Some(inst_id) = inst_iter.next(&self.code.inst_nodes) {
             let depth = self.set_breakable_inst(inst_id);
             max_depth = max_depth.max(depth);
-
-            next_inst_id = self.code.inst_nodes[inst_id].next;
         }
 
         max_depth
     }
 
     /// breakableを最適化し、命令の最大break段階数を返す
-    fn set_breakable_inst(&mut self, id: InstId) -> u32 {
+    fn set_breakable_inst(&mut self, inst_id: InstId) -> u32 {
         // br命令なら段階数+1
-        if let InstKind::Br(depth) = self.code.insts[id].kind {
+        if let InstKind::Br(depth) = self.code.insts[inst_id].kind {
             return depth + 1;
         }
 
         let mut max_depth = 0;
-        let mut next_block_id = self.code.inst_nodes[id].first_child;
 
         // 命令の子ブロックの最大のbreak段階数を求める
-        while let Some(block_id) = next_block_id.expand() {
+        let mut block_iter = self.code.inst_nodes[inst_id].iter();
+        while let Some(block_id) = block_iter.next(&self.code.block_nodes) {
             let depth = self.set_breakable_block(block_id);
             max_depth = max_depth.max(depth);
-
-            next_block_id = self.code.block_nodes[block_id].next;
         }
 
-        let inst = &mut self.code.insts[id];
+        let inst = &mut self.code.insts[inst_id];
         if inst.breakable == Breakable::No {
             // break可能でなければ子のbreak段階数を命令のbreak段階数とする
             max_depth
