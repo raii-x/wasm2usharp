@@ -6,7 +6,7 @@ use super::ty::{Const, CsType};
 
 pub type Vars = PrimaryMap<VarId, Var>;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarId(u32);
 entity_impl!(VarId);
 

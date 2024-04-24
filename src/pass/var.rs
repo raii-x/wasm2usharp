@@ -32,3 +32,58 @@ pub fn remove_unused_vars(code: &mut Code) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use cranelift_entity::EntityRef;
+
+    use crate::ir::{
+        builder::Builder,
+        code::{Call, InstId},
+        ty::Const,
+        var::Var,
+    };
+
+    use super::remove_unused_vars;
+
+    #[test]
+    fn test_remove_unused_vars() {
+        // 未使用のvar0が削除され、使用されているvar1とvar2は削除されない
+        let mut builder = Builder::new(&[]);
+
+        let var0 = builder.new_var(Var {
+            ..Default::default()
+        });
+        let var1 = builder.new_var(Var {
+            ..Default::default()
+        });
+        let var2 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_call(
+            Call {
+                func: 0,
+                recursive: true,
+                save_vars: vec![var0, var1, var2],
+                save_loop_vars: vec![],
+            },
+            vec![],
+            None,
+        );
+        builder.push_set(var1, Const::Int(1).into());
+        builder.push_return(Some(var2.into()));
+
+        let mut code = builder.build();
+
+        remove_unused_vars(&mut code);
+
+        assert!(!code.vars[var0].used);
+        assert!(code.vars[var1].used);
+        assert!(code.vars[var2].used);
+        assert_eq!(
+            code.insts[InstId::new(0)].call.as_ref().unwrap().save_vars,
+            vec![var1, var2]
+        );
+    }
+}
