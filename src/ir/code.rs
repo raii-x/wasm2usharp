@@ -2,34 +2,27 @@ use cranelift_entity::{entity_impl, packed_option::PackedOption, PrimaryMap, Sec
 
 use super::{
     module::Module,
+    node::{node_def, Node},
     var::{Primary, VarId, Vars},
 };
 
 pub struct Code {
-    pub blocks: Blocks,
-    pub insts: Insts,
+    pub blocks: PrimaryMap<BlockId, Block>,
+    pub block_nodes: SecondaryMap<BlockId, BlockNode>,
+    pub insts: PrimaryMap<InstId, Inst>,
     pub inst_nodes: SecondaryMap<InstId, InstNode>,
     pub root: BlockId,
     pub vars: Vars,
     pub loop_var_count: usize,
 }
 
-pub type Blocks = PrimaryMap<BlockId, Block>;
-
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BlockId(u32);
 entity_impl!(BlockId, "block");
 
-#[derive(Default)]
-pub struct Block {
-    pub parent: PackedOption<InstId>,
-    pub prev: PackedOption<BlockId>,
-    pub next: PackedOption<BlockId>,
-    pub first_inst: PackedOption<InstId>,
-    pub last_inst: PackedOption<InstId>,
-}
+pub struct Block;
 
-pub type Insts = PrimaryMap<InstId, Inst>;
+node_def!(BlockNode, BlockId, InstId, InstId);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InstId(u32);
@@ -50,14 +43,7 @@ pub struct Inst {
     pub breakable: Breakable,
 }
 
-#[derive(Clone, Default)]
-pub struct InstNode {
-    pub parent: PackedOption<BlockId>,
-    pub prev: PackedOption<InstId>,
-    pub next: PackedOption<InstId>,
-    pub first_block: PackedOption<BlockId>,
-    pub last_block: PackedOption<BlockId>,
-}
+node_def!(InstNode, InstId, BlockId, BlockId);
 
 #[derive(Default)]
 pub enum InstKind {

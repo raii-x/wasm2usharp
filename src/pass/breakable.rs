@@ -34,7 +34,7 @@ impl<'a> BreakablePass<'a> {
 
     /// break先の命令をtargetsに追加
     fn mark_target_block(&mut self, id: BlockId) {
-        let mut next_inst_id = self.code.blocks[id].first_inst;
+        let mut next_inst_id = self.code.block_nodes[id].first_child;
         while let Some(inst_id) = next_inst_id.expand() {
             self.mark_target_inst(inst_id);
             next_inst_id = self.code.inst_nodes[inst_id].next;
@@ -55,10 +55,10 @@ impl<'a> BreakablePass<'a> {
             self.inst_stack.push(id);
         }
 
-        let mut next_block_id = self.code.inst_nodes[id].first_block;
+        let mut next_block_id = self.code.inst_nodes[id].first_child;
         while let Some(block_id) = next_block_id.expand() {
             self.mark_target_block(block_id);
-            next_block_id = self.code.blocks[block_id].next;
+            next_block_id = self.code.block_nodes[block_id].next;
         }
 
         if breakable {
@@ -68,7 +68,7 @@ impl<'a> BreakablePass<'a> {
 
     /// br命令のbreak量を減らす
     fn reduce_depth_block(&mut self, id: BlockId) {
-        let mut next_inst_id = self.code.blocks[id].first_inst;
+        let mut next_inst_id = self.code.block_nodes[id].first_child;
         while let Some(inst_id) = next_inst_id.expand() {
             self.reduce_depth_inst(inst_id);
             next_inst_id = self.code.inst_nodes[inst_id].next;
@@ -104,10 +104,10 @@ impl<'a> BreakablePass<'a> {
         }
 
         // 命令の子ブロックに対して処理
-        let mut next_block_id = self.code.inst_nodes[id].first_block;
+        let mut next_block_id = self.code.inst_nodes[id].first_child;
         while let Some(block_id) = next_block_id.expand() {
             self.reduce_depth_block(block_id);
-            next_block_id = self.code.blocks[block_id].next;
+            next_block_id = self.code.block_nodes[block_id].next;
         }
 
         if breakable {
@@ -117,10 +117,10 @@ impl<'a> BreakablePass<'a> {
 
     /// breakableを最適化し、ブロックの最大break段階数を返す
     fn set_breakable_block(&mut self, id: BlockId) -> u32 {
-        let block = &mut self.code.blocks[id];
+        let block = &mut self.code.block_nodes[id];
 
         let mut max_depth = 0;
-        let mut next_inst_id = block.first_inst;
+        let mut next_inst_id = block.first_child;
 
         // ブロック内の命令の最大のbreak段階数を求める
         while let Some(inst_id) = next_inst_id.expand() {
@@ -141,14 +141,14 @@ impl<'a> BreakablePass<'a> {
         }
 
         let mut max_depth = 0;
-        let mut next_block_id = self.code.inst_nodes[id].first_block;
+        let mut next_block_id = self.code.inst_nodes[id].first_child;
 
         // 命令の子ブロックの最大のbreak段階数を求める
         while let Some(block_id) = next_block_id.expand() {
             let depth = self.set_breakable_block(block_id);
             max_depth = max_depth.max(depth);
 
-            next_block_id = self.code.blocks[block_id].next;
+            next_block_id = self.code.block_nodes[block_id].next;
         }
 
         let inst = &mut self.code.insts[id];

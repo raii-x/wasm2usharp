@@ -7,6 +7,7 @@ use self::{module::Module, ty::CsType};
 pub mod builder;
 pub mod code;
 pub mod module;
+pub mod node;
 pub mod ty;
 pub mod var;
 

@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
 use crate::ir::{
-    code::{Call, Insts},
+    code::{Call, Inst, InstId},
     module::Module,
 };
 
+use cranelift_entity::PrimaryMap;
 use petgraph::{algo::tarjan_scc, graph::Graph};
 
 /// 関数のコールグラフがサイクルを含むか判定し、
@@ -45,7 +46,7 @@ pub fn recursive(module: &mut Module<'_>) {
     }
 }
 
-fn iterate_call(tree: &mut Insts, mut f: impl FnMut(&mut Call)) {
+fn iterate_call(tree: &mut PrimaryMap<InstId, Inst>, mut f: impl FnMut(&mut Call)) {
     for (_, inst) in tree.iter_mut() {
         if let Some(call) = &mut inst.call {
             f(call);

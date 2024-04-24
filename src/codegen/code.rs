@@ -17,7 +17,7 @@ fn codegen_block(
     module: &Module<'_>,
     in_block: bool,
 ) -> io::Result<()> {
-    let mut next_inst_id = code.blocks[id].first_inst;
+    let mut next_inst_id = code.block_nodes[id].first_child;
     while let Some(inst_id) = next_inst_id.expand() {
         codegen_inst(f, code, inst_id, module, in_block)?;
 
@@ -59,7 +59,7 @@ fn codegen_inst(
             if inst.breakable != Breakable::No {
                 writeln!(f, "do {{")?;
             }
-            codegen_block(f, code, node.first_block.unwrap(), module, true)?;
+            codegen_block(f, code, node.first_child.unwrap(), module, true)?;
             if inst.breakable != Breakable::No {
                 writeln!(f, "}} while (false);")?;
             }
@@ -69,7 +69,7 @@ fn codegen_inst(
             writeln!(f, "do {{")?;
             writeln!(f, "do {{")?;
 
-            codegen_block(f, code, node.first_block.unwrap(), module, true)?;
+            codegen_block(f, code, node.first_child.unwrap(), module, true)?;
 
             writeln!(f, "{LOOP}{loop_var} = false;")?;
             writeln!(f, "}} while (false);")?;
@@ -85,10 +85,10 @@ fn codegen_inst(
                 writeln!(f, "do if ({pattern}) {{")?;
             }
 
-            let then = node.first_block.unwrap();
+            let then = node.first_child.unwrap();
             codegen_block(f, code, then, module, true)?;
 
-            if let Some(else_) = code.blocks[then].next.expand() {
+            if let Some(else_) = code.block_nodes[then].next.expand() {
                 writeln!(f, "}} else {{")?;
                 codegen_block(f, code, else_, module, true)?;
             }
@@ -108,7 +108,7 @@ fn codegen_inst(
         InstKind::Switch(cases) => {
             writeln!(f, "switch ({pattern}) {{")?;
 
-            let mut next_block_id = node.first_block;
+            let mut next_block_id = node.first_child;
             let mut i = 0;
             while let Some(block_id) = next_block_id.expand() {
                 if let Some(case) = cases[i] {
@@ -119,11 +119,11 @@ fn codegen_inst(
 
                 codegen_block(f, code, block_id, module, in_block)?;
 
-                let block = &code.blocks[block_id];
+                let block = &code.block_nodes[block_id];
 
                 // 命令がない、または最後の命令がbrではない場合にbreak
                 if block
-                    .last_inst
+                    .last_child
                     .expand()
                     .map_or(true, |id| !matches!(code.insts[id].kind, InstKind::Br(..)))
                 {

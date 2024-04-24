@@ -1,7 +1,7 @@
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{PrimaryMap, SecondaryMap};
 
 use super::{
-    code::{Block, BlockId, Blocks, Breakable, Call, Code, Inst, InstKind, Insts},
+    code::{Block, BlockId, BlockNode, Breakable, Call, Code, Inst, InstKind},
     module::FuncHeader,
     ty::CsType,
     var::{Primary, Var, VarId, Vars},
@@ -24,13 +24,14 @@ impl Builder {
             });
         }
 
-        let mut blocks = Blocks::new();
-        let root = blocks.push(Default::default());
+        let mut blocks = PrimaryMap::new();
+        let root = blocks.push(Block);
 
         Self {
             code: Code {
                 blocks,
-                insts: Insts::new(),
+                block_nodes: SecondaryMap::new(),
+                insts: PrimaryMap::new(),
                 inst_nodes: SecondaryMap::new(),
                 root,
                 vars,
@@ -49,14 +50,14 @@ impl Builder {
         let new_id = self.code.insts.push(inst);
         self.code.inst_nodes[new_id].parent = self.cursor.into();
 
-        let block = &mut self.code.blocks[self.cursor];
-        if let Some(last_id) = block.last_inst.expand() {
+        let block = &mut self.code.block_nodes[self.cursor];
+        if let Some(last_id) = block.last_child.expand() {
             self.code.inst_nodes[last_id].next = new_id.into();
             self.code.inst_nodes[new_id].prev = last_id.into();
         } else {
-            block.first_inst = new_id.into();
+            block.first_child = new_id.into();
         }
-        block.last_inst = new_id.into();
+        block.last_child = new_id.into();
     }
 
     pub fn push_line(&mut self, line: impl Into<String>) {
@@ -144,32 +145,33 @@ impl Builder {
 
     /// カーソルのブロックの最後の命令の子としてブロックを追加し、カーソルを追加したブロックに移動
     pub fn start_block(&mut self) {
-        let inst_id = self.code.blocks[self.cursor].last_inst.unwrap();
-        let new_id = self.code.blocks.push(Block {
+        let inst_id = self.code.block_nodes[self.cursor].last_child.unwrap();
+        let new_id = self.code.blocks.push(Block);
+        self.code.block_nodes[new_id] = BlockNode {
             parent: inst_id.into(),
             ..Default::default()
-        });
+        };
 
         let node = &mut self.code.inst_nodes[inst_id];
-        if let Some(last_id) = node.last_block.expand() {
-            self.code.blocks[last_id].next = new_id.into();
-            self.code.blocks[new_id].prev = last_id.into();
+        if let Some(last_id) = node.last_child.expand() {
+            self.code.block_nodes[last_id].next = new_id.into();
+            self.code.block_nodes[new_id].prev = last_id.into();
         } else {
-            node.first_block = new_id.into();
+            node.first_child = new_id.into();
         }
-        node.last_block = new_id.into();
+        node.last_child = new_id.into();
 
         self.cursor = new_id;
     }
 
     /// カーソルを現在のカーソルのブロックを持つ命令を含むブロックに移動
     pub fn end_block(&mut self) {
-        let inst_id = self.code.blocks[self.cursor].parent.unwrap();
+        let inst_id = self.code.block_nodes[self.cursor].parent.unwrap();
         self.cursor = self.code.inst_nodes[inst_id].parent.unwrap();
     }
 
     pub fn build(self) -> Code {
-        assert!(self.code.blocks[self.cursor].parent.is_none());
+        assert!(self.code.block_nodes[self.cursor].parent.is_none());
         self.code
     }
 }
