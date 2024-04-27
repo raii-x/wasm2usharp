@@ -28,8 +28,9 @@ Options:
 * Wasmのエクスポート・インポートの名前は、英数字以外の文字は`_`に置換され、
   先頭が数字の場合とC#のキーワードと同じ名前の場合は先頭に`_`が付与される
 
-## 対応しているWasm proposal
+## 対応している[Wasm proposal](https://github.com/WebAssembly/proposals/blob/main/finished-proposals.md "proposals/finished-proposals.md at main · WebAssembly/proposals")
 
+* Import/Export of Mutable Globals
 * Sign-extension operators
 
 ## TODO
