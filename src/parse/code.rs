@@ -851,11 +851,10 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
             return Ok(());
         }
 
-        let result = self.new_block(blockty, false).result;
+        self.new_block(blockty, false);
 
         self.builder.push(Inst {
             kind: InstKind::Block,
-            result,
             breakable: Breakable::Multi,
             ..Default::default()
         });
@@ -872,11 +871,9 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
 
         let block = self.new_block(blockty, true);
         let loop_var = block.loop_var.unwrap();
-        let result = block.result;
 
         self.builder.push(Inst {
             kind: InstKind::Loop(loop_var),
-            result,
             breakable: Breakable::Multi,
             ..Default::default()
         });
