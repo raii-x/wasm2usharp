@@ -90,7 +90,7 @@ fn reaching_def_gen_kill(
 fn reaching_def_in_out(
     code: &mut Code,
     sets: &mut SecondaryMap<InstId, Sets>,
-    out_stack: &mut Vec<HashSet<Def>>,
+    inst_stack: &mut Vec<InstId>,
     mut prev_out: HashSet<Def>,
     block_id: BlockId,
 ) -> Option<InstId> {
@@ -100,25 +100,24 @@ fn reaching_def_in_out(
 
         // 子ブロック
         if code.inst_nodes[inst_id].first_child.is_some() {
-            out_stack.push(HashSet::new());
+            inst_stack.push(inst_id);
 
             let mut iter = code.inst_nodes[inst_id].iter();
             while let Some(block_id) = iter.next(&code.block_nodes) {
                 if let Some(last_inst) =
-                    reaching_def_in_out(code, sets, out_stack, prev_out.clone(), block_id)
+                    reaching_def_in_out(code, sets, inst_stack, prev_out.clone(), block_id)
                 {
                     // out_stackのトップと最後の命令のoutとの和集合をとる
-                    out_stack
-                        .last_mut()
-                        .unwrap()
-                        .or_assign(&sets[last_inst].out);
+                    let i = *inst_stack.last().unwrap();
+                    let out = sets[i].out.or(&sets[last_inst].out);
+                    sets[i].out = out;
                 }
             }
 
             // out = gen ∪ (in ∖ kill)
             sets[inst_id].out = sets[inst_id]
                 .gen
-                .or(&out_stack.pop().unwrap().sub(&sets[inst_id].kill));
+                .or(&sets[inst_stack.pop().unwrap()].out.sub(&sets[inst_id].kill));
         } else {
             // out = gen ∪ (in ∖ kill)
             sets[inst_id].out = sets[inst_id]
@@ -128,8 +127,9 @@ fn reaching_def_in_out(
 
         // brなら対応するブロック命令のoutとの和集合をとる
         if let InstKind::Br(depth) = code.insts[inst_id].kind {
-            let i = out_stack.len() - 1 - depth as usize;
-            out_stack[i].or_assign(&sets[inst_id].out);
+            let i = inst_stack.len() - 1 - depth as usize;
+            let out = sets[inst_stack[i]].out.or(&sets[inst_id].out);
+            sets[inst_stack[i]].out = out;
         }
 
         prev_out = sets[inst_id].out.clone();
