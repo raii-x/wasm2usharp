@@ -114,6 +114,17 @@ fn reaching_def_in_out(
                 }
             }
 
+            // if文でelseが無い場合
+            let node = &code.inst_nodes[inst_id];
+            if matches!(code.insts[inst_id].kind, InstKind::If)
+                && node.first_child == node.last_child
+            {
+                // ifブロックのinとの和集合をとる
+                let i = *inst_stack.last().unwrap();
+                let out = sets[i].out.or(&sets[inst_id].in_);
+                sets[inst_id].out = out;
+            }
+
             // out = gen ∪ (in ∖ kill)
             sets[inst_id].out = sets[inst_id]
                 .gen
@@ -208,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_propagation_if() {
+    fn copy_propagation_if_else() {
         // func(v1, v2)
         // 0: if v1
         // 1:   then: v1 = 1
@@ -251,6 +262,41 @@ mod tests {
                 (2, (&[2], &[-2, 3], &[1, -2], &[1, 2])),
                 (3, (&[3], &[-2, 2], &[-1, -2], &[-1, 3])),
                 (4, (&[4], &[-1, 1], &[-1, 1, 2, 3], &[2, 3, 4])),
+            ],
+        );
+    }
+
+    #[test]
+    fn copy_propagation_if() {
+        // func(v1)
+        // 0: if v1
+        // 1:   v1 = 1
+        // 2: v1 = 2
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+
+        builder.push_if(v1.into(), Breakable::No); // 0
+
+        builder.start_block();
+        builder.push_set(v1, Const::Int(1).into()); // 1
+        builder.end_block();
+
+        builder.push_set(v1, Const::Int(2).into()); // 2
+
+        let mut code = builder.build();
+
+        let sets = copy_propagation_inner(&mut code);
+        sets_eq(
+            &sets,
+            &[
+                (0, (&[], &[], &[-1], &[-1, 1])),
+                (1, (&[1], &[-1, 2], &[-1], &[1])),
+                (2, (&[2], &[-1, 1], &[-1, 1], &[2])),
             ],
         );
     }
