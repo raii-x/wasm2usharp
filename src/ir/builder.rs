@@ -128,6 +128,14 @@ impl Builder {
         });
     }
 
+    pub fn push_block(&mut self, breakable: Breakable) {
+        self.push(Inst {
+            kind: InstKind::Block,
+            breakable,
+            ..Default::default()
+        });
+    }
+
     pub fn push_if(&mut self, cond: Primary, breakable: Breakable) {
         self.push(Inst {
             kind: InstKind::If,

@@ -152,7 +152,7 @@ mod tests {
     use crate::{
         ir::{
             builder::Builder,
-            code::{Breakable, Inst, InstId, InstKind},
+            code::{Breakable, InstId},
             ty::Const,
             var::{Var, VarId},
         },
@@ -184,10 +184,7 @@ mod tests {
         builder.push_set(v1, Const::Int(1).into()); // 0
 
         // 1
-        builder.push(Inst {
-            kind: InstKind::Block,
-            ..Default::default()
-        });
+        builder.push_block(Breakable::No);
 
         builder.start_block();
         builder.push_set(v2, Const::Int(2).into()); // 2

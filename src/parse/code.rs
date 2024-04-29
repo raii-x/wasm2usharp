@@ -853,11 +853,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
 
         self.new_block(blockty, false);
 
-        self.builder.push(Inst {
-            kind: InstKind::Block,
-            breakable: Breakable::Multi,
-            ..Default::default()
-        });
+        self.builder.push_block(Breakable::Multi);
         self.builder.start_block();
 
         Ok(())
