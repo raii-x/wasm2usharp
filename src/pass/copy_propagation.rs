@@ -152,7 +152,7 @@ mod tests {
     use crate::{
         ir::{
             builder::Builder,
-            code::{Inst, InstId, InstKind},
+            code::{Breakable, Inst, InstId, InstKind},
             ty::Const,
             var::{Var, VarId},
         },
@@ -162,7 +162,7 @@ mod tests {
     use super::{copy_propagation_inner, Def};
 
     #[test]
-    fn test_copy_propagation() {
+    fn copy_propagation_block() {
         // func(v1, v2)
         // 0: v1 = 1
         // 1: block
@@ -207,6 +207,55 @@ mod tests {
                 (2, (&[2], &[-2, 4], &[0, -2], &[0, 2])),
                 (3, (&[3], &[-1, 0], &[0, 2], &[3, 2])),
                 (4, (&[4], &[-2, 2], &[3, 2], &[3, 4])),
+            ],
+        );
+    }
+
+    #[test]
+    fn copy_propagation_if() {
+        // func(v1, v2)
+        // 0: if v1
+        // 1:   then: v1 = 1
+        // 2:         v2 = 2
+        // 3:   else: v2 = 3
+        // 4: v1 = 3
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+
+        // 0
+        builder.push_if(v1.into(), Breakable::No);
+
+        builder.start_block();
+        builder.push_set(v1, Const::Int(1).into()); // 2
+        builder.push_set(v2, Const::Int(2).into()); // 2
+        builder.end_block();
+
+        builder.start_block();
+        builder.push_set(v2, Const::Int(3).into()); // 3
+        builder.end_block();
+
+        builder.push_set(v1, Const::Int(4).into()); // 4
+
+        let mut code = builder.build();
+
+        let sets = copy_propagation_inner(&mut code);
+        sets_eq(
+            &sets,
+            &[
+                (0, (&[], &[], &[-1, -2], &[-1, 1, 2, 3])),
+                (1, (&[1], &[-1, 4], &[-1, -2], &[1, -2])),
+                (2, (&[2], &[-2, 3], &[1, -2], &[1, 2])),
+                (3, (&[3], &[-2, 2], &[-1, -2], &[-1, 3])),
+                (4, (&[4], &[-1, 1], &[-1, 1, 2, 3], &[2, 3, 4])),
             ],
         );
     }
