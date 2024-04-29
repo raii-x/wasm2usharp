@@ -183,8 +183,7 @@ mod tests {
 
         builder.push_set(v1, Const::Int(1).into()); // 0
 
-        // 1
-        builder.push_block(Breakable::No);
+        builder.push_block(Breakable::No); // 1
 
         builder.start_block();
         builder.push_set(v2, Const::Int(2).into()); // 2
@@ -228,11 +227,10 @@ mod tests {
             ..Default::default()
         });
 
-        // 0
-        builder.push_if(v1.into(), Breakable::No);
+        builder.push_if(v1.into(), Breakable::No); // 0
 
         builder.start_block();
-        builder.push_set(v1, Const::Int(1).into()); // 2
+        builder.push_set(v1, Const::Int(1).into()); // 1
         builder.push_set(v2, Const::Int(2).into()); // 2
         builder.end_block();
 
