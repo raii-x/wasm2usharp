@@ -4,7 +4,7 @@ use cranelift_entity::SecondaryMap;
 
 use crate::{
     ir::{
-        code::{BlockId, Code, InstId, InstKind},
+        code::{BlockId, Breakable, Code, InstId, InstKind},
         node::Node,
         var::VarId,
     },
@@ -100,17 +100,20 @@ fn reaching_def_in_out(
 
         // 子ブロック
         if code.inst_nodes[inst_id].first_child.is_some() {
-            inst_stack.push(inst_id);
+            let breakable = code.insts[inst_id].breakable != Breakable::No;
+            if breakable {
+                inst_stack.push(inst_id);
+            }
+
+            let mut block_out = HashSet::new();
 
             let mut iter = code.inst_nodes[inst_id].iter();
             while let Some(block_id) = iter.next(&code.block_nodes) {
                 if let Some(last_inst) =
                     reaching_def_in_out(code, sets, inst_stack, prev_out.clone(), block_id)
                 {
-                    // out_stackのトップと最後の命令のoutとの和集合をとる
-                    let i = *inst_stack.last().unwrap();
-                    let out = sets[i].out.or(&sets[last_inst].out);
-                    sets[i].out = out;
+                    // ブロックのoutと最後の命令のoutとの和集合をとる
+                    block_out = block_out.or(&sets[last_inst].out);
                 }
             }
 
@@ -119,16 +122,16 @@ fn reaching_def_in_out(
             if matches!(code.insts[inst_id].kind, InstKind::If)
                 && node.first_child == node.last_child
             {
-                // ifブロックのinとの和集合をとる
-                let i = *inst_stack.last().unwrap();
-                let out = sets[i].out.or(&sets[inst_id].in_);
-                sets[inst_id].out = out;
+                // ブロックのoutとifブロックのinとの和集合をとる
+                block_out = block_out.or(&sets[inst_id].in_);
+            }
+
+            if breakable {
+                block_out = block_out.or(&sets[inst_stack.pop().unwrap()].out);
             }
 
             // out = gen ∪ (in ∖ kill)
-            sets[inst_id].out = sets[inst_id]
-                .gen
-                .or(&sets[inst_stack.pop().unwrap()].out.sub(&sets[inst_id].kill));
+            sets[inst_id].out = sets[inst_id].gen.or(&block_out.sub(&sets[inst_id].kill));
         } else {
             // out = gen ∪ (in ∖ kill)
             sets[inst_id].out = sets[inst_id]
@@ -297,6 +300,62 @@ mod tests {
                 (0, (&[], &[], &[-1], &[-1, 1])),
                 (1, (&[1], &[-1, 2], &[-1], &[1])),
                 (2, (&[2], &[-1, 1], &[-1, 1], &[2])),
+            ],
+        );
+    }
+
+    #[test]
+    fn copy_propagation_br() {
+        // func(v1)
+        // 0: block (breakable)
+        // 1:   block
+        // 2:     if v1
+        // 3:       v1 = 1
+        // 4:       br 0
+        // 5:   v1 = 2
+        // 6: v1 = 3
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+
+        builder.push_block(Breakable::Single); // 0
+        builder.start_block();
+
+        builder.push_block(Breakable::No); // 1
+        builder.start_block();
+
+        builder.push_if(v1.into(), Breakable::No); // 2
+        builder.start_block();
+
+        builder.push_set(v1, Const::Int(1).into()); // 3
+        builder.push_br(0); // 4
+
+        builder.end_block();
+        builder.end_block();
+
+        builder.push_set(v1, Const::Int(2).into()); // 5
+
+        builder.end_block();
+
+        builder.push_set(v1, Const::Int(3).into()); // 6
+
+        let mut code = builder.build();
+
+        let sets = copy_propagation_inner(&mut code);
+        sets_eq(
+            &sets,
+            &[
+                (0, (&[], &[], &[-1], &[3, 5])),
+                (1, (&[], &[], &[-1], &[-1])),
+                (2, (&[], &[], &[-1], &[-1])),
+                (3, (&[3], &[-1, 5, 6], &[-1], &[3])),
+                (4, (&[], &[], &[3], &[3])),
+                (5, (&[5], &[-1, 3, 6], &[-1], &[5])),
+                (6, (&[6], &[-1, 3, 5], &[3, 5], &[6])),
             ],
         );
     }
