@@ -136,6 +136,14 @@ impl Builder {
         });
     }
 
+    pub fn push_loop(&mut self, loop_var: usize, breakable: Breakable) {
+        self.push(Inst {
+            kind: InstKind::Loop(loop_var),
+            breakable,
+            ..Default::default()
+        });
+    }
+
     pub fn push_if(&mut self, cond: Primary, breakable: Breakable) {
         self.push(Inst {
             kind: InstKind::If,

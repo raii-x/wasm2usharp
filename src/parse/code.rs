@@ -872,11 +872,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         let block = self.new_block(blockty, true);
         let loop_var = block.loop_var.unwrap();
 
-        self.builder.push(Inst {
-            kind: InstKind::Loop(loop_var),
-            breakable: Breakable::Multi,
-            ..Default::default()
-        });
+        self.builder.push_loop(loop_var, Breakable::Multi);
         self.builder.start_block();
 
         Ok(())
