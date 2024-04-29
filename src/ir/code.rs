@@ -25,7 +25,7 @@ pub struct Block;
 
 node_def!(BlockNode, BlockId, InstId, InstId);
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct InstId(u32);
 entity_impl!(InstId);
 
