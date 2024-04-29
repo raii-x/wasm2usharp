@@ -105,18 +105,11 @@ fn codegen_inst(
             }
             writeln!(f, "break;")?;
         }
-        InstKind::Switch(cases) => {
+        InstKind::Switch => {
             writeln!(f, "switch ({pattern}) {{")?;
 
             let mut next_block_id = node.first_child;
-            let mut i = 0;
             while let Some(block_id) = next_block_id.expand() {
-                if let Some(case) = cases[i] {
-                    writeln!(f, "case {case}:")?;
-                } else {
-                    writeln!(f, "default:")?;
-                }
-
                 codegen_block(f, code, block_id, module, in_block)?;
 
                 let block = &code.block_nodes[block_id];
@@ -131,10 +124,15 @@ fn codegen_inst(
                 }
 
                 next_block_id = block.next;
-                i += 1;
             }
 
             writeln!(f, "}}")?;
+        }
+        InstKind::Case => {
+            writeln!(f, "case {pattern}:")?;
+        }
+        InstKind::Default => {
+            writeln!(f, "default:")?;
         }
     }
 

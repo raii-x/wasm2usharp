@@ -69,7 +69,7 @@ fn reduce_depth(
                 0
             };
 
-            if !matches!(inst.kind, InstKind::Loop(_) | InstKind::Switch(_))
+            if !matches!(inst.kind, InstKind::Loop(_) | InstKind::Switch)
                 && !targets.contains(inst_id)
             {
                 // この命令の子孫のbreakを1減らす

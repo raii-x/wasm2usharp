@@ -57,8 +57,9 @@ pub enum InstKind {
     Loop(usize),
     If,
     Br(u32),
-    /// 各caseの値、Noneならdefault
-    Switch(Vec<Option<u32>>),
+    Switch,
+    Case,
+    Default,
 }
 
 pub struct Call {

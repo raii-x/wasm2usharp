@@ -807,8 +807,12 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         Ok(())
     }
 
-    fn visit_br_table_case(&mut self, target: u32) {
+    fn visit_br_table_case(&mut self, case: Option<usize>, target: u32) {
         self.builder.start_block();
+        match case {
+            Some(case) => self.builder.push_case(Const::Int(case as i32).into()),
+            None => self.builder.push_default(),
+        }
         self.block_result(target, true);
         // targetが0の場合、switchブロックがbreakされた後に続きの外のブロックが
         // そのまま実行されるので再度breakする必要はない。
@@ -954,26 +958,15 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         self.unreachable = 1;
         let opnd = self.pop_stack();
 
-        let values = targets.targets().collect::<Result<Vec<_>, _>>()?;
+        self.builder.push_switch(opnd, Breakable::Single);
 
-        let mut cases: Vec<Option<u32>> = (0..values.len() as u32).map(Some).collect();
-        cases.push(None);
-
-        self.builder.push(Inst {
-            kind: InstKind::Switch(cases),
-            pattern: "$p0".to_string(),
-            params: vec![opnd],
-            breakable: Breakable::Single,
-            ..Default::default()
-        });
-
-        for target in values {
+        for (i, target) in targets.targets().enumerate() {
             // case i:
-            self.visit_br_table_case(target);
+            self.visit_br_table_case(Some(i), target?);
         }
 
         // default:
-        self.visit_br_table_case(targets.default());
+        self.visit_br_table_case(None, targets.default());
 
         Ok(())
     }

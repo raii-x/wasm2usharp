@@ -153,6 +153,32 @@ impl Builder {
         });
     }
 
+    pub fn push_switch(&mut self, param: Primary, breakable: Breakable) {
+        self.push(Inst {
+            kind: InstKind::Switch,
+            pattern: "$p0".to_string(),
+            params: vec![param],
+            breakable,
+            ..Default::default()
+        });
+    }
+
+    pub fn push_case(&mut self, param: Primary) {
+        self.push(Inst {
+            kind: InstKind::Case,
+            pattern: "$p0".to_string(),
+            params: vec![param],
+            ..Default::default()
+        });
+    }
+
+    pub fn push_default(&mut self) {
+        self.push(Inst {
+            kind: InstKind::Default,
+            ..Default::default()
+        });
+    }
+
     /// カーソルのブロックの最後の命令の子としてブロックを追加し、カーソルを追加したブロックに移動
     pub fn start_block(&mut self) {
         let inst_id = self.code.block_nodes[self.cursor].last_child.unwrap();
