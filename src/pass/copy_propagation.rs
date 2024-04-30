@@ -96,56 +96,21 @@ fn reaching_def_in_out(
 ) -> Option<InstId> {
     let mut iter = code.block_nodes[block_id].iter();
     while let Some(inst_id) = iter.next(&code.inst_nodes) {
-        sets[inst_id].in_ = sets[inst_id].out.or(&prev_out);
+        if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
+            loop {
+                reaching_def_in_out_inst(code, sets, br_stack, &mut prev_out, inst_id);
 
-        // 子ブロック
-        if code.inst_nodes[inst_id].first_child.is_some() {
-            let breakable = code.insts[inst_id].breakable != Breakable::No;
-            if breakable {
-                br_stack.push(HashSet::new());
-            }
-
-            let mut block_out = HashSet::new();
-
-            let mut iter = code.inst_nodes[inst_id].iter();
-            while let Some(block_id) = iter.next(&code.block_nodes) {
-                if let Some(last_inst) =
-                    reaching_def_in_out(code, sets, br_stack, prev_out.clone(), block_id)
-                {
-                    // ブロックのoutと最後の命令のoutとの和集合をとる
-                    block_out = block_out.or(&sets[last_inst].out);
+                // ループ文ならoutにブロックのinを含め、outが前と等しくなるまで繰り返す
+                let out = prev_out.or(&sets[inst_id].in_);
+                if out == prev_out {
+                    // outが更新されなければ終了
+                    break;
                 }
+                prev_out = out;
             }
-
-            // if文でelseが無い場合
-            let node = &code.inst_nodes[inst_id];
-            if matches!(code.insts[inst_id].kind, InstKind::If)
-                && node.first_child == node.last_child
-            {
-                // ブロックのoutとifブロックのinとの和集合をとる
-                block_out = block_out.or(&sets[inst_id].in_);
-            }
-
-            if breakable {
-                block_out.or_assign(&br_stack.pop().unwrap());
-            }
-
-            // out = gen ∪ (in ∖ kill)
-            sets[inst_id].out = sets[inst_id].gen.or(&block_out.sub(&sets[inst_id].kill));
         } else {
-            // out = gen ∪ (in ∖ kill)
-            sets[inst_id].out = sets[inst_id]
-                .gen
-                .or(&sets[inst_id].in_.sub(&sets[inst_id].kill));
+            reaching_def_in_out_inst(code, sets, br_stack, &mut prev_out, inst_id);
         }
-
-        // brなら対応するブロック命令のoutとの和集合をとる
-        if let InstKind::Br(depth) = code.insts[inst_id].kind {
-            let i = br_stack.len() - 1 - depth as usize;
-            br_stack[i].or_assign(&sets[inst_id].out);
-        }
-
-        prev_out = sets[inst_id].out.clone();
     }
 
     code.block_nodes[block_id]
@@ -154,6 +119,69 @@ fn reaching_def_in_out(
             InstKind::Return | InstKind::Br(_) => None,
             _ => Some(id),
         })
+}
+
+fn reaching_def_in_out_inst(
+    code: &mut Code,
+    sets: &mut SecondaryMap<InstId, Sets>,
+    br_stack: &mut Vec<HashSet<Def>>,
+    prev_out: &mut HashSet<Def>,
+    inst_id: InstId,
+) {
+    sets[inst_id].in_ = prev_out.clone();
+
+    // 子ブロック
+    if code.inst_nodes[inst_id].first_child.is_some() {
+        let breakable = code.insts[inst_id].breakable != Breakable::No;
+        if breakable {
+            br_stack.push(HashSet::new());
+        }
+
+        let mut block_out = HashSet::new();
+
+        let mut iter = code.inst_nodes[inst_id].iter();
+        while let Some(block_id) = iter.next(&code.block_nodes) {
+            if let Some(last_inst) =
+                reaching_def_in_out(code, sets, br_stack, prev_out.clone(), block_id)
+            {
+                // ブロックのoutと最後の命令のoutとの和集合をとる
+                block_out.or_assign(&sets[last_inst].out);
+            }
+        }
+
+        // if文でelseが無い場合
+        let node = &code.inst_nodes[inst_id];
+        if matches!(code.insts[inst_id].kind, InstKind::If) && node.first_child == node.last_child {
+            // ブロックのoutとifブロックのinとの和集合をとる
+            block_out.or_assign(&sets[inst_id].in_);
+        }
+
+        if breakable {
+            if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
+                // ループならスタックブロックのoutをinに含める
+                let poped = br_stack.pop().unwrap();
+                sets[inst_id].in_.or_assign(&poped);
+            } else {
+                block_out.or_assign(&br_stack.pop().unwrap());
+            }
+        }
+
+        // out = gen ∪ (in ∖ kill)
+        sets[inst_id].out = sets[inst_id].gen.or(&block_out.sub(&sets[inst_id].kill));
+    } else {
+        // out = gen ∪ (in ∖ kill)
+        sets[inst_id].out = sets[inst_id]
+            .gen
+            .or(&sets[inst_id].in_.sub(&sets[inst_id].kill));
+    }
+
+    // brなら対応するブロック命令のoutとの和集合をとる
+    if let InstKind::Br(depth) = code.insts[inst_id].kind {
+        let i = br_stack.len() - 1 - depth as usize;
+        br_stack[i].or_assign(&sets[inst_id].out);
+    }
+
+    *prev_out = sets[inst_id].out.clone();
 }
 
 #[cfg(test)]
@@ -355,6 +383,51 @@ mod tests {
                 (4, (&[], &[], &[3], &[3])),
                 (5, (&[5], &[-1, 3, 6], &[-1], &[5])),
                 (6, (&[6], &[-1, 3, 5], &[3, 5], &[6])),
+            ],
+        );
+    }
+
+    #[test]
+    fn copy_propagation_loop() {
+        // func(v1)
+        // 0: loop (breakable)
+        // 1:   if v1 (breakable)
+        // 2:     v1 = 1
+        // 3:     br 1
+        // 4: v1 = 2
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+
+        builder.push_loop(0, Breakable::Single); // 0
+        builder.start_block();
+
+        builder.push_if(v1.into(), Breakable::Multi); // 1
+        builder.start_block();
+
+        builder.push_set(v1, Const::Int(1).into()); // 2
+        builder.push_br(1); // 3
+
+        builder.end_block();
+        builder.end_block();
+
+        builder.push_set(v1, Const::Int(2).into()); // 4
+
+        let mut code = builder.build();
+
+        let sets = copy_propagation_inner(&mut code);
+        sets_eq(
+            &sets,
+            &[
+                (0, (&[], &[], &[-1, 2], &[-1, 2])),
+                (1, (&[], &[], &[-1, 2], &[-1, 2])),
+                (2, (&[2], &[-1, 4], &[-1, 2], &[2])),
+                (3, (&[], &[], &[2], &[2])),
+                (4, (&[4], &[-1, 2], &[-1, 2], &[4])),
             ],
         );
     }
