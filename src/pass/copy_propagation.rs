@@ -90,7 +90,7 @@ fn reaching_def_gen_kill(
 fn reaching_def_in_out(
     code: &mut Code,
     sets: &mut SecondaryMap<InstId, Sets>,
-    inst_stack: &mut Vec<InstId>,
+    br_stack: &mut Vec<HashSet<Def>>,
     mut prev_out: HashSet<Def>,
     block_id: BlockId,
 ) -> Option<InstId> {
@@ -102,7 +102,7 @@ fn reaching_def_in_out(
         if code.inst_nodes[inst_id].first_child.is_some() {
             let breakable = code.insts[inst_id].breakable != Breakable::No;
             if breakable {
-                inst_stack.push(inst_id);
+                br_stack.push(HashSet::new());
             }
 
             let mut block_out = HashSet::new();
@@ -110,7 +110,7 @@ fn reaching_def_in_out(
             let mut iter = code.inst_nodes[inst_id].iter();
             while let Some(block_id) = iter.next(&code.block_nodes) {
                 if let Some(last_inst) =
-                    reaching_def_in_out(code, sets, inst_stack, prev_out.clone(), block_id)
+                    reaching_def_in_out(code, sets, br_stack, prev_out.clone(), block_id)
                 {
                     // ブロックのoutと最後の命令のoutとの和集合をとる
                     block_out = block_out.or(&sets[last_inst].out);
@@ -127,7 +127,7 @@ fn reaching_def_in_out(
             }
 
             if breakable {
-                block_out = block_out.or(&sets[inst_stack.pop().unwrap()].out);
+                block_out.or_assign(&br_stack.pop().unwrap());
             }
 
             // out = gen ∪ (in ∖ kill)
@@ -141,9 +141,8 @@ fn reaching_def_in_out(
 
         // brなら対応するブロック命令のoutとの和集合をとる
         if let InstKind::Br(depth) = code.insts[inst_id].kind {
-            let i = inst_stack.len() - 1 - depth as usize;
-            let out = sets[inst_stack[i]].out.or(&sets[inst_id].out);
-            sets[inst_stack[i]].out = out;
+            let i = br_stack.len() - 1 - depth as usize;
+            br_stack[i].or_assign(&sets[inst_id].out);
         }
 
         prev_out = sets[inst_id].out.clone();
