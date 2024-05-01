@@ -28,10 +28,10 @@ enum Def {
 }
 
 pub fn copy_propagation(code: &mut Code) {
-    copy_propagation_inner(code);
+    reaching_def(code);
 }
 
-fn copy_propagation_inner(code: &mut Code) -> SecondaryMap<InstId, Sets> {
+fn reaching_def(code: &mut Code) -> SecondaryMap<InstId, Sets> {
     // 全ての変数について、その変数への代入文の集合を求める
     let mut var_def = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
@@ -49,8 +49,19 @@ fn copy_propagation_inner(code: &mut Code) -> SecondaryMap<InstId, Sets> {
         }
     }
 
-    let mut sets = SecondaryMap::with_capacity(code.insts.len());
-    reaching_def_gen_kill(code, &var_def, &mut sets);
+    let mut sets = SecondaryMap::<_, Sets>::with_capacity(code.insts.len());
+
+    for (inst_id, inst) in code.insts.iter_mut() {
+        if let Some(result) = inst.result {
+            // この命令をgenに追加
+            sets[inst_id].gen.insert(Def::Inst(inst_id));
+
+            // この命令以外の同じ変数への代入文をkillに追加
+            let mut inst_kill = var_def[result].clone();
+            inst_kill.remove(&Def::Inst(inst_id));
+            sets[inst_id].kill = inst_kill;
+        }
+    }
 
     for (_, Sets { gen, in_, .. }) in sets.iter_mut() {
         *in_ = gen.clone();
@@ -67,24 +78,6 @@ fn copy_propagation_inner(code: &mut Code) -> SecondaryMap<InstId, Sets> {
     reaching_def_in_out(code, &mut sets, &mut Vec::new(), prev_out, code.root);
 
     sets
-}
-
-fn reaching_def_gen_kill(
-    code: &mut Code,
-    var_def: &SecondaryMap<VarId, HashSet<Def>>,
-    sets: &mut SecondaryMap<InstId, Sets>,
-) {
-    for (inst_id, inst) in code.insts.iter_mut() {
-        if let Some(result) = inst.result {
-            // この命令をgenに追加
-            sets[inst_id].gen.insert(Def::Inst(inst_id));
-
-            // この命令以外の同じ変数への代入文をkillに追加
-            let mut inst_kill = var_def[result].clone();
-            inst_kill.remove(&Def::Inst(inst_id));
-            sets[inst_id].kill = inst_kill;
-        }
-    }
 }
 
 fn reaching_def_in_out(
@@ -200,7 +193,7 @@ mod tests {
         pass::copy_propagation::Sets,
     };
 
-    use super::{copy_propagation_inner, Def};
+    use super::{reaching_def, Def};
 
     #[test]
     fn copy_propagation_block() {
@@ -235,7 +228,7 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = copy_propagation_inner(&mut code);
+        let sets = reaching_def(&mut code);
         sets_eq(
             &sets,
             &[
@@ -283,7 +276,7 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = copy_propagation_inner(&mut code);
+        let sets = reaching_def(&mut code);
         sets_eq(
             &sets,
             &[
@@ -320,7 +313,7 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = copy_propagation_inner(&mut code);
+        let sets = reaching_def(&mut code);
         sets_eq(
             &sets,
             &[
@@ -372,7 +365,7 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = copy_propagation_inner(&mut code);
+        let sets = reaching_def(&mut code);
         sets_eq(
             &sets,
             &[
@@ -419,7 +412,7 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = copy_propagation_inner(&mut code);
+        let sets = reaching_def(&mut code);
         sets_eq(
             &sets,
             &[
