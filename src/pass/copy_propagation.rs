@@ -92,7 +92,7 @@ fn reaching_def_in_out(
     while let Some(inst_id) = iter.next(&code.inst_nodes) {
         if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
             loop {
-                reaching_def_in_out_inst(code, sets, br_stack, &mut prev_out, inst_id);
+                prev_out = reaching_def_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
 
                 // ループ文ならoutにブロックのinを含め、outが前と等しくなるまで繰り返す
                 let out = prev_out.or(&sets[inst_id].in_);
@@ -103,7 +103,7 @@ fn reaching_def_in_out(
                 prev_out = out;
             }
         } else {
-            reaching_def_in_out_inst(code, sets, br_stack, &mut prev_out, inst_id);
+            prev_out = reaching_def_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
         }
     }
 
@@ -119,9 +119,9 @@ fn reaching_def_in_out_inst(
     code: &mut Code,
     sets: &mut SecondaryMap<InstId, ReachSets>,
     br_stack: &mut Vec<HashSet<Def>>,
-    prev_out: &mut HashSet<Def>,
+    prev_out: &HashSet<Def>,
     inst_id: InstId,
-) {
+) -> HashSet<Def> {
     sets[inst_id].in_ = prev_out.clone();
 
     // 子ブロック
@@ -178,7 +178,7 @@ fn reaching_def_in_out_inst(
         br_stack[i].or_assign(&sets[inst_id].out);
     }
 
-    *prev_out = sets[inst_id].out.clone();
+    sets[inst_id].out.clone()
 }
 
 #[derive(Clone, Default)]
@@ -239,7 +239,7 @@ fn copy_in_out(
     while let Some(inst_id) = iter.next(&code.inst_nodes) {
         if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
             loop {
-                copy_in_out_inst(code, sets, br_stack, &mut prev_out, inst_id);
+                prev_out = copy_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
 
                 // ループ文ならoutにブロックのinを含め、outが前と等しくなるまで繰り返す
                 let out = prev_out.and(&sets[inst_id].in_);
@@ -250,7 +250,7 @@ fn copy_in_out(
                 prev_out = out;
             }
         } else {
-            copy_in_out_inst(code, sets, br_stack, &mut prev_out, inst_id);
+            prev_out = copy_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
         }
     }
 
@@ -266,9 +266,9 @@ fn copy_in_out_inst(
     code: &mut Code,
     sets: &mut SecondaryMap<InstId, CopySets>,
     br_stack: &mut Vec<Option<HashSet<InstId>>>,
-    prev_out: &mut HashSet<InstId>,
+    prev_out: &HashSet<InstId>,
     inst_id: InstId,
-) {
+) -> HashSet<InstId> {
     sets[inst_id].in_ = prev_out.clone();
 
     // 子ブロック
@@ -344,7 +344,7 @@ fn copy_in_out_inst(
         }
     }
 
-    *prev_out = sets[inst_id].out.clone();
+    sets[inst_id].out.clone()
 }
 
 #[cfg(test)]
