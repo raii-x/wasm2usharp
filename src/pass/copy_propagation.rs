@@ -356,7 +356,7 @@ mod tests {
     use crate::{
         ir::{
             builder::Builder,
-            code::{Breakable, Call, InstId},
+            code::{Breakable, InstId},
             ty::Const,
             var::{Var, VarId},
         },
@@ -678,10 +678,10 @@ mod tests {
     fn copy_propagation_copy() {
         // func(v1)
         // 0: v2 = v1
-        // 1: f(v2);
-        // 2: v1 = 1;
-        // 3: v2 = 2;
-        // 4: f(v2);
+        // 1: v3 = v2;
+        // 2: v2 = v1;
+        // 3: v3 = 1;
+        // 4: v2 = 2;
 
         let mut builder = Builder::new(&[]);
 
@@ -692,30 +692,15 @@ mod tests {
         let v2 = builder.new_var(Var {
             ..Default::default()
         });
+        let v3 = builder.new_var(Var {
+            ..Default::default()
+        });
 
         builder.push_set(v2, v1.into()); // 0
-        builder.push_call(
-            Call {
-                func: 0,
-                recursive: false,
-                save_vars: vec![],
-                save_loop_vars: vec![],
-            },
-            vec![v2.into()],
-            None,
-        ); // 1
-        builder.push_set(v1, Const::Int(1).into()); // 2
-        builder.push_set(v2, Const::Int(2).into()); // 3
-        builder.push_call(
-            Call {
-                func: 0,
-                recursive: false,
-                save_vars: vec![],
-                save_loop_vars: vec![],
-            },
-            vec![v2.into()],
-            None,
-        ); // 4
+        builder.push_set(v3, v2.into()); // 1
+        builder.push_set(v2, v1.into()); // 2
+        builder.push_set(v3, Const::Int(1).into()); // 3
+        builder.push_set(v2, Const::Int(2).into()); // 4
 
         let mut code = builder.build();
 
@@ -723,11 +708,11 @@ mod tests {
         reach_sets_eq(
             &reach_sets,
             &[
-                (0, (&[0], &[3], &[-1], &[-1, 0])),
-                (1, (&[], &[], &[-1, 0], &[-1, 0])),
-                (2, (&[2], &[-1], &[-1, 0], &[2, 0])),
-                (3, (&[3], &[0], &[2, 0], &[2, 3])),
-                (4, (&[], &[], &[2, 3], &[2, 3])),
+                (0, (&[0], &[2, 4], &[-1], &[-1, 0])),
+                (1, (&[1], &[3], &[-1, 0], &[-1, 0, 1])),
+                (2, (&[2], &[0, 4], &[-1, 0, 1], &[-1, 2, 1])),
+                (3, (&[3], &[1], &[-1, 2, 1], &[-1, 2, 3])),
+                (4, (&[4], &[0, 2], &[-1, 2, 3], &[-1, 4, 3])),
             ],
         );
 
@@ -735,11 +720,11 @@ mod tests {
         copy_sets_eq(
             &copy_sets,
             &[
-                (0, (&[0], &[], &[], &[0])),
-                (1, (&[], &[], &[0], &[0])),
-                (2, (&[], &[0], &[0], &[])),
-                (3, (&[], &[0], &[], &[])),
-                (4, (&[], &[], &[], &[])),
+                (0, (&[0], &[1, 2], &[], &[0])),
+                (1, (&[1], &[], &[0], &[0, 1])),
+                (2, (&[2], &[0, 1], &[0, 1], &[2])),
+                (3, (&[], &[1], &[2], &[2])),
+                (4, (&[], &[0, 1, 2], &[2], &[])),
             ],
         );
     }
