@@ -293,7 +293,12 @@ fn copy_in_out_inst(
         let node = &code.inst_nodes[inst_id];
         if matches!(code.insts[inst_id].kind, InstKind::If) && node.first_child == node.last_child {
             // ブロックのoutとifブロックのinとの積集合をとる
-            block_out.as_mut().unwrap().and_assign(&sets[inst_id].in_);
+            if let Some(block_out) = block_out.as_mut() {
+                block_out.and_assign(&sets[inst_id].in_);
+            } else {
+                // brやreturnで終わる場合はblock_outはNoneとなる
+                block_out = Some(sets[inst_id].in_.clone());
+            }
         }
 
         if breakable {
@@ -382,9 +387,9 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&mut code);
         reach_sets_eq(
-            &sets,
+            &reach_sets,
             &[
                 (0, (&[0], &[-1, 3], &[-1, -2], &[0, -2])),
                 (1, (&[], &[], &[0, -2], &[2, 3])),
@@ -393,16 +398,93 @@ mod tests {
                 (4, (&[4], &[-2, 2], &[3, 2], &[3, 4])),
             ],
         );
+
+        let copy_sets = copy(&mut code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[], &[3], &[], &[])),
+                (1, (&[], &[], &[], &[3])),
+                (2, (&[], &[3], &[], &[])),
+                (3, (&[3], &[], &[], &[3])),
+                (4, (&[], &[3], &[3], &[])),
+            ],
+        );
     }
 
     #[test]
     fn copy_propagation_if_else() {
         // func(v1, v2)
+        // 0: v3 = v1
+        // 1: if v1
+        // 2:   then: v1 = 1
+        // 3:         v2 = 2
+        // 4:   else: v2 = 3
+        // 5: v1 = 3
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v3 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_set(v3, v1.into()); // 0
+        builder.push_if(v1.into(), Breakable::No); // 1
+
+        builder.start_block();
+        builder.push_set(v1, Const::Int(1).into()); // 2
+        builder.push_set(v2, Const::Int(2).into()); // 3
+        builder.end_block();
+
+        builder.start_block();
+        builder.push_set(v2, Const::Int(3).into()); // 4
+        builder.end_block();
+
+        builder.push_set(v1, Const::Int(4).into()); // 5
+
+        let mut code = builder.build();
+
+        let reach_sets = reaching_def(&mut code);
+        reach_sets_eq(
+            &reach_sets,
+            &[
+                (0, (&[0], &[], &[-1, -2], &[-1, -2, 0])),
+                (1, (&[], &[], &[-1, -2, 0], &[-1, 2, 3, 4, 0])),
+                (2, (&[2], &[-1, 5], &[-1, -2, 0], &[2, -2, 0])),
+                (3, (&[3], &[-2, 4], &[2, -2, 0], &[2, 3, 0])),
+                (4, (&[4], &[-2, 3], &[-1, -2, 0], &[-1, 4, 0])),
+                (5, (&[5], &[-1, 2], &[-1, 2, 3, 4, 0], &[3, 4, 5, 0])),
+            ],
+        );
+
+        let copy_sets = copy(&mut code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[0], &[], &[], &[0])),
+                (1, (&[], &[], &[0], &[])),
+                (2, (&[], &[0], &[0], &[])),
+                (3, (&[], &[], &[], &[])),
+                (4, (&[], &[], &[0], &[0])),
+                (5, (&[], &[0], &[], &[])),
+            ],
+        );
+    }
+
+    #[test]
+    fn copy_propagation_if() {
+        // func(v1, v2)
         // 0: if v1
-        // 1:   then: v1 = 1
-        // 2:         v2 = 2
-        // 3:   else: v2 = 3
-        // 4: v1 = 3
+        // 1:   v1 = v2
+        // 2: v1 = 2
 
         let mut builder = Builder::new(&[]);
 
@@ -418,37 +500,44 @@ mod tests {
         builder.push_if(v1.into(), Breakable::No); // 0
 
         builder.start_block();
-        builder.push_set(v1, Const::Int(1).into()); // 1
-        builder.push_set(v2, Const::Int(2).into()); // 2
+        builder.push_set(v1, v2.into()); // 1
         builder.end_block();
 
-        builder.start_block();
-        builder.push_set(v2, Const::Int(3).into()); // 3
-        builder.end_block();
-
-        builder.push_set(v1, Const::Int(4).into()); // 4
+        builder.push_set(v1, Const::Int(2).into()); // 2
 
         let mut code = builder.build();
 
-        let sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&mut code);
         reach_sets_eq(
-            &sets,
+            &reach_sets,
             &[
-                (0, (&[], &[], &[-1, -2], &[-1, 1, 2, 3])),
-                (1, (&[1], &[-1, 4], &[-1, -2], &[1, -2])),
-                (2, (&[2], &[-2, 3], &[1, -2], &[1, 2])),
-                (3, (&[3], &[-2, 2], &[-1, -2], &[-1, 3])),
-                (4, (&[4], &[-1, 1], &[-1, 1, 2, 3], &[2, 3, 4])),
+                (0, (&[], &[], &[-1, -2], &[-1, 1, -2])),
+                (1, (&[1], &[-1, 2], &[-1, -2], &[1, -2])),
+                (2, (&[2], &[-1, 1], &[-1, 1, -2], &[2, -2])),
+            ],
+        );
+
+        let copy_sets = copy(&mut code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[], &[], &[], &[])),
+                (1, (&[1], &[], &[], &[1])),
+                (2, (&[], &[1], &[], &[])),
             ],
         );
     }
 
     #[test]
-    fn copy_propagation_if() {
-        // func(v1)
-        // 0: if v1
-        // 1:   v1 = 1
-        // 2: v1 = 2
+    fn copy_propagation_br() {
+        // func(v1, v2)
+        // 0: block (breakable)
+        // 1:   block
+        // 2:     if v1
+        // 3:       v1 = 1
+        // 4:       br 0
+        // 5:   v1 = v2
+        // 6: v1 = 3
 
         let mut builder = Builder::new(&[]);
 
@@ -456,42 +545,7 @@ mod tests {
             local: true,
             ..Default::default()
         });
-
-        builder.push_if(v1.into(), Breakable::No); // 0
-
-        builder.start_block();
-        builder.push_set(v1, Const::Int(1).into()); // 1
-        builder.end_block();
-
-        builder.push_set(v1, Const::Int(2).into()); // 2
-
-        let mut code = builder.build();
-
-        let sets = reaching_def(&mut code);
-        reach_sets_eq(
-            &sets,
-            &[
-                (0, (&[], &[], &[-1], &[-1, 1])),
-                (1, (&[1], &[-1, 2], &[-1], &[1])),
-                (2, (&[2], &[-1, 1], &[-1, 1], &[2])),
-            ],
-        );
-    }
-
-    #[test]
-    fn copy_propagation_br() {
-        // func(v1)
-        // 0: block (breakable)
-        // 1:   block
-        // 2:     if v1
-        // 3:       v1 = 1
-        // 4:       br 0
-        // 5:   v1 = 2
-        // 6: v1 = 3
-
-        let mut builder = Builder::new(&[]);
-
-        let v1 = builder.new_var(Var {
+        let v2 = builder.new_var(Var {
             local: true,
             ..Default::default()
         });
@@ -511,7 +565,7 @@ mod tests {
         builder.end_block();
         builder.end_block();
 
-        builder.push_set(v1, Const::Int(2).into()); // 5
+        builder.push_set(v1, v2.into()); // 5
 
         builder.end_block();
 
@@ -519,33 +573,51 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&mut code);
         reach_sets_eq(
-            &sets,
+            &reach_sets,
             &[
-                (0, (&[], &[], &[-1], &[3, 5])),
-                (1, (&[], &[], &[-1], &[-1])),
-                (2, (&[], &[], &[-1], &[-1])),
-                (3, (&[3], &[-1, 5, 6], &[-1], &[3])),
-                (4, (&[], &[], &[3], &[3])),
-                (5, (&[5], &[-1, 3, 6], &[-1], &[5])),
-                (6, (&[6], &[-1, 3, 5], &[3, 5], &[6])),
+                (0, (&[], &[], &[-1, -2], &[3, 5, -2])),
+                (1, (&[], &[], &[-1, -2], &[-1, -2])),
+                (2, (&[], &[], &[-1, -2], &[-1, -2])),
+                (3, (&[3], &[-1, 5, 6], &[-1, -2], &[3, -2])),
+                (4, (&[], &[], &[3, -2], &[3, -2])),
+                (5, (&[5], &[-1, 3, 6], &[-1, -2], &[5, -2])),
+                (6, (&[6], &[-1, 3, 5], &[3, 5, -2], &[6, -2])),
+            ],
+        );
+
+        let copy_sets = copy(&mut code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[], &[], &[], &[])),
+                (1, (&[], &[], &[], &[])),
+                (2, (&[], &[], &[], &[])),
+                (3, (&[], &[5], &[], &[])),
+                (4, (&[], &[], &[], &[])),
+                (5, (&[5], &[], &[], &[5])),
+                (6, (&[], &[5], &[], &[])),
             ],
         );
     }
 
     #[test]
     fn copy_propagation_loop() {
-        // func(v1)
+        // func(v1, v2)
         // 0: loop (breakable)
         // 1:   if v1 (breakable)
-        // 2:     v1 = 1
+        // 2:     v1 = v2
         // 3:     br 1
         // 4: v1 = 2
 
         let mut builder = Builder::new(&[]);
 
         let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
             local: true,
             ..Default::default()
         });
@@ -556,7 +628,7 @@ mod tests {
         builder.push_if(v1.into(), Breakable::Multi); // 1
         builder.start_block();
 
-        builder.push_set(v1, Const::Int(1).into()); // 2
+        builder.push_set(v1, v2.into()); // 2
         builder.push_br(1); // 3
 
         builder.end_block();
@@ -566,15 +638,27 @@ mod tests {
 
         let mut code = builder.build();
 
-        let sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&mut code);
         reach_sets_eq(
-            &sets,
+            &reach_sets,
             &[
-                (0, (&[], &[], &[-1, 2], &[-1, 2])),
-                (1, (&[], &[], &[-1, 2], &[-1, 2])),
-                (2, (&[2], &[-1, 4], &[-1, 2], &[2])),
+                (0, (&[], &[], &[-1, 2, -2], &[-1, 2, -2])),
+                (1, (&[], &[], &[-1, 2, -2], &[-1, 2, -2])),
+                (2, (&[2], &[-1, 4], &[-1, 2, -2], &[2, -2])),
+                (3, (&[], &[], &[2, -2], &[2, -2])),
+                (4, (&[4], &[-1, 2], &[-1, 2, -2], &[4, -2])),
+            ],
+        );
+
+        let copy_sets = copy(&mut code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[], &[], &[], &[])),
+                (1, (&[], &[], &[], &[])),
+                (2, (&[2], &[], &[], &[2])),
                 (3, (&[], &[], &[2], &[2])),
-                (4, (&[4], &[-1, 2], &[-1, 2], &[4])),
+                (4, (&[], &[2], &[], &[])),
             ],
         );
     }
