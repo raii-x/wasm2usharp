@@ -142,7 +142,7 @@ fn reaching_def_in_out_inst(
                 block_out.or_assign(&sets[last_inst].out);
             } else {
                 // ブロックが空の場合
-                block_out.or_assign(&prev_out);
+                block_out.or_assign(prev_out);
             }
         }
 
