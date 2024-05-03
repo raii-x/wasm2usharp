@@ -92,19 +92,20 @@ fn reaching_def_in_out(
     while let Some(inst_id) = iter.next(&code.inst_nodes) {
         if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
             loop {
-                prev_out = reaching_def_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
+                reaching_def_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
 
-                // ループ文ならoutにブロックのinを含め、outが前と等しくなるまで繰り返す
-                let out = prev_out.or(&sets[inst_id].in_);
-                if out == prev_out {
-                    // outが更新されなければ終了
+                // ループ文ならinが前と等しくなるまで繰り返す
+                if sets[inst_id].in_ == prev_out {
+                    // inが更新されなければ終了
                     break;
                 }
-                prev_out = out;
+                prev_out = sets[inst_id].in_.clone();
             }
         } else {
-            prev_out = reaching_def_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
+            reaching_def_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
         }
+
+        prev_out = sets[inst_id].out.clone();
     }
 
     code.block_nodes[block_id]
@@ -121,7 +122,7 @@ fn reaching_def_in_out_inst(
     br_stack: &mut Vec<HashSet<Def>>,
     prev_out: &HashSet<Def>,
     inst_id: InstId,
-) -> HashSet<Def> {
+) {
     sets[inst_id].in_ = prev_out.clone();
 
     // 子ブロック
@@ -177,8 +178,6 @@ fn reaching_def_in_out_inst(
         let i = br_stack.len() - 1 - depth as usize;
         br_stack[i].or_assign(&sets[inst_id].out);
     }
-
-    sets[inst_id].out.clone()
 }
 
 #[derive(Clone, Default)]
@@ -239,19 +238,20 @@ fn copy_in_out(
     while let Some(inst_id) = iter.next(&code.inst_nodes) {
         if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
             loop {
-                prev_out = copy_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
+                copy_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
 
-                // ループ文ならoutにブロックのinを含め、outが前と等しくなるまで繰り返す
-                let out = prev_out.and(&sets[inst_id].in_);
-                if out == prev_out {
-                    // outが更新されなければ終了
+                // ループ文ならinが前と等しくなるまで繰り返す
+                if sets[inst_id].in_ == prev_out {
+                    // inが更新されなければ終了
                     break;
                 }
-                prev_out = out;
+                prev_out = sets[inst_id].in_.clone();
             }
         } else {
-            prev_out = copy_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
+            copy_in_out_inst(code, sets, br_stack, &prev_out, inst_id);
         }
+
+        prev_out = sets[inst_id].out.clone();
     }
 
     code.block_nodes[block_id]
@@ -268,7 +268,7 @@ fn copy_in_out_inst(
     br_stack: &mut Vec<Option<HashSet<InstId>>>,
     prev_out: &HashSet<InstId>,
     inst_id: InstId,
-) -> HashSet<InstId> {
+) {
     sets[inst_id].in_ = prev_out.clone();
 
     // 子ブロック
@@ -343,8 +343,6 @@ fn copy_in_out_inst(
             br_stack[i] = Some(sets[inst_id].out.clone());
         }
     }
-
-    sets[inst_id].out.clone()
 }
 
 #[cfg(test)]
@@ -670,6 +668,60 @@ mod tests {
                 (2, (&[2], &[], &[], &[2])),
                 (3, (&[], &[], &[2], &[2])),
                 (4, (&[], &[2], &[], &[])),
+            ],
+        );
+    }
+
+    #[test]
+    fn copy_propagation_loop_no_br() {
+        // 0: loop
+        // 1:   v1 = 1
+        // 2:   v2 = v1
+        // 3: v3 = v2
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            ..Default::default()
+        });
+        let v3 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_loop(0, Breakable::Single); // 0
+        builder.start_block();
+        builder.push_set(v1, Const::Int(1).into()); // 1
+        builder.push_set(v2, v1.into()); // 2
+        builder.end_block();
+        builder.push_set(v3, v2.into()); // 3
+
+        let mut code = builder.build();
+
+        reaching_def(&mut code);
+        copy(&mut code);
+
+        let reach_sets = reaching_def(&mut code);
+        reach_sets_eq(
+            &reach_sets,
+            &[
+                (0, (&[], &[], &[], &[1, 2])),
+                (1, (&[1], &[], &[], &[1])),
+                (2, (&[2], &[], &[1], &[1, 2])),
+                (3, (&[3], &[], &[1, 2], &[1, 2, 3])),
+            ],
+        );
+
+        let copy_sets = copy(&mut code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[], &[], &[], &[2])),
+                (1, (&[], &[2], &[], &[])),
+                (2, (&[2], &[3], &[], &[2])),
+                (3, (&[3], &[], &[2], &[2, 3])),
             ],
         );
     }
