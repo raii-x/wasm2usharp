@@ -759,7 +759,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
                 self.builder.push_set_pattern(
                     result,
                     format!(
-                    "{opnd} < 0 ? {cast_ty}(({opnd_ty_u})($p0 & {}) + {only_msb}) : {cast_ty}($p0)",
+                    "$p0 < 0 ? {cast_ty}(({opnd_ty_u})($p0 & {}) + {only_msb}) : {cast_ty}($p0)",
                     only_msb - 1
                 ),
                     vec![opnd],
