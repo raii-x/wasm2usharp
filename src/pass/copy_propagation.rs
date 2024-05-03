@@ -140,6 +140,9 @@ fn reaching_def_in_out_inst(
             {
                 // ブロックのoutと最後の命令のoutとの和集合をとる
                 block_out.or_assign(&sets[last_inst].out);
+            } else {
+                // ブロックが空の場合
+                block_out.or_assign(&prev_out);
             }
         }
 
@@ -279,13 +282,19 @@ fn copy_in_out_inst(
 
         let mut iter = code.inst_nodes[inst_id].iter();
         while let Some(block_id) = iter.next(&code.block_nodes) {
+            let child_out;
             if let Some(last_inst) = copy_in_out(code, sets, br_stack, prev_out.clone(), block_id) {
-                if let Some(block_out) = &mut block_out {
-                    // ブロックのoutと最後の命令のoutとの積集合をとる
-                    block_out.and_assign(&sets[last_inst].out);
-                } else {
-                    block_out = Some(sets[last_inst].out.clone());
-                }
+                child_out = &sets[last_inst].out;
+            } else {
+                // ブロックが空の場合
+                child_out = &prev_out;
+            }
+
+            if let Some(block_out) = &mut block_out {
+                // ブロックのoutと最後の命令のoutとの積集合をとる
+                block_out.and_assign(child_out);
+            } else {
+                block_out = Some(child_out.clone());
             }
         }
 
@@ -313,9 +322,11 @@ fn copy_in_out_inst(
         }
 
         // out = gen ∪ (in ∖ kill)
-        sets[inst_id].out = sets[inst_id]
-            .gen
-            .or(&block_out.unwrap().sub(&sets[inst_id].kill));
+        if let Some(block_out) = block_out {
+            sets[inst_id].out = sets[inst_id].gen.or(&block_out.sub(&sets[inst_id].kill));
+        } else {
+            sets[inst_id].out = sets[inst_id].gen.clone();
+        }
     } else {
         // out = gen ∪ (in ∖ kill)
         sets[inst_id].out = sets[inst_id]
@@ -729,6 +740,54 @@ mod tests {
                 (2, (&[], &[0], &[0], &[])),
                 (3, (&[], &[0], &[], &[])),
                 (4, (&[], &[], &[], &[])),
+            ],
+        );
+    }
+
+    #[test]
+    fn copy_propagation_empty_block() {
+        // func(v1)
+        // 0: v2 = v1
+        // 1: block
+        // 2: v1 = 1
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_set(v2, v1.into());
+
+        builder.push_block(Breakable::No);
+        builder.start_block();
+        builder.end_block();
+
+        builder.push_set(v1, Const::Int(1).into());
+
+        let mut code = builder.build();
+
+        let reach_sets = reaching_def(&mut code);
+        reach_sets_eq(
+            &reach_sets,
+            &[
+                (0, (&[0], &[], &[-1], &[-1, 0])),
+                (1, (&[], &[], &[-1, 0], &[-1, 0])),
+                (2, (&[2], &[-1], &[-1, 0], &[2, 0])),
+            ],
+        );
+
+        let copy_sets = copy(&mut code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[0], &[], &[], &[0])),
+                (1, (&[], &[], &[0], &[0])),
+                (2, (&[], &[0], &[0], &[])),
             ],
         );
     }
