@@ -940,6 +940,69 @@ mod tests {
         code_eq_nop(&code, &[true, true, false]);
     }
 
+    #[test]
+    fn copy_propagation_tee() {
+        // func(x)
+        // 0: v1 = x
+        // 1: tmp = v1
+        // 2: x = v1 / 2
+        // 3: v2 = x + tmp
+        // 4: return v2
+
+        let mut builder = Builder::new(&[]);
+
+        let x = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let tmp = builder.new_var(Var {
+            ..Default::default()
+        });
+        let v1 = builder.new_var(Var {
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_set(v1, x.into()); // 0
+        builder.push_set(tmp, v1.into()); // 1
+        builder.push_set_pattern(x, "$p0 / $p1", vec![v1.into(), Const::Int(2).into()]); // 2
+        builder.push_set_pattern(v2, "$p0 + $p1", vec![x.into(), tmp.into()]); // 3
+        builder.push_return(Some(v2.into())); // 4
+
+        let mut code = builder.build();
+
+        let reach_sets = reaching_def(&code);
+        reach_sets_eq(
+            &reach_sets,
+            &[
+                (0, (&[0], &[], &[-1], &[-1, 0])),
+                (1, (&[1], &[], &[-1, 0], &[-1, 0, 1])),
+                (2, (&[2], &[-1], &[-1, 0, 1], &[2, 0, 1])),
+                (3, (&[3], &[], &[2, 0, 1], &[2, 0, 1, 3])),
+                (4, (&[], &[], &[2, 0, 1, 3], &[2, 0, 1, 3])),
+            ],
+        );
+
+        let copy_sets = copy(&code);
+        copy_sets_eq(
+            &copy_sets,
+            &[
+                (0, (&[0], &[1], &[], &[0])),
+                (1, (&[1], &[], &[0], &[0, 1])),
+                (2, (&[], &[0], &[0, 1], &[1])),
+                (3, (&[], &[], &[1], &[1])),
+                (4, (&[], &[], &[1], &[1])),
+            ],
+        );
+
+        replace_copy(&mut code, &reach_sets, &copy_sets);
+
+        // TODO: このテストを通るようにする
+        // code_eq_nop(&code, &[true, false, false, false, false]);
+    }
+
     /// (gen, kill, in, out)
     /// -1以下ならDef::Header(-i + 1)となる
     type SetArrs<'a> = (&'a [i32], &'a [i32], &'a [i32], &'a [i32]);
