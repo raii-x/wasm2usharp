@@ -77,16 +77,8 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, Sets> {
         }
     }
 
-    sets_in_out(
-        code,
-        &mut sets,
-        &|x, y| x.or(y),
-        &mut Vec::new(),
-        prev_out,
-        code.root,
-    );
-
-    sets
+    let builder = SetsBuilder::new(code, sets, false);
+    builder.build(prev_out)
 }
 
 fn copy(code: &Code) -> SecondaryMap<InstId, Sets> {
@@ -123,138 +115,144 @@ fn copy(code: &Code) -> SecondaryMap<InstId, Sets> {
         }
     }
 
-    sets_in_out(
-        code,
-        &mut sets,
-        &|x, y| x.and(y),
-        &mut Vec::new(),
-        HashSet::new(),
-        code.root,
-    );
-
-    sets
+    let builder = SetsBuilder::new(code, sets, true);
+    builder.build(HashSet::new())
 }
 
-fn sets_in_out(
-    code: &Code,
-    sets: &mut SecondaryMap<InstId, Sets>,
-    merge_set: &impl Fn(&HashSet<Def>, &HashSet<Def>) -> HashSet<Def>,
-    br_stack: &mut Vec<Option<HashSet<Def>>>,
-    mut prev_out: HashSet<Def>,
-    block_id: BlockId,
-) -> Option<InstId> {
-    let mut iter = code.block_nodes[block_id].iter();
-    while let Some(inst_id) = iter.next(&code.inst_nodes) {
-        if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
-            loop {
-                sets_in_out_inst(code, sets, merge_set, br_stack, &prev_out, inst_id);
+struct SetsBuilder<'a> {
+    code: &'a Code,
+    sets: SecondaryMap<InstId, Sets>,
+    br_stack: Vec<Option<HashSet<Def>>>,
+    intersection: bool,
+}
 
-                // ループ文ならinが前と等しくなるまで繰り返す
-                if sets[inst_id].in_ == prev_out {
-                    // inが更新されなければ終了
-                    break;
-                }
-                prev_out = sets[inst_id].in_.clone();
-            }
-        } else {
-            sets_in_out_inst(code, sets, merge_set, br_stack, &prev_out, inst_id);
+impl<'a> SetsBuilder<'a> {
+    fn new(code: &'a Code, sets: SecondaryMap<InstId, Sets>, intersection: bool) -> Self {
+        Self {
+            code,
+            sets,
+            br_stack: Vec::new(),
+            intersection,
         }
-
-        prev_out = sets[inst_id].out.clone();
     }
 
-    code.block_nodes[block_id]
-        .last_child()
-        .and_then(|id| match code.insts[id].kind {
-            InstKind::Return | InstKind::Br(_) => None,
-            _ => Some(id),
-        })
-}
+    fn build(mut self, prev_out: HashSet<Def>) -> SecondaryMap<InstId, Sets> {
+        self.in_out_block(prev_out, self.code.root);
+        self.sets
+    }
 
-fn sets_in_out_inst(
-    code: &Code,
-    sets: &mut SecondaryMap<InstId, Sets>,
-    merge_set: &impl Fn(&HashSet<Def>, &HashSet<Def>) -> HashSet<Def>,
-    br_stack: &mut Vec<Option<HashSet<Def>>>,
-    prev_out: &HashSet<Def>,
-    inst_id: InstId,
-) {
-    sets[inst_id].in_ = prev_out.clone();
+    fn in_out_block(&mut self, mut prev_out: HashSet<Def>, block_id: BlockId) -> Option<InstId> {
+        let mut iter = self.code.block_nodes[block_id].iter();
+        while let Some(inst_id) = iter.next(&self.code.inst_nodes) {
+            if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
+                loop {
+                    self.in_out_inst(&prev_out, inst_id);
 
-    // 子ブロック
-    if code.inst_nodes[inst_id].first_child.is_some() {
-        let breakable = code.insts[inst_id].breakable != Breakable::No;
-        if breakable {
-            br_stack.push(None);
-        }
-
-        let mut block_out: Option<HashSet<Def>> = None;
-
-        let mut iter = code.inst_nodes[inst_id].iter();
-        while let Some(block_id) = iter.next(&code.block_nodes) {
-            let child_out;
-            if let Some(last_inst) =
-                sets_in_out(code, sets, merge_set, br_stack, prev_out.clone(), block_id)
-            {
-                child_out = &sets[last_inst].out;
+                    // ループ文ならinが前と等しくなるまで繰り返す
+                    if self.sets[inst_id].in_ == prev_out {
+                        // inが更新されなければ終了
+                        break;
+                    }
+                    prev_out = self.sets[inst_id].in_.clone();
+                }
             } else {
-                // ブロックが空の場合
-                child_out = &prev_out;
+                self.in_out_inst(&prev_out, inst_id);
             }
 
-            if let Some(block_out) = &mut block_out {
-                // ブロックのoutと最後の命令のoutを統合する
-                *block_out = merge_set(block_out, child_out);
-            } else {
-                block_out = Some(child_out.clone());
-            }
+            prev_out = self.sets[inst_id].out.clone();
         }
 
-        // if文でelseが無い場合
-        let node = &code.inst_nodes[inst_id];
-        if matches!(code.insts[inst_id].kind, InstKind::If) && node.first_child == node.last_child {
-            // ブロックのoutとifブロックのinを統合する
-            if let Some(block_out) = &mut block_out {
-                *block_out = merge_set(block_out, &sets[inst_id].in_);
-            } else {
-                // brやreturnで終わる場合はblock_outはNoneとなる
-                block_out = Some(sets[inst_id].in_.clone());
-            }
-        }
+        self.code.block_nodes[block_id]
+            .last_child()
+            .and_then(|id| match self.code.insts[id].kind {
+                InstKind::Return | InstKind::Br(_) => None,
+                _ => Some(id),
+            })
+    }
 
-        if breakable {
-            if let Some(poped) = br_stack.pop().unwrap() {
-                if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
-                    // ループならスタックブロックのoutをinに含める
-                    sets[inst_id].in_ = merge_set(&sets[inst_id].in_, &poped);
+    fn in_out_inst(&mut self, prev_out: &HashSet<Def>, inst_id: InstId) {
+        self.sets[inst_id].in_ = prev_out.clone();
+
+        // 子ブロック
+        if self.code.inst_nodes[inst_id].first_child.is_some() {
+            let breakable = self.code.insts[inst_id].breakable != Breakable::No;
+            if breakable {
+                self.br_stack.push(None);
+            }
+
+            let mut block_out: Option<HashSet<Def>> = None;
+
+            let mut iter = self.code.inst_nodes[inst_id].iter();
+            while let Some(block_id) = iter.next(&self.code.block_nodes) {
+                let child_out;
+                if let Some(last_inst) = self.in_out_block(prev_out.clone(), block_id) {
+                    child_out = &self.sets[last_inst].out;
                 } else {
-                    let block_out = block_out.as_mut().unwrap();
-                    *block_out = merge_set(block_out, &poped);
+                    // ブロックが空の場合
+                    child_out = &prev_out;
+                }
+
+                // ブロックのoutと最後の命令のoutを統合する
+                block_out = self.merge_set_option(&block_out, child_out);
+            }
+
+            // if文でelseが無い場合
+            let node = &self.code.inst_nodes[inst_id];
+            if matches!(self.code.insts[inst_id].kind, InstKind::If)
+                && node.first_child == node.last_child
+            {
+                // ブロックのoutとifブロックのinを統合する
+                // brやreturnで終わる場合はblock_outはNoneとなる
+                block_out = self.merge_set_option(&block_out, &self.sets[inst_id].in_);
+            }
+
+            if breakable {
+                if let Some(poped) = self.br_stack.pop().unwrap() {
+                    if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
+                        // ループならスタックブロックのoutをinに含める
+                        self.sets[inst_id].in_ = self.merge_set(&self.sets[inst_id].in_, &poped);
+                    } else {
+                        let block_out = block_out.as_mut().unwrap();
+                        *block_out = self.merge_set(block_out, &poped);
+                    }
                 }
             }
+
+            // out = gen ∪ (in ∖ kill)
+            if let Some(block_out) = block_out {
+                self.sets[inst_id].out = self.sets[inst_id]
+                    .gen
+                    .or(&block_out.sub(&self.sets[inst_id].kill));
+            } else {
+                self.sets[inst_id].out = self.sets[inst_id].gen.clone();
+            }
+        } else {
+            // out = gen ∪ (in ∖ kill)
+            self.sets[inst_id].out = self.sets[inst_id]
+                .gen
+                .or(&self.sets[inst_id].in_.sub(&self.sets[inst_id].kill));
         }
 
-        // out = gen ∪ (in ∖ kill)
-        if let Some(block_out) = block_out {
-            sets[inst_id].out = sets[inst_id].gen.or(&block_out.sub(&sets[inst_id].kill));
-        } else {
-            sets[inst_id].out = sets[inst_id].gen.clone();
+        // brなら対応するブロック命令のoutと集合を統合する
+        if let InstKind::Br(depth) = self.code.insts[inst_id].kind {
+            let i = self.br_stack.len() - 1 - depth as usize;
+            self.br_stack[i] = self.merge_set_option(&self.br_stack[i], &self.sets[inst_id].out);
         }
-    } else {
-        // out = gen ∪ (in ∖ kill)
-        sets[inst_id].out = sets[inst_id]
-            .gen
-            .or(&sets[inst_id].in_.sub(&sets[inst_id].kill));
     }
 
-    // brなら対応するブロック命令のoutと集合を統合する
-    if let InstKind::Br(depth) = code.insts[inst_id].kind {
-        let i = br_stack.len() - 1 - depth as usize;
-        if let Some(br) = &mut br_stack[i] {
-            *br = merge_set(br, &sets[inst_id].out);
+    fn merge_set(&self, x: &HashSet<Def>, y: &HashSet<Def>) -> HashSet<Def> {
+        if self.intersection {
+            x.and(y)
         } else {
-            br_stack[i] = Some(sets[inst_id].out.clone());
+            x.or(y)
         }
+    }
+
+    fn merge_set_option(&self, x: &Option<HashSet<Def>>, y: &HashSet<Def>) -> Option<HashSet<Def>> {
+        Some(match x {
+            Some(x) => self.merge_set(x, y),
+            None => y.clone(),
+        })
     }
 }
 
