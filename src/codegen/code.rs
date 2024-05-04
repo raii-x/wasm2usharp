@@ -3,6 +3,7 @@ use std::io;
 use crate::ir::{
     code::{BlockId, Breakable, Call, Code, InstId, InstKind},
     module::Module,
+    node::Node,
     BREAK_DEPTH, LOOP, STACK, STACK_TOP,
 };
 
@@ -109,22 +110,9 @@ fn codegen_inst(
         InstKind::Switch => {
             writeln!(f, "switch ({pattern}) {{")?;
 
-            let mut next_block_id = node.first_child;
-            while let Some(block_id) = next_block_id.expand() {
+            let mut iter = node.iter();
+            while let Some(block_id) = iter.next(&code.block_nodes) {
                 codegen_block(f, code, block_id, module, in_block)?;
-
-                let block = &code.block_nodes[block_id];
-
-                // 命令がない、または最後の命令がbrではない場合にbreak
-                if block
-                    .last_child
-                    .expand()
-                    .map_or(true, |id| !matches!(code.insts[id].kind, InstKind::Br(..)))
-                {
-                    writeln!(f, "break;")?;
-                }
-
-                next_block_id = block.next;
             }
 
             writeln!(f, "}}")?;

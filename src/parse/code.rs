@@ -818,9 +818,8 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         // そのまま実行されるので再度breakする必要はない。
         // targetが1以上の場合、Wasmでは存在しないswitchブロックをbreakするため、
         // targetにswitchブロックの分の1を足している
-        if target != 0 {
-            self.builder.push_br(target + 1);
-        }
+        self.builder
+            .push_br(if target == 0 { 0 } else { target + 1 });
         self.builder.end_block();
     }
 }
