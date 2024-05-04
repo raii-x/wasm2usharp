@@ -10,13 +10,6 @@ use crate::{
     util::HashSetExt,
 };
 
-#[derive(Clone, Default)]
-struct Sets {
-    gen: HashSet<Def>,
-    kill: HashSet<Def>,
-    in_: HashSet<Def>,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 enum Def {
     /// 引数やローカル変数の初期値の場合
@@ -31,7 +24,7 @@ pub fn copy_propagation(code: &mut Code) {
     replace_copy(code, &reach_sets, &copy_sets);
 }
 
-fn reaching_def(code: &Code) -> SecondaryMap<InstId, Sets> {
+fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
     // 全ての変数について、その変数への代入文の集合を求める
     let mut var_def = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
@@ -49,22 +42,27 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, Sets> {
         }
     }
 
-    let mut sets = SecondaryMap::<_, Sets>::with_capacity(code.insts.len());
+    let mut in_sets = SecondaryMap::<_, HashSet<Def>>::with_capacity(code.insts.len());
 
-    for (inst_id, inst) in code.insts.iter() {
-        if let Some(result) = inst.result {
-            // この命令をgenに追加
-            sets[inst_id].gen.insert(Def::Inst(inst_id));
-
-            // この命令以外の同じ変数への代入文をkillに追加
-            let mut inst_kill = var_def[result].clone();
-            inst_kill.remove(&Def::Inst(inst_id));
-            sets[inst_id].kill = inst_kill;
+    let gen = |inst_id| code.insts[inst_id].result.is_some();
+    let kill = |inst_id, set: &mut HashSet<Def>| {
+        if let Some(result) = code.insts[inst_id].result {
+            for def in &var_def[result] {
+                match def {
+                    Def::Inst(id) if *id == inst_id => {}
+                    _ => {
+                        // この命令以外の同じ変数への代入文を削除する
+                        set.remove(def);
+                    }
+                }
+            }
         }
-    }
+    };
 
-    for (_, Sets { gen, in_, .. }) in sets.iter_mut() {
-        *in_ = gen.clone();
+    for (inst_id, in_) in in_sets.iter_mut() {
+        if gen(inst_id) {
+            in_.insert(Def::Inst(inst_id));
+        }
     }
 
     // ローカル変数の初期値をprev_outに設定
@@ -75,28 +73,25 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, Sets> {
         }
     }
 
-    let builder = SetsBuilder::new(code, sets, false);
+    let builder = SetsBuilder::new(code, in_sets, false, gen, kill);
     builder.build(prev_out)
 }
 
-fn copy(code: &Code) -> SecondaryMap<InstId, Sets> {
+fn copy(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
     // 変数が含まれるコピー文の集合
     let mut copies = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
-    let mut sets = SecondaryMap::<_, Sets>::with_capacity(code.insts.len());
+    let in_sets = SecondaryMap::<_, HashSet<Def>>::with_capacity(code.insts.len());
 
     for (inst_id, inst) in code.insts.iter() {
         if let Some(result) = inst.result {
             // コピー文
-            if inst.pattern == "$p0" {
+            if is_copy(inst) {
                 // 全ての変数について、その変数を使用するコピー文の集合を求める
                 match inst.params[0] {
                     Primary::Var(var_id) => {
                         copies[result].insert(Def::Inst(inst_id));
                         copies[var_id].insert(Def::Inst(inst_id));
-
-                        // この命令をgenに追加
-                        sets[inst_id].gen.insert(Def::Inst(inst_id));
                     }
                     Primary::Const(_) => (),
                 }
@@ -104,39 +99,60 @@ fn copy(code: &Code) -> SecondaryMap<InstId, Sets> {
         }
     }
 
-    for (inst_id, inst) in code.insts.iter() {
-        if let Some(result) = inst.result {
-            // この命令以外の同じ変数へのコピー文をkillに追加
-            let mut inst_kill = copies[result].clone();
-            inst_kill.remove(&Def::Inst(inst_id));
-            sets[inst_id].kill = inst_kill;
+    let gen = |inst_id| is_copy(&code.insts[inst_id]);
+    let kill = |inst_id, set: &mut HashSet<Def>| {
+        if let Some(result) = code.insts[inst_id].result {
+            for def in &copies[result] {
+                match def {
+                    Def::Inst(id) if *id == inst_id => {}
+                    _ => {
+                        // この命令以外の同じ変数へのコピー文を削除する
+                        set.remove(def);
+                    }
+                }
+            }
         }
-    }
-
-    let builder = SetsBuilder::new(code, sets, true);
+    };
+    let builder = SetsBuilder::new(code, in_sets, true, gen, kill);
     builder.build(HashSet::new())
 }
 
-struct SetsBuilder<'a> {
+struct SetsBuilder<'a, F1, F2> {
     code: &'a Code,
-    sets: SecondaryMap<InstId, Sets>,
+    in_sets: SecondaryMap<InstId, HashSet<Def>>,
     br_stack: Vec<Option<HashSet<Def>>>,
     intersection: bool,
+    /// 引数のInstIdがgenに含まれるかどうかを返すクロージャ
+    gen: F1,
+    /// 引数の集合からInstIdのkillの要素を削除するクロージャ
+    kill: F2,
 }
 
-impl<'a> SetsBuilder<'a> {
-    fn new(code: &'a Code, sets: SecondaryMap<InstId, Sets>, intersection: bool) -> Self {
+impl<'a, F1, F2> SetsBuilder<'a, F1, F2>
+where
+    F1: Fn(InstId) -> bool,
+    F2: Fn(InstId, &mut HashSet<Def>),
+{
+    fn new(
+        code: &'a Code,
+        in_sets: SecondaryMap<InstId, HashSet<Def>>,
+        intersection: bool,
+        gen: F1,
+        kill: F2,
+    ) -> Self {
         Self {
             code,
-            sets,
+            in_sets,
             br_stack: Vec::new(),
             intersection,
+            gen,
+            kill,
         }
     }
 
-    fn build(mut self, prev_out: HashSet<Def>) -> SecondaryMap<InstId, Sets> {
+    fn build(mut self, prev_out: HashSet<Def>) -> SecondaryMap<InstId, HashSet<Def>> {
         self.in_out_block(prev_out, self.code.root);
-        self.sets
+        self.in_sets
     }
 
     fn in_out_block(
@@ -151,12 +167,12 @@ impl<'a> SetsBuilder<'a> {
                     let next_out = self.in_out_inst(&prev_out, inst_id);
 
                     // ループ文ならinが前と等しくなるまで繰り返す
-                    if self.sets[inst_id].in_ == prev_out {
+                    if self.in_sets[inst_id] == prev_out {
                         // inが更新されなければ終了
                         prev_out = next_out;
                         break;
                     }
-                    prev_out = self.sets[inst_id].in_.clone();
+                    prev_out = self.in_sets[inst_id].clone();
                 }
             } else {
                 prev_out = self.in_out_inst(&prev_out, inst_id);
@@ -173,8 +189,8 @@ impl<'a> SetsBuilder<'a> {
     }
 
     fn in_out_inst(&mut self, prev_out: &HashSet<Def>, inst_id: InstId) -> HashSet<Def> {
-        let out;
-        self.sets[inst_id].in_ = prev_out.clone();
+        let mut out;
+        self.in_sets[inst_id] = prev_out.clone();
 
         // 子ブロック
         if self.code.inst_nodes[inst_id].first_child.is_some() {
@@ -203,14 +219,14 @@ impl<'a> SetsBuilder<'a> {
             {
                 // ブロックのoutとifブロックのinを統合する
                 // brやreturnで終わる場合はblock_outはNoneとなる
-                block_out = self.merge_set_option(&block_out, &self.sets[inst_id].in_);
+                block_out = self.merge_set_option(&block_out, &self.in_sets[inst_id]);
             }
 
             if breakable {
                 if let Some(poped) = self.br_stack.pop().unwrap() {
                     if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
                         // ループならスタックブロックのoutをinに含める
-                        self.sets[inst_id].in_ = self.merge_set(&self.sets[inst_id].in_, &poped);
+                        self.in_sets[inst_id] = self.merge_set(&self.in_sets[inst_id], &poped);
                     } else {
                         let block_out = block_out.as_mut().unwrap();
                         *block_out = self.merge_set(block_out, &poped);
@@ -220,17 +236,19 @@ impl<'a> SetsBuilder<'a> {
 
             // out = gen ∪ (in ∖ kill)
             if let Some(block_out) = block_out {
-                out = self.sets[inst_id]
-                    .gen
-                    .or(&block_out.sub(&self.sets[inst_id].kill));
+                out = block_out;
+                (self.kill)(inst_id, &mut out); // in ∖ kill
             } else {
-                out = self.sets[inst_id].gen.clone();
+                out = HashSet::new();
             }
         } else {
             // out = gen ∪ (in ∖ kill)
-            out = self.sets[inst_id]
-                .gen
-                .or(&self.sets[inst_id].in_.sub(&self.sets[inst_id].kill));
+            out = self.in_sets[inst_id].clone();
+            (self.kill)(inst_id, &mut out); // in ∖ kill
+        }
+
+        if (self.gen)(inst_id) {
+            out.insert(Def::Inst(inst_id)); // ∪ gen
         }
 
         // brなら対応するブロック命令のoutと集合を統合する
@@ -258,14 +276,21 @@ impl<'a> SetsBuilder<'a> {
     }
 }
 
+fn is_copy(inst: &Inst) -> bool {
+    matches!(inst.kind, InstKind::Expr)
+        && inst.result.is_some()
+        && inst.pattern == "$p0"
+        && matches! {inst.params[0], Primary::Var(_)}
+}
+
 /// コピー先の変数をコピー元に置き換え、不要なコピー文を削除できるなら削除する
 fn replace_copy(
     code: &mut Code,
-    reach_sets: &SecondaryMap<InstId, Sets>,
-    copy_sets: &SecondaryMap<InstId, Sets>,
+    reach_sets: &SecondaryMap<InstId, HashSet<Def>>,
+    copy_sets: &SecondaryMap<InstId, HashSet<Def>>,
 ) {
-    for (copy_inst_id, inst_copy_sets) in copy_sets.iter() {
-        if inst_copy_sets.gen.is_empty() {
+    for (copy_inst_id, _) in copy_sets.iter() {
+        if !is_copy(&code.insts[copy_inst_id]) {
             // inst_idがコピーではない
             continue;
         }
@@ -278,7 +303,7 @@ fn replace_copy(
         let mut removable = true;
 
         for (reach_inst_id, inst_reach_sets) in reach_sets.iter() {
-            if !inst_reach_sets.in_.contains(&Def::Inst(copy_inst_id)) {
+            if !inst_reach_sets.contains(&Def::Inst(copy_inst_id)) {
                 // コピー文がreach_inst_idの文に到達可能ではない
                 continue;
             }
@@ -292,10 +317,7 @@ fn replace_copy(
                     .as_ref()
                     .is_some_and(|c| c.recursive && c.save_vars.contains(&dst))
             {
-                if copy_sets[reach_inst_id]
-                    .in_
-                    .contains(&Def::Inst(copy_inst_id))
-                {
+                if copy_sets[reach_inst_id].contains(&Def::Inst(copy_inst_id)) {
                     // paramsをコピー元の変数に書き換え
                     for p in &mut inst.params {
                         match p {
@@ -344,7 +366,7 @@ mod tests {
         var::{Var, VarId},
     };
 
-    use super::{copy, reaching_def, replace_copy, Def, Sets};
+    use super::{copy, reaching_def, replace_copy, Def};
 
     #[test]
     fn copy_propagation_block() {
@@ -380,27 +402,23 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
             &[
-                (0, (&[0], &[-1, 3], &[-1, -2])),
-                (1, (&[], &[], &[0, -2])),
-                (2, (&[2], &[-2, 4], &[0, -2])),
-                (3, (&[3], &[-1, 0], &[0, 2])),
-                (4, (&[4], &[-2, 2], &[3, 2])),
+                (0, &[-1, -2]),
+                (1, &[0, -2]),
+                (2, &[0, -2]),
+                (3, &[0, 2]),
+                (4, &[3, 2]),
             ],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
+        set_eq(
             &copy_sets,
-            &[
-                (0, (&[], &[3], &[])),
-                (1, (&[], &[], &[])),
-                (2, (&[], &[3], &[])),
-                (3, (&[3], &[], &[])),
-                (4, (&[], &[3], &[3])),
-            ],
+            &[(0, &[]), (1, &[]), (2, &[]), (3, &[]), (4, &[3])],
+            "copy",
         );
     }
 
@@ -445,29 +463,31 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
             &[
-                (0, (&[0], &[], &[-1, -2])),
-                (1, (&[], &[], &[-1, -2, 0])),
-                (2, (&[2], &[-1, 5], &[-1, -2, 0])),
-                (3, (&[3], &[-2, 4], &[2, -2, 0])),
-                (4, (&[4], &[-2, 3], &[-1, -2, 0])),
-                (5, (&[5], &[-1, 2], &[-1, 2, 3, 4, 0])),
+                (0, &[-1, -2]),
+                (1, &[-1, -2, 0]),
+                (2, &[-1, -2, 0]),
+                (3, &[2, -2, 0]),
+                (4, &[-1, -2, 0]),
+                (5, &[-1, 2, 3, 4, 0]),
             ],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
+        set_eq(
             &copy_sets,
             &[
-                (0, (&[0], &[], &[])),
-                (1, (&[], &[], &[0])),
-                (2, (&[], &[0], &[0])),
-                (3, (&[], &[], &[])),
-                (4, (&[], &[], &[0])),
-                (5, (&[], &[0], &[])),
+                (0, &[]),
+                (1, &[0]),
+                (2, &[0]),
+                (3, &[]),
+                (4, &[0]),
+                (5, &[]),
             ],
+            "copy",
         );
     }
 
@@ -500,24 +520,14 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
-            &[
-                (0, (&[], &[], &[-1, -2])),
-                (1, (&[1], &[-1, 2], &[-1, -2])),
-                (2, (&[2], &[-1, 1], &[-1, 1, -2])),
-            ],
+            &[(0, &[-1, -2]), (1, &[-1, -2]), (2, &[-1, 1, -2])],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
-            &copy_sets,
-            &[
-                (0, (&[], &[], &[])),
-                (1, (&[1], &[], &[])),
-                (2, (&[], &[1], &[])),
-            ],
-        );
+        set_eq(&copy_sets, &[(0, &[]), (1, &[]), (2, &[])], "copy");
     }
 
     #[test]
@@ -566,31 +576,33 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
             &[
-                (0, (&[], &[], &[-1, -2])),
-                (1, (&[], &[], &[-1, -2])),
-                (2, (&[], &[], &[-1, -2])),
-                (3, (&[3], &[-1, 5, 6], &[-1, -2])),
-                (4, (&[], &[], &[3, -2])),
-                (5, (&[5], &[-1, 3, 6], &[-1, -2])),
-                (6, (&[6], &[-1, 3, 5], &[3, 5, -2])),
+                (0, &[-1, -2]),
+                (1, &[-1, -2]),
+                (2, &[-1, -2]),
+                (3, &[-1, -2]),
+                (4, &[3, -2]),
+                (5, &[-1, -2]),
+                (6, &[3, 5, -2]),
             ],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
+        set_eq(
             &copy_sets,
             &[
-                (0, (&[], &[], &[])),
-                (1, (&[], &[], &[])),
-                (2, (&[], &[], &[])),
-                (3, (&[], &[5], &[])),
-                (4, (&[], &[], &[])),
-                (5, (&[5], &[], &[])),
-                (6, (&[], &[5], &[])),
+                (0, &[]),
+                (1, &[]),
+                (2, &[]),
+                (3, &[]),
+                (4, &[]),
+                (5, &[]),
+                (6, &[]),
             ],
+            "copy",
         );
     }
 
@@ -631,27 +643,23 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
             &[
-                (0, (&[], &[], &[-1, 2, -2])),
-                (1, (&[], &[], &[-1, 2, -2])),
-                (2, (&[2], &[-1, 4], &[-1, 2, -2])),
-                (3, (&[], &[], &[2, -2])),
-                (4, (&[4], &[-1, 2], &[-1, 2, -2])),
+                (0, &[-1, 2, -2]),
+                (1, &[-1, 2, -2]),
+                (2, &[-1, 2, -2]),
+                (3, &[2, -2]),
+                (4, &[-1, 2, -2]),
             ],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
+        set_eq(
             &copy_sets,
-            &[
-                (0, (&[], &[], &[])),
-                (1, (&[], &[], &[])),
-                (2, (&[2], &[], &[])),
-                (3, (&[], &[], &[2])),
-                (4, (&[], &[2], &[])),
-            ],
+            &[(0, &[]), (1, &[]), (2, &[]), (3, &[2]), (4, &[])],
+            "copy",
         );
     }
 
@@ -687,25 +695,17 @@ mod tests {
         copy(&code);
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
-            &[
-                (0, (&[], &[], &[])),
-                (1, (&[1], &[], &[])),
-                (2, (&[2], &[], &[1])),
-                (3, (&[3], &[], &[1, 2])),
-            ],
+            &[(0, &[]), (1, &[]), (2, &[1]), (3, &[1, 2])],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
+        set_eq(
             &copy_sets,
-            &[
-                (0, (&[], &[], &[])),
-                (1, (&[], &[2], &[])),
-                (2, (&[2], &[3], &[])),
-                (3, (&[3], &[], &[2])),
-            ],
+            &[(0, &[]), (1, &[]), (2, &[]), (3, &[2])],
+            "copy",
         );
     }
 
@@ -740,27 +740,23 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
             &[
-                (0, (&[0], &[2, 4], &[-1])),
-                (1, (&[1], &[3], &[-1, 0])),
-                (2, (&[2], &[0, 4], &[-1, 0, 1])),
-                (3, (&[3], &[1], &[-1, 2, 1])),
-                (4, (&[4], &[0, 2], &[-1, 2, 3])),
+                (0, &[-1]),
+                (1, &[-1, 0]),
+                (2, &[-1, 0, 1]),
+                (3, &[-1, 2, 1]),
+                (4, &[-1, 2, 3]),
             ],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
+        set_eq(
             &copy_sets,
-            &[
-                (0, (&[0], &[1, 2], &[])),
-                (1, (&[1], &[], &[0])),
-                (2, (&[2], &[0, 1], &[0, 1])),
-                (3, (&[], &[1], &[2])),
-                (4, (&[], &[0, 1, 2], &[2])),
-            ],
+            &[(0, &[]), (1, &[0]), (2, &[0, 1]), (3, &[2]), (4, &[2])],
+            "copy",
         );
     }
 
@@ -792,24 +788,14 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
-            &[
-                (0, (&[0], &[], &[-1])),
-                (1, (&[], &[], &[-1, 0])),
-                (2, (&[2], &[-1], &[-1, 0])),
-            ],
+            &[(0, &[-1]), (1, &[-1, 0]), (2, &[-1, 0])],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
-            &copy_sets,
-            &[
-                (0, (&[0], &[], &[])),
-                (1, (&[], &[], &[0])),
-                (2, (&[], &[0], &[0])),
-            ],
-        );
+        set_eq(&copy_sets, &[(0, &[]), (1, &[0]), (2, &[0])], "copy");
     }
 
     #[test]
@@ -886,27 +872,23 @@ mod tests {
         let mut code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        sets_eq(
+        set_eq(
             &reach_sets,
             &[
-                (0, (&[0], &[], &[-1])),
-                (1, (&[1], &[], &[-1, 0])),
-                (2, (&[2], &[-1], &[-1, 0, 1])),
-                (3, (&[3], &[], &[2, 0, 1])),
-                (4, (&[], &[], &[2, 0, 1, 3])),
+                (0, &[-1]),
+                (1, &[-1, 0]),
+                (2, &[-1, 0, 1]),
+                (3, &[2, 0, 1]),
+                (4, &[2, 0, 1, 3]),
             ],
+            "reach",
         );
 
         let copy_sets = copy(&code);
-        sets_eq(
+        set_eq(
             &copy_sets,
-            &[
-                (0, (&[0], &[1], &[])),
-                (1, (&[1], &[], &[0])),
-                (2, (&[], &[0], &[0, 1])),
-                (3, (&[], &[], &[1])),
-                (4, (&[], &[], &[1])),
-            ],
+            &[(0, &[]), (1, &[0]), (2, &[0, 1]), (3, &[1]), (4, &[1])],
+            "copy",
         );
 
         replace_copy(&mut code, &reach_sets, &copy_sets);
@@ -915,46 +897,40 @@ mod tests {
         // code_eq_nop(&code, &[true, false, false, false, false]);
     }
 
-    /// (gen, kill, in, out)
-    /// -1以下ならDef::Header(-i + 1)となる
-    type SetArrs<'a> = (&'a [i32], &'a [i32], &'a [i32]);
-
-    /// Setsの各集合が等しいか確認する
-    fn sets_eq(actual: &SecondaryMap<InstId, Sets>, expected: &[(usize, SetArrs<'_>)]) {
+    /// 集合が等しいか確認する
+    /// expectedの右側は-1以下ならDef::Header(-i + 1)となる
+    fn set_eq(
+        actual: &SecondaryMap<InstId, HashSet<Def>>,
+        expected: &[(usize, &[i32])],
+        label: &str,
+    ) {
         for (i, expected) in expected.iter() {
             let actual = &actual[InstId::new(*i)];
-            set_eq(&actual.gen, expected.0, *i, "gen");
-            set_eq(&actual.kill, expected.1, *i, "kill");
-            set_eq(&actual.in_, expected.2, *i, "in");
+            let mut actual = actual.iter().copied().collect::<Vec<_>>();
+            actual.sort();
+
+            let mut expected = expected
+                .iter()
+                .map(|&i| {
+                    if i < 0 {
+                        Def::Header(VarId::new(-(i + 1) as usize))
+                    } else {
+                        Def::Inst(InstId::new(i as usize))
+                    }
+                })
+                .collect::<Vec<_>>();
+            expected.sort();
+
+            assert!(
+                actual == expected,
+                "assertion failed ({}[{}])\n   actual: {:?}\n expected: {:?}",
+                label,
+                i,
+                actual,
+                expected
+            );
         }
         assert_eq!(actual.keys().len(), expected.len());
-    }
-
-    /// 集合が等しいか確認する
-    fn set_eq(actual: &HashSet<Def>, expected: &[i32], i: usize, label: &str) {
-        let mut actual = actual.iter().copied().collect::<Vec<_>>();
-        actual.sort();
-
-        let mut expected = expected
-            .iter()
-            .map(|&i| {
-                if i < 0 {
-                    Def::Header(VarId::new(-(i + 1) as usize))
-                } else {
-                    Def::Inst(InstId::new(i as usize))
-                }
-            })
-            .collect::<Vec<_>>();
-        expected.sort();
-
-        assert!(
-            actual == expected,
-            "assertion failed (reach[{}].{})\n   actual: {:?}\n expected: {:?}",
-            i,
-            label,
-            actual,
-            expected
-        );
     }
 
     /// コードの各命令がnopか確認する
