@@ -33,7 +33,7 @@ pub fn copy_propagation(code: &mut Code) {
     replace_copy(code, &reach_sets, &copy_sets);
 }
 
-fn reaching_def(code: &mut Code) -> SecondaryMap<InstId, ReachSets> {
+fn reaching_def(code: &Code) -> SecondaryMap<InstId, ReachSets> {
     // 全ての変数について、その変数への代入文の集合を求める
     let mut var_def = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
@@ -53,7 +53,7 @@ fn reaching_def(code: &mut Code) -> SecondaryMap<InstId, ReachSets> {
 
     let mut sets = SecondaryMap::<_, ReachSets>::with_capacity(code.insts.len());
 
-    for (inst_id, inst) in code.insts.iter_mut() {
+    for (inst_id, inst) in code.insts.iter() {
         if let Some(result) = inst.result {
             // この命令をgenに追加
             sets[inst_id].gen.insert(Def::Inst(inst_id));
@@ -83,7 +83,7 @@ fn reaching_def(code: &mut Code) -> SecondaryMap<InstId, ReachSets> {
 }
 
 fn reaching_def_in_out(
-    code: &mut Code,
+    code: &Code,
     sets: &mut SecondaryMap<InstId, ReachSets>,
     br_stack: &mut Vec<HashSet<Def>>,
     mut prev_out: HashSet<Def>,
@@ -118,7 +118,7 @@ fn reaching_def_in_out(
 }
 
 fn reaching_def_in_out_inst(
-    code: &mut Code,
+    code: &Code,
     sets: &mut SecondaryMap<InstId, ReachSets>,
     br_stack: &mut Vec<HashSet<Def>>,
     prev_out: &HashSet<Def>,
@@ -189,7 +189,7 @@ struct CopySets {
     out: HashSet<InstId>,
 }
 
-fn copy(code: &mut Code) -> SecondaryMap<InstId, CopySets> {
+fn copy(code: &Code) -> SecondaryMap<InstId, CopySets> {
     // 変数が含まれるコピー文の集合
     let mut copies = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
@@ -214,7 +214,7 @@ fn copy(code: &mut Code) -> SecondaryMap<InstId, CopySets> {
         }
     }
 
-    for (inst_id, inst) in code.insts.iter_mut() {
+    for (inst_id, inst) in code.insts.iter() {
         if let Some(result) = inst.result {
             // この命令以外の同じ変数へのコピー文をkillに追加
             let mut inst_kill = copies[result].clone();
@@ -229,7 +229,7 @@ fn copy(code: &mut Code) -> SecondaryMap<InstId, CopySets> {
 }
 
 fn copy_in_out(
-    code: &mut Code,
+    code: &Code,
     sets: &mut SecondaryMap<InstId, CopySets>,
     br_stack: &mut Vec<Option<HashSet<InstId>>>,
     mut prev_out: HashSet<InstId>,
@@ -264,7 +264,7 @@ fn copy_in_out(
 }
 
 fn copy_in_out_inst(
-    code: &mut Code,
+    code: &Code,
     sets: &mut SecondaryMap<InstId, CopySets>,
     br_stack: &mut Vec<Option<HashSet<InstId>>>,
     prev_out: &HashSet<InstId>,
@@ -465,9 +465,9 @@ mod tests {
 
         builder.push_set(v2, Const::Int(3).into()); // 4
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -479,7 +479,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -530,9 +530,9 @@ mod tests {
 
         builder.push_set(v1, Const::Int(4).into()); // 5
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -545,7 +545,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -585,9 +585,9 @@ mod tests {
 
         builder.push_set(v1, Const::Int(2).into()); // 2
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -597,7 +597,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -651,9 +651,9 @@ mod tests {
 
         builder.push_set(v1, Const::Int(3).into()); // 6
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -667,7 +667,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -716,9 +716,9 @@ mod tests {
 
         builder.push_set(v1, Const::Int(2).into()); // 4
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -730,7 +730,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -769,12 +769,12 @@ mod tests {
         builder.end_block();
         builder.push_set(v3, v2.into()); // 3
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        reaching_def(&mut code);
-        copy(&mut code);
+        reaching_def(&code);
+        copy(&code);
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -785,7 +785,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -825,9 +825,9 @@ mod tests {
         builder.push_set(v3, Const::Int(1).into()); // 3
         builder.push_set(v2, Const::Int(2).into()); // 4
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -839,7 +839,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -877,9 +877,9 @@ mod tests {
 
         builder.push_set(v1, Const::Int(1).into());
 
-        let mut code = builder.build();
+        let code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
+        let reach_sets = reaching_def(&code);
         reach_sets_eq(
             &reach_sets,
             &[
@@ -889,7 +889,7 @@ mod tests {
             ],
         );
 
-        let copy_sets = copy(&mut code);
+        let copy_sets = copy(&code);
         copy_sets_eq(
             &copy_sets,
             &[
@@ -933,8 +933,8 @@ mod tests {
 
         let mut code = builder.build();
 
-        let reach_sets = reaching_def(&mut code);
-        let copy_sets = copy(&mut code);
+        let reach_sets = reaching_def(&code);
+        let copy_sets = copy(&code);
         replace_copy(&mut code, &reach_sets, &copy_sets);
 
         code_eq_nop(&code, &[true, true, false]);
