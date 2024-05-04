@@ -58,6 +58,9 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
             }
         }
     };
+    let in_ = |inst_id, in_sets: &mut SecondaryMap<_, _>, out: &HashSet<_>| {
+        in_sets[inst_id] = out.clone()
+    };
 
     for (inst_id, in_) in in_sets.iter_mut() {
         if gen(inst_id) {
@@ -73,7 +76,7 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
         }
     }
 
-    let builder = SetsBuilder::new(code, in_sets, Merge::Union, gen, kill);
+    let builder = SetsBuilder::new(code, in_sets, Merge::Union, gen, kill, in_);
     builder.build(prev_out)
 }
 
@@ -113,11 +116,15 @@ fn copy(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
             }
         }
     };
-    let builder = SetsBuilder::new(code, in_sets, Merge::Intersection, gen, kill);
+    let in_ = |inst_id, in_sets: &mut SecondaryMap<_, _>, out: &HashSet<_>| {
+        in_sets[inst_id] = out.clone()
+    };
+
+    let builder = SetsBuilder::new(code, in_sets, Merge::Intersection, gen, kill, in_);
     builder.build(HashSet::new())
 }
 
-struct SetsBuilder<'a, F1, F2> {
+struct SetsBuilder<'a, F1, F2, F3> {
     code: &'a Code,
     in_sets: SecondaryMap<InstId, HashSet<Def>>,
     br_stack: Vec<Option<HashSet<Def>>>,
@@ -126,12 +133,15 @@ struct SetsBuilder<'a, F1, F2> {
     gen: F1,
     /// 引数の集合からInstIdのkillの要素を削除するクロージャ
     kill: F2,
+    /// in_setsを更新するクロージャ
+    in_: F3,
 }
 
-impl<'a, F1, F2> SetsBuilder<'a, F1, F2>
+impl<'a, F1, F2, F3> SetsBuilder<'a, F1, F2, F3>
 where
     F1: Fn(InstId) -> bool,
     F2: Fn(InstId, &mut HashSet<Def>),
+    F3: Fn(InstId, &mut SecondaryMap<InstId, HashSet<Def>>, &HashSet<Def>),
 {
     fn new(
         code: &'a Code,
@@ -139,6 +149,7 @@ where
         merge: Merge,
         gen: F1,
         kill: F2,
+        in_: F3,
     ) -> Self {
         Self {
             code,
@@ -147,6 +158,7 @@ where
             merge,
             gen,
             kill,
+            in_,
         }
     }
 
@@ -192,7 +204,8 @@ where
     }
 
     fn in_out_inst(&mut self, out: &mut HashSet<Def>, inst_id: InstId) -> Option<HashSet<Def>> {
-        self.in_sets[inst_id] = out.clone();
+        (self.in_)(inst_id, &mut self.in_sets, out);
+
         let mut loop_in = None;
 
         // 子ブロック
