@@ -155,27 +155,23 @@ where
         self.in_sets
     }
 
-    fn in_out_block(
-        &mut self,
-        mut prev_out: HashSet<Def>,
-        block_id: BlockId,
-    ) -> Option<HashSet<Def>> {
+    fn in_out_block(&mut self, mut out: HashSet<Def>, block_id: BlockId) -> Option<HashSet<Def>> {
         let mut iter = self.code.block_nodes[block_id].iter();
         while let Some(inst_id) = iter.next(&self.code.inst_nodes) {
             if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
                 loop {
-                    let next_out = self.in_out_inst(&prev_out, inst_id);
+                    let prev_out = out.clone();
+                    self.in_out_inst(&mut out, inst_id);
 
                     // ループ文ならinが前と等しくなるまで繰り返す
                     if self.in_sets[inst_id] == prev_out {
                         // inが更新されなければ終了
-                        prev_out = next_out;
                         break;
                     }
-                    prev_out = self.in_sets[inst_id].clone();
+                    out = self.in_sets[inst_id].clone();
                 }
             } else {
-                prev_out = self.in_out_inst(&prev_out, inst_id);
+                self.in_out_inst(&mut out, inst_id);
             }
         }
 
@@ -184,13 +180,12 @@ where
             .expand()
             .and_then(|id| match self.code.insts[id].kind {
                 InstKind::Return | InstKind::Br(_) => None,
-                _ => Some(prev_out),
+                _ => Some(out),
             })
     }
 
-    fn in_out_inst(&mut self, prev_out: &HashSet<Def>, inst_id: InstId) -> HashSet<Def> {
-        let mut out;
-        self.in_sets[inst_id] = prev_out.clone();
+    fn in_out_inst(&mut self, out: &mut HashSet<Def>, inst_id: InstId) {
+        self.in_sets[inst_id] = out.clone();
 
         // 子ブロック
         if self.code.inst_nodes[inst_id].first_child.is_some() {
@@ -204,11 +199,11 @@ where
             let mut iter = self.code.inst_nodes[inst_id].iter();
             while let Some(block_id) = iter.next(&self.code.block_nodes) {
                 // ブロックのoutと最後の命令のoutを統合する
-                if let Some(child_out) = self.in_out_block(prev_out.clone(), block_id) {
+                if let Some(child_out) = self.in_out_block(out.clone(), block_id) {
                     block_out = self.merge_set_option(&block_out, &child_out);
                 } else {
                     // ブロックが空の場合
-                    block_out = self.merge_set_option(&block_out, prev_out);
+                    block_out = self.merge_set_option(&block_out, out);
                 }
             }
 
@@ -236,15 +231,14 @@ where
 
             // out = gen ∪ (in ∖ kill)
             if let Some(block_out) = block_out {
-                out = block_out;
-                (self.kill)(inst_id, &mut out); // in ∖ kill
+                *out = block_out;
+                (self.kill)(inst_id, out); // in ∖ kill
             } else {
-                out = HashSet::new();
+                *out = HashSet::new();
             }
         } else {
             // out = gen ∪ (in ∖ kill)
-            out = self.in_sets[inst_id].clone();
-            (self.kill)(inst_id, &mut out); // in ∖ kill
+            (self.kill)(inst_id, out); // in ∖ kill
         }
 
         if (self.gen)(inst_id) {
@@ -254,10 +248,8 @@ where
         // brなら対応するブロック命令のoutと集合を統合する
         if let InstKind::Br(depth) = self.code.insts[inst_id].kind {
             let i = self.br_stack.len() - 1 - depth as usize;
-            self.br_stack[i] = self.merge_set_option(&self.br_stack[i], &out);
+            self.br_stack[i] = self.merge_set_option(&self.br_stack[i], out);
         }
-
-        out
     }
 
     fn merge_set(&self, x: &HashSet<Def>, y: &HashSet<Def>) -> HashSet<Def> {
