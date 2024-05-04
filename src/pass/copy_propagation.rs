@@ -12,7 +12,7 @@ use crate::{
 };
 
 #[derive(Clone, Default)]
-struct ReachSets {
+struct Sets {
     gen: HashSet<Def>,
     kill: HashSet<Def>,
     in_: HashSet<Def>,
@@ -33,7 +33,7 @@ pub fn copy_propagation(code: &mut Code) {
     replace_copy(code, &reach_sets, &copy_sets);
 }
 
-fn reaching_def(code: &Code) -> SecondaryMap<InstId, ReachSets> {
+fn reaching_def(code: &Code) -> SecondaryMap<InstId, Sets> {
     // 全ての変数について、その変数への代入文の集合を求める
     let mut var_def = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
@@ -51,7 +51,7 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, ReachSets> {
         }
     }
 
-    let mut sets = SecondaryMap::<_, ReachSets>::with_capacity(code.insts.len());
+    let mut sets = SecondaryMap::<_, Sets>::with_capacity(code.insts.len());
 
     for (inst_id, inst) in code.insts.iter() {
         if let Some(result) = inst.result {
@@ -65,7 +65,7 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, ReachSets> {
         }
     }
 
-    for (_, ReachSets { gen, in_, .. }) in sets.iter_mut() {
+    for (_, Sets { gen, in_, .. }) in sets.iter_mut() {
         *in_ = gen.clone();
     }
 
@@ -84,7 +84,7 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, ReachSets> {
 
 fn reaching_def_in_out(
     code: &Code,
-    sets: &mut SecondaryMap<InstId, ReachSets>,
+    sets: &mut SecondaryMap<InstId, Sets>,
     br_stack: &mut Vec<HashSet<Def>>,
     mut prev_out: HashSet<Def>,
     block_id: BlockId,
@@ -119,7 +119,7 @@ fn reaching_def_in_out(
 
 fn reaching_def_in_out_inst(
     code: &Code,
-    sets: &mut SecondaryMap<InstId, ReachSets>,
+    sets: &mut SecondaryMap<InstId, Sets>,
     br_stack: &mut Vec<HashSet<Def>>,
     prev_out: &HashSet<Def>,
     inst_id: InstId,
@@ -181,19 +181,11 @@ fn reaching_def_in_out_inst(
     }
 }
 
-#[derive(Clone, Default)]
-struct CopySets {
-    gen: HashSet<InstId>,
-    kill: HashSet<InstId>,
-    in_: HashSet<InstId>,
-    out: HashSet<InstId>,
-}
-
-fn copy(code: &Code) -> SecondaryMap<InstId, CopySets> {
+fn copy(code: &Code) -> SecondaryMap<InstId, Sets> {
     // 変数が含まれるコピー文の集合
     let mut copies = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
-    let mut sets = SecondaryMap::<_, CopySets>::with_capacity(code.insts.len());
+    let mut sets = SecondaryMap::<_, Sets>::with_capacity(code.insts.len());
 
     for (inst_id, inst) in code.insts.iter() {
         if let Some(result) = inst.result {
@@ -202,11 +194,11 @@ fn copy(code: &Code) -> SecondaryMap<InstId, CopySets> {
                 // 全ての変数について、その変数を使用するコピー文の集合を求める
                 match inst.params[0] {
                     Primary::Var(var_id) => {
-                        copies[result].insert(inst_id);
-                        copies[var_id].insert(inst_id);
+                        copies[result].insert(Def::Inst(inst_id));
+                        copies[var_id].insert(Def::Inst(inst_id));
 
                         // この命令をgenに追加
-                        sets[inst_id].gen.insert(inst_id);
+                        sets[inst_id].gen.insert(Def::Inst(inst_id));
                     }
                     Primary::Const(_) => (),
                 }
@@ -218,7 +210,7 @@ fn copy(code: &Code) -> SecondaryMap<InstId, CopySets> {
         if let Some(result) = inst.result {
             // この命令以外の同じ変数へのコピー文をkillに追加
             let mut inst_kill = copies[result].clone();
-            inst_kill.remove(&inst_id);
+            inst_kill.remove(&Def::Inst(inst_id));
             sets[inst_id].kill = inst_kill;
         }
     }
@@ -230,9 +222,9 @@ fn copy(code: &Code) -> SecondaryMap<InstId, CopySets> {
 
 fn copy_in_out(
     code: &Code,
-    sets: &mut SecondaryMap<InstId, CopySets>,
-    br_stack: &mut Vec<Option<HashSet<InstId>>>,
-    mut prev_out: HashSet<InstId>,
+    sets: &mut SecondaryMap<InstId, Sets>,
+    br_stack: &mut Vec<Option<HashSet<Def>>>,
+    mut prev_out: HashSet<Def>,
     block_id: BlockId,
 ) -> Option<InstId> {
     let mut iter = code.block_nodes[block_id].iter();
@@ -265,9 +257,9 @@ fn copy_in_out(
 
 fn copy_in_out_inst(
     code: &Code,
-    sets: &mut SecondaryMap<InstId, CopySets>,
-    br_stack: &mut Vec<Option<HashSet<InstId>>>,
-    prev_out: &HashSet<InstId>,
+    sets: &mut SecondaryMap<InstId, Sets>,
+    br_stack: &mut Vec<Option<HashSet<Def>>>,
+    prev_out: &HashSet<Def>,
     inst_id: InstId,
 ) {
     sets[inst_id].in_ = prev_out.clone();
@@ -279,7 +271,7 @@ fn copy_in_out_inst(
             br_stack.push(None);
         }
 
-        let mut block_out: Option<HashSet<InstId>> = None;
+        let mut block_out: Option<HashSet<Def>> = None;
 
         let mut iter = code.inst_nodes[inst_id].iter();
         while let Some(block_id) = iter.next(&code.block_nodes) {
@@ -349,8 +341,8 @@ fn copy_in_out_inst(
 /// コピー先の変数をコピー元に置き換え、不要なコピー文を削除できるなら削除する
 fn replace_copy(
     code: &mut Code,
-    reach_sets: &SecondaryMap<InstId, ReachSets>,
-    copy_sets: &SecondaryMap<InstId, CopySets>,
+    reach_sets: &SecondaryMap<InstId, Sets>,
+    copy_sets: &SecondaryMap<InstId, Sets>,
 ) {
     for (copy_inst_id, inst_copy_sets) in copy_sets.iter() {
         if inst_copy_sets.gen.is_empty() {
@@ -380,7 +372,10 @@ fn replace_copy(
                     .as_ref()
                     .is_some_and(|c| c.recursive && c.save_vars.contains(&dst))
             {
-                if copy_sets[reach_inst_id].in_.contains(&copy_inst_id) {
+                if copy_sets[reach_inst_id]
+                    .in_
+                    .contains(&Def::Inst(copy_inst_id))
+                {
                     // paramsをコピー元の変数に書き換え
                     for p in &mut inst.params {
                         match p {
@@ -422,17 +417,14 @@ mod tests {
 
     use cranelift_entity::{EntityRef, SecondaryMap};
 
-    use crate::{
-        ir::{
-            builder::Builder,
-            code::{Breakable, Code, InstId, InstKind},
-            ty::Const,
-            var::{Var, VarId},
-        },
-        pass::copy_propagation::ReachSets,
+    use crate::ir::{
+        builder::Builder,
+        code::{Breakable, Code, InstId, InstKind},
+        ty::Const,
+        var::{Var, VarId},
     };
 
-    use super::{copy, reaching_def, replace_copy, CopySets, Def};
+    use super::{copy, reaching_def, replace_copy, Def, Sets};
 
     #[test]
     fn copy_propagation_block() {
@@ -468,7 +460,7 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[0], &[-1, 3], &[-1, -2], &[0, -2])),
@@ -480,7 +472,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[], &[3], &[], &[])),
@@ -533,7 +525,7 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[0], &[], &[-1, -2], &[-1, -2, 0])),
@@ -546,7 +538,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[0], &[], &[], &[0])),
@@ -588,7 +580,7 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[], &[], &[-1, -2], &[-1, 1, -2])),
@@ -598,7 +590,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[], &[], &[], &[])),
@@ -654,7 +646,7 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[], &[], &[-1, -2], &[3, 5, -2])),
@@ -668,7 +660,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[], &[], &[], &[])),
@@ -719,7 +711,7 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[], &[], &[-1, 2, -2], &[-1, 2, -2])),
@@ -731,7 +723,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[], &[], &[], &[])),
@@ -775,7 +767,7 @@ mod tests {
         copy(&code);
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[], &[], &[], &[1, 2])),
@@ -786,7 +778,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[], &[], &[], &[2])),
@@ -828,7 +820,7 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[0], &[2, 4], &[-1], &[-1, 0])),
@@ -840,7 +832,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[0], &[1, 2], &[], &[0])),
@@ -880,7 +872,7 @@ mod tests {
         let code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[0], &[], &[-1], &[-1, 0])),
@@ -890,7 +882,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[0], &[], &[], &[0])),
@@ -974,7 +966,7 @@ mod tests {
         let mut code = builder.build();
 
         let reach_sets = reaching_def(&code);
-        reach_sets_eq(
+        sets_eq(
             &reach_sets,
             &[
                 (0, (&[0], &[], &[-1], &[-1, 0])),
@@ -986,7 +978,7 @@ mod tests {
         );
 
         let copy_sets = copy(&code);
-        copy_sets_eq(
+        sets_eq(
             &copy_sets,
             &[
                 (0, (&[0], &[1], &[], &[0])),
@@ -1007,20 +999,20 @@ mod tests {
     /// -1以下ならDef::Header(-i + 1)となる
     type SetArrs<'a> = (&'a [i32], &'a [i32], &'a [i32], &'a [i32]);
 
-    /// ReachSetsの各集合が等しいか確認する
-    fn reach_sets_eq(actual: &SecondaryMap<InstId, ReachSets>, expected: &[(usize, SetArrs<'_>)]) {
+    /// Setsの各集合が等しいか確認する
+    fn sets_eq(actual: &SecondaryMap<InstId, Sets>, expected: &[(usize, SetArrs<'_>)]) {
         for (i, expected) in expected.iter() {
             let actual = &actual[InstId::new(*i)];
-            reach_set_eq(&actual.gen, expected.0, *i, "gen");
-            reach_set_eq(&actual.kill, expected.1, *i, "kill");
-            reach_set_eq(&actual.in_, expected.2, *i, "in");
-            reach_set_eq(&actual.out, expected.3, *i, "out");
+            set_eq(&actual.gen, expected.0, *i, "gen");
+            set_eq(&actual.kill, expected.1, *i, "kill");
+            set_eq(&actual.in_, expected.2, *i, "in");
+            set_eq(&actual.out, expected.3, *i, "out");
         }
         assert_eq!(actual.keys().len(), expected.len());
     }
 
-    /// Reaching Definitionの集合が等しいか確認する
-    fn reach_set_eq(actual: &HashSet<Def>, expected: &[i32], i: usize, label: &str) {
+    /// 集合が等しいか確認する
+    fn set_eq(actual: &HashSet<Def>, expected: &[i32], i: usize, label: &str) {
         let mut actual = actual.iter().copied().collect::<Vec<_>>();
         actual.sort();
 
@@ -1039,39 +1031,6 @@ mod tests {
         assert!(
             actual == expected,
             "assertion failed (reach[{}].{})\n   actual: {:?}\n expected: {:?}",
-            i,
-            label,
-            actual,
-            expected
-        );
-    }
-
-    /// CopySetsの各集合が等しいか確認する
-    fn copy_sets_eq(actual: &SecondaryMap<InstId, CopySets>, expected: &[(usize, SetArrs<'_>)]) {
-        for (i, expected) in expected.iter() {
-            let actual = &actual[InstId::new(*i)];
-            copy_set_eq(&actual.gen, expected.0, *i, "gen");
-            copy_set_eq(&actual.kill, expected.1, *i, "kill");
-            copy_set_eq(&actual.in_, expected.2, *i, "in");
-            copy_set_eq(&actual.out, expected.3, *i, "out");
-        }
-        assert_eq!(actual.keys().len(), expected.len());
-    }
-
-    /// Copyの集合が等しいか確認する
-    fn copy_set_eq(actual: &HashSet<InstId>, expected: &[i32], i: usize, label: &str) {
-        let mut actual = actual.iter().copied().collect::<Vec<_>>();
-        actual.sort();
-
-        let mut expected = expected
-            .iter()
-            .map(|&i| InstId::new(i as usize))
-            .collect::<Vec<_>>();
-        expected.sort();
-
-        assert!(
-            actual == expected,
-            "assertion failed (copy[{}].{})\n   actual: {:?}\n expected: {:?}",
             i,
             label,
             actual,
