@@ -73,7 +73,7 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
         }
     }
 
-    let builder = SetsBuilder::new(code, in_sets, false, gen, kill);
+    let builder = SetsBuilder::new(code, in_sets, Merge::Union, gen, kill);
     builder.build(prev_out)
 }
 
@@ -113,7 +113,7 @@ fn copy(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
             }
         }
     };
-    let builder = SetsBuilder::new(code, in_sets, true, gen, kill);
+    let builder = SetsBuilder::new(code, in_sets, Merge::Intersection, gen, kill);
     builder.build(HashSet::new())
 }
 
@@ -121,7 +121,7 @@ struct SetsBuilder<'a, F1, F2> {
     code: &'a Code,
     in_sets: SecondaryMap<InstId, HashSet<Def>>,
     br_stack: Vec<Option<HashSet<Def>>>,
-    intersection: bool,
+    merge: Merge,
     /// 引数のInstIdがgenに含まれるかどうかを返すクロージャ
     gen: F1,
     /// 引数の集合からInstIdのkillの要素を削除するクロージャ
@@ -136,7 +136,7 @@ where
     fn new(
         code: &'a Code,
         in_sets: SecondaryMap<InstId, HashSet<Def>>,
-        intersection: bool,
+        merge: Merge,
         gen: F1,
         kill: F2,
     ) -> Self {
@@ -144,7 +144,7 @@ where
             code,
             in_sets,
             br_stack: Vec::new(),
-            intersection,
+            merge,
             gen,
             kill,
         }
@@ -208,10 +208,10 @@ where
             while let Some(block_id) = iter.next(&self.code.block_nodes) {
                 // ブロックのoutと最後の命令のoutを統合する
                 if let Some(child_out) = self.in_out_block(out.clone(), block_id) {
-                    block_out = self.merge_set_option(&block_out, &child_out);
+                    self.merge.merge_option(&mut block_out, &child_out);
                 } else {
                     // ブロックが空の場合
-                    block_out = self.merge_set_option(&block_out, out);
+                    self.merge.merge_option(&mut block_out, out);
                 }
             }
 
@@ -222,17 +222,18 @@ where
             {
                 // ブロックのoutとifブロックのinを統合する
                 // brやreturnで終わる場合はblock_outはNoneとなる
-                block_out = self.merge_set_option(&block_out, out);
+                self.merge.merge_option(&mut block_out, out);
             }
 
             if breakable {
                 if let Some(poped) = self.br_stack.pop().unwrap() {
                     if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
                         // ループならスタックブロックのoutをinに含める
-                        loop_in = Some(self.merge_set(out, &poped));
+                        loop_in = Some(poped);
+                        self.merge.merge_option(&mut loop_in, out);
                     } else {
                         let block_out = block_out.as_mut().unwrap();
-                        *block_out = self.merge_set(block_out, &poped);
+                        self.merge.merge(block_out, &poped);
                     }
                 }
             }
@@ -256,25 +257,32 @@ where
         // brなら対応するブロック命令のoutと集合を統合する
         if let InstKind::Br(depth) = self.code.insts[inst_id].kind {
             let i = self.br_stack.len() - 1 - depth as usize;
-            self.br_stack[i] = self.merge_set_option(&self.br_stack[i], out);
+            self.merge.merge_option(&mut self.br_stack[i], out);
         }
 
         loop_in
     }
+}
 
-    fn merge_set(&self, x: &HashSet<Def>, y: &HashSet<Def>) -> HashSet<Def> {
-        if self.intersection {
-            x.and(y)
-        } else {
-            x.or(y)
+/// 集合のマージ方法を指定する
+enum Merge {
+    Union,
+    Intersection,
+}
+
+impl Merge {
+    fn merge(&self, x: &mut HashSet<Def>, y: &HashSet<Def>) {
+        match self {
+            Self::Union => x.extend(y),
+            Self::Intersection => *x = x.and(y),
         }
     }
 
-    fn merge_set_option(&self, x: &Option<HashSet<Def>>, y: &HashSet<Def>) -> Option<HashSet<Def>> {
-        Some(match x {
-            Some(x) => self.merge_set(x, y),
-            None => y.clone(),
-        })
+    fn merge_option(&self, x: &mut Option<HashSet<Def>>, y: &HashSet<Def>) {
+        match x {
+            Some(x) => self.merge(x, y),
+            None => *x = Some(y.clone()),
+        }
     }
 }
 
