@@ -85,7 +85,7 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, Sets> {
 fn reaching_def_in_out(
     code: &Code,
     sets: &mut SecondaryMap<InstId, Sets>,
-    br_stack: &mut Vec<HashSet<Def>>,
+    br_stack: &mut Vec<Option<HashSet<Def>>>,
     mut prev_out: HashSet<Def>,
     block_id: BlockId,
 ) -> Option<InstId> {
@@ -120,7 +120,7 @@ fn reaching_def_in_out(
 fn reaching_def_in_out_inst(
     code: &Code,
     sets: &mut SecondaryMap<InstId, Sets>,
-    br_stack: &mut Vec<HashSet<Def>>,
+    br_stack: &mut Vec<Option<HashSet<Def>>>,
     prev_out: &HashSet<Def>,
     inst_id: InstId,
 ) {
@@ -130,21 +130,28 @@ fn reaching_def_in_out_inst(
     if code.inst_nodes[inst_id].first_child.is_some() {
         let breakable = code.insts[inst_id].breakable != Breakable::No;
         if breakable {
-            br_stack.push(HashSet::new());
+            br_stack.push(None);
         }
 
-        let mut block_out = HashSet::new();
+        let mut block_out: Option<HashSet<Def>> = None;
 
         let mut iter = code.inst_nodes[inst_id].iter();
         while let Some(block_id) = iter.next(&code.block_nodes) {
+            let child_out;
             if let Some(last_inst) =
                 reaching_def_in_out(code, sets, br_stack, prev_out.clone(), block_id)
             {
-                // ブロックのoutと最後の命令のoutとの和集合をとる
-                block_out.or_assign(&sets[last_inst].out);
+                child_out = &sets[last_inst].out;
             } else {
                 // ブロックが空の場合
-                block_out.or_assign(prev_out);
+                child_out = &prev_out;
+            }
+
+            if let Some(block_out) = &mut block_out {
+                // ブロックのoutと最後の命令のoutとの和集合をとる
+                block_out.or_assign(child_out);
+            } else {
+                block_out = Some(child_out.clone());
             }
         }
 
@@ -152,21 +159,31 @@ fn reaching_def_in_out_inst(
         let node = &code.inst_nodes[inst_id];
         if matches!(code.insts[inst_id].kind, InstKind::If) && node.first_child == node.last_child {
             // ブロックのoutとifブロックのinとの和集合をとる
-            block_out.or_assign(&sets[inst_id].in_);
+            if let Some(block_out) = block_out.as_mut() {
+                block_out.or_assign(&sets[inst_id].in_);
+            } else {
+                // brやreturnで終わる場合はblock_outはNoneとなる
+                block_out = Some(sets[inst_id].in_.clone());
+            }
         }
 
         if breakable {
-            if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
-                // ループならスタックブロックのoutをinに含める
-                let poped = br_stack.pop().unwrap();
-                sets[inst_id].in_.or_assign(&poped);
-            } else {
-                block_out.or_assign(&br_stack.pop().unwrap());
+            if let Some(poped) = br_stack.pop().unwrap() {
+                if matches!(code.insts[inst_id].kind, InstKind::Loop(_)) {
+                    // ループならスタックブロックのoutをinに含める
+                    sets[inst_id].in_.or_assign(&poped);
+                } else {
+                    block_out.as_mut().unwrap().or_assign(&poped);
+                }
             }
         }
 
         // out = gen ∪ (in ∖ kill)
-        sets[inst_id].out = sets[inst_id].gen.or(&block_out.sub(&sets[inst_id].kill));
+        if let Some(block_out) = block_out {
+            sets[inst_id].out = sets[inst_id].gen.or(&block_out.sub(&sets[inst_id].kill));
+        } else {
+            sets[inst_id].out = sets[inst_id].gen.clone();
+        }
     } else {
         // out = gen ∪ (in ∖ kill)
         sets[inst_id].out = sets[inst_id]
@@ -177,7 +194,11 @@ fn reaching_def_in_out_inst(
     // brなら対応するブロック命令のoutとの和集合をとる
     if let InstKind::Br(depth) = code.insts[inst_id].kind {
         let i = br_stack.len() - 1 - depth as usize;
-        br_stack[i].or_assign(&sets[inst_id].out);
+        if let Some(br) = &mut br_stack[i] {
+            br.or_assign(&sets[inst_id].out);
+        } else {
+            br_stack[i] = Some(sets[inst_id].out.clone());
+        }
     }
 }
 
