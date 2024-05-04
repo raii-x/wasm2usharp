@@ -5,7 +5,6 @@ use cranelift_entity::SecondaryMap;
 use crate::{
     ir::{
         code::{BlockId, Breakable, Code, Inst, InstId, InstKind},
-        node::Node,
         var::{Primary, VarId},
     },
     util::HashSetExt,
@@ -163,7 +162,8 @@ impl<'a> SetsBuilder<'a> {
         }
 
         self.code.block_nodes[block_id]
-            .last_child()
+            .last_child
+            .expand()
             .and_then(|id| match self.code.insts[id].kind {
                 InstKind::Return | InstKind::Br(_) => None,
                 _ => Some(id),

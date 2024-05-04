@@ -1,9 +1,6 @@
 use cranelift_entity::EntitySet;
 
-use crate::ir::{
-    code::{BlockId, Breakable, Code, InstId, InstKind},
-    node::Node,
-};
+use crate::ir::code::{BlockId, Breakable, Code, InstId, InstKind};
 
 /// ブロックを作る命令のbreakableを最適化する
 pub fn breakable(code: &mut Code) {

@@ -1,8 +1,8 @@
-use cranelift_entity::{entity_impl, packed_option::PackedOption, PrimaryMap, SecondaryMap};
+use cranelift_entity::{entity_impl, PrimaryMap, SecondaryMap};
 
 use super::{
     module::Module,
-    node::{node_def, Node},
+    node::Node,
     var::{Primary, VarId, Vars},
 };
 
@@ -23,7 +23,7 @@ entity_impl!(BlockId, "block");
 
 pub struct Block;
 
-node_def!(BlockNode, BlockId, InstId, InstId);
+pub type BlockNode = Node<BlockId, InstId, InstId>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub struct InstId(u32);
@@ -44,7 +44,7 @@ pub struct Inst {
     pub breakable: Breakable,
 }
 
-node_def!(InstNode, InstId, BlockId, BlockId);
+pub type InstNode = Node<InstId, BlockId, BlockId>;
 
 #[derive(Default)]
 pub enum InstKind {

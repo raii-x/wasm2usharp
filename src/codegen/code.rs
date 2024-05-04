@@ -3,7 +3,6 @@ use std::io;
 use crate::ir::{
     code::{BlockId, Breakable, Call, Code, InstId, InstKind},
     module::Module,
-    node::Node,
     BREAK_DEPTH, LOOP, STACK, STACK_TOP,
 };
 
