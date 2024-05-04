@@ -161,14 +161,21 @@ where
             if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
                 loop {
                     let prev_out = out.clone();
-                    self.in_out_inst(&mut out, inst_id);
+                    let loop_in = self.in_out_inst(&mut out, inst_id);
 
                     // ループ文ならinが前と等しくなるまで繰り返す
-                    if self.in_sets[inst_id] == prev_out {
-                        // inが更新されなければ終了
+                    if let Some(loop_in) = loop_in {
+                        if loop_in == prev_out {
+                            // inが更新されなければ終了
+                            break;
+                        } else {
+                            // 次の入力をループのinとする
+                            out = loop_in;
+                        }
+                    } else {
+                        // brでループ先頭に戻らなければ終了
                         break;
                     }
-                    out = self.in_sets[inst_id].clone();
                 }
             } else {
                 self.in_out_inst(&mut out, inst_id);
@@ -184,8 +191,9 @@ where
             })
     }
 
-    fn in_out_inst(&mut self, out: &mut HashSet<Def>, inst_id: InstId) {
+    fn in_out_inst(&mut self, out: &mut HashSet<Def>, inst_id: InstId) -> Option<HashSet<Def>> {
         self.in_sets[inst_id] = out.clone();
+        let mut loop_in = None;
 
         // 子ブロック
         if self.code.inst_nodes[inst_id].first_child.is_some() {
@@ -214,14 +222,14 @@ where
             {
                 // ブロックのoutとifブロックのinを統合する
                 // brやreturnで終わる場合はblock_outはNoneとなる
-                block_out = self.merge_set_option(&block_out, &self.in_sets[inst_id]);
+                block_out = self.merge_set_option(&block_out, out);
             }
 
             if breakable {
                 if let Some(poped) = self.br_stack.pop().unwrap() {
                     if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
                         // ループならスタックブロックのoutをinに含める
-                        self.in_sets[inst_id] = self.merge_set(&self.in_sets[inst_id], &poped);
+                        loop_in = Some(self.merge_set(out, &poped));
                     } else {
                         let block_out = block_out.as_mut().unwrap();
                         *block_out = self.merge_set(block_out, &poped);
@@ -250,6 +258,8 @@ where
             let i = self.br_stack.len() - 1 - depth as usize;
             self.br_stack[i] = self.merge_set_option(&self.br_stack[i], out);
         }
+
+        loop_in
     }
 
     fn merge_set(&self, x: &HashSet<Def>, y: &HashSet<Def>) -> HashSet<Def> {
