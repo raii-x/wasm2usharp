@@ -48,6 +48,7 @@ node_def!(InstNode, InstId, BlockId, BlockId);
 
 #[derive(Default)]
 pub enum InstKind {
+    Nop,
     #[default]
     Stmt,
     Expr,

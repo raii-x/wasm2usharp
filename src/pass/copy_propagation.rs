@@ -4,7 +4,7 @@ use cranelift_entity::SecondaryMap;
 
 use crate::{
     ir::{
-        code::{BlockId, Breakable, Code, InstId, InstKind},
+        code::{BlockId, Breakable, Code, Inst, InstId, InstKind},
         node::Node,
         var::{Primary, VarId},
     },
@@ -28,8 +28,9 @@ enum Def {
 }
 
 pub fn copy_propagation(code: &mut Code) {
-    reaching_def(code);
-    copy(code);
+    let reach_sets = reaching_def(code);
+    let copy_sets = copy(code);
+    replace_copy(code, &reach_sets, &copy_sets);
 }
 
 fn reaching_def(code: &mut Code) -> SecondaryMap<InstId, ReachSets> {
@@ -345,6 +346,76 @@ fn copy_in_out_inst(
     }
 }
 
+/// コピー先の変数をコピー元に置き換え、不要なコピー文を削除できるなら削除する
+fn replace_copy(
+    code: &mut Code,
+    reach_sets: &SecondaryMap<InstId, ReachSets>,
+    copy_sets: &SecondaryMap<InstId, CopySets>,
+) {
+    for (copy_inst_id, inst_copy_sets) in copy_sets.iter() {
+        if inst_copy_sets.gen.is_empty() {
+            // inst_idがコピーではない
+            continue;
+        }
+
+        let Primary::Var(src) = code.insts[copy_inst_id].params[0] else {
+            unreachable!()
+        };
+        let dst = code.insts[copy_inst_id].result.unwrap();
+
+        let mut removable = true;
+
+        for (reach_inst_id, inst_reach_sets) in reach_sets.iter() {
+            if !inst_reach_sets.in_.contains(&Def::Inst(copy_inst_id)) {
+                // コピー文がreach_inst_idの文に到達可能ではない
+                continue;
+            }
+
+            let inst = &mut code.insts[reach_inst_id];
+
+            // reach_inst_idの文でコピー先の変数を使用しているかどうか
+            if inst.params.contains(&dst.into())
+                || inst
+                    .call
+                    .as_ref()
+                    .is_some_and(|c| c.recursive && c.save_vars.contains(&dst))
+            {
+                if copy_sets[reach_inst_id].in_.contains(&copy_inst_id) {
+                    // paramsをコピー元の変数に書き換え
+                    for p in &mut inst.params {
+                        match p {
+                            Primary::Var(p) if *p == dst => *p = src,
+                            _ => (),
+                        }
+                    }
+
+                    // save_varをコピー元の変数に書き換え
+                    if let Some(call) = &mut inst.call {
+                        if call.recursive {
+                            for save_var in &mut call.save_vars {
+                                if *save_var == dst {
+                                    *save_var = src;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // copyのinの集合に含まれないものがある場合は、コピー文の削除を行わない
+                    removable = false;
+                }
+            }
+        }
+
+        if removable {
+            // コピー文を削除
+            code.insts[copy_inst_id] = Inst {
+                kind: InstKind::Nop,
+                ..Default::default()
+            };
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -354,14 +425,14 @@ mod tests {
     use crate::{
         ir::{
             builder::Builder,
-            code::{Breakable, InstId},
+            code::{Breakable, Code, InstId, InstKind},
             ty::Const,
             var::{Var, VarId},
         },
         pass::copy_propagation::ReachSets,
     };
 
-    use super::{copy, reaching_def, CopySets, Def};
+    use super::{copy, reaching_def, replace_copy, CopySets, Def};
 
     #[test]
     fn copy_propagation_block() {
@@ -829,6 +900,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn copy_propagation_add() {
+        // func(v1, v2)
+        // 0: v3 = v1
+        // 1: v4 = v2;
+        // 2: v5 = v3 + v4;
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v3 = builder.new_var(Var {
+            ..Default::default()
+        });
+        let v4 = builder.new_var(Var {
+            ..Default::default()
+        });
+        let v5 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_set(v3, v1.into()); // 0
+        builder.push_set(v4, v2.into()); // 1
+        builder.push_set_pattern(v5, "$p0 + $p1", vec![v3.into(), v4.into()]); // 2
+
+        let mut code = builder.build();
+
+        let reach_sets = reaching_def(&mut code);
+        let copy_sets = copy(&mut code);
+        replace_copy(&mut code, &reach_sets, &copy_sets);
+
+        code_eq_nop(&code, &[true, true, false]);
+    }
+
     /// (gen, kill, in, out)
     /// -1以下ならDef::Header(-i + 1)となる
     type SetArrs<'a> = (&'a [i32], &'a [i32], &'a [i32], &'a [i32]);
@@ -903,5 +1014,15 @@ mod tests {
             actual,
             expected
         );
+    }
+
+    /// コードの各命令がnopか確認する
+    fn code_eq_nop(code: &Code, expected: &[bool]) {
+        let actual = code
+            .insts
+            .iter()
+            .map(|(_, inst)| matches!(inst.kind, InstKind::Nop))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
     }
 }

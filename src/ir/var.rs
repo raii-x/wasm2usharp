@@ -35,7 +35,7 @@ impl fmt::Display for VarId {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum Primary {
     Var(VarId),
     Const(Const),

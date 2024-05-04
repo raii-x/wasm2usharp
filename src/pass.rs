@@ -13,6 +13,8 @@ use self::{
 };
 
 pub fn run_passes(module: &mut Module<'_>) {
+    recursive(module);
+
     for func in module.all_funcs.iter_mut() {
         let Some(code) = func.code.as_mut() else {
             continue;
@@ -23,6 +25,4 @@ pub fn run_passes(module: &mut Module<'_>) {
         remove_unused_vars(code);
         remove_unused_break_depth(code);
     }
-
-    recursive(module);
 }

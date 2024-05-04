@@ -42,6 +42,7 @@ fn codegen_inst(
     }
 
     match &inst.kind {
+        InstKind::Nop => {}
         InstKind::Stmt => {
             writeln!(f, "{}", pattern)?;
         }
