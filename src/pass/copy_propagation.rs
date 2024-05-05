@@ -422,6 +422,11 @@ fn replace_copy(
                 kind: InstKind::Nop,
                 ..Default::default()
             };
+
+            // 2つの変数のdefaultを合わせる
+            if code.vars[src].default.is_none() && code.vars[dst].default.is_some() {
+                code.vars[src].default = code.vars[dst].default;
+            }
         }
     }
 }
