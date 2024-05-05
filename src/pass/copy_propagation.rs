@@ -383,45 +383,40 @@ fn replace_copy(
         };
         let dst = code.insts[copy_inst_id].result.unwrap();
 
-        let mut removable = true;
-
         if let Some(uses) = def_uses.get(&Def::Inst(copy_inst_id)) {
+            if uses.len() != copy_uses[copy_inst_id].len() {
+                // 変数の全ての使用が置き換え可能でなければ置き換えを行わない
+                continue;
+            }
+
             for &use_inst_id in uses {
                 let use_inst = &mut code.insts[use_inst_id];
 
-                if copy_uses[copy_inst_id].contains(&use_inst_id) {
-                    // paramsをコピー元の変数に書き換え
-                    for p in &mut use_inst.params {
-                        match p {
-                            Primary::Var(p) if *p == dst => *p = src,
-                            _ => (),
-                        }
+                // paramsをコピー元の変数に書き換え
+                for p in &mut use_inst.params {
+                    match p {
+                        Primary::Var(p) if *p == dst => *p = src,
+                        _ => (),
                     }
+                }
 
-                    // save_varをコピー元の変数に書き換え
-                    if let Some(call) = &mut use_inst.call {
-                        if call.recursive {
-                            for save_var in &mut call.save_vars {
-                                if *save_var == dst {
-                                    *save_var = src;
-                                }
+                // save_varをコピー元の変数に書き換え
+                if let Some(call) = &mut use_inst.call {
+                    if call.recursive {
+                        for save_var in &mut call.save_vars {
+                            if *save_var == dst {
+                                *save_var = src;
                             }
                         }
                     }
+                }
 
-                    if is_copy(use_inst) {
-                        // コピー文の右辺が置き換えられる場合はcopy_usesを更新する
-                        copy_uses[use_inst_id] =
-                            copy_uses[use_inst_id].and(&copy_uses[copy_inst_id]);
-                    }
-                } else {
-                    // copyのinの集合に含まれないものがある場合は、コピー文の削除を行わない
-                    removable = false;
+                if is_copy(use_inst) {
+                    // コピー文の右辺が置き換えられる場合はcopy_usesを更新する
+                    copy_uses[use_inst_id] = copy_uses[use_inst_id].and(&copy_uses[copy_inst_id]);
                 }
             }
-        }
 
-        if removable {
             // コピー文を削除
             code.insts[copy_inst_id] = Inst {
                 kind: InstKind::Nop,
