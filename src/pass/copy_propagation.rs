@@ -156,17 +156,20 @@ where
         self.in_out_block(prev_out, self.code.root);
     }
 
-    fn in_out_block(&mut self, mut out: HashSet<Def>, block_id: BlockId) -> Option<HashSet<Def>> {
+    fn in_out_block(&mut self, out: HashSet<Def>, block_id: BlockId) -> Option<HashSet<Def>> {
+        let mut out_opt = Some(out);
         let mut iter = self.code.block_nodes[block_id].iter();
         while let Some(inst_id) = iter.next(&self.code.inst_nodes) {
+            let Some(mut out) = out_opt else { break };
+
             if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
                 loop {
-                    let prev_out = out.clone();
-                    let loop_in = self.in_out_inst(&mut out, inst_id);
+                    let loop_in;
+                    (out_opt, loop_in) = self.in_out_inst(out.clone(), inst_id);
 
                     // ループ文ならinが前と等しくなるまで繰り返す
                     if let Some(loop_in) = loop_in {
-                        if loop_in == prev_out {
+                        if loop_in == out {
                             // inが更新されなければ終了
                             break;
                         } else {
@@ -179,21 +182,21 @@ where
                     }
                 }
             } else {
-                self.in_out_inst(&mut out, inst_id);
+                (out_opt, _) = self.in_out_inst(out, inst_id);
             }
         }
 
-        self.code.block_nodes[block_id]
-            .last_child
-            .expand()
-            .and_then(|id| match self.code.insts[id].kind {
-                InstKind::Return | InstKind::Br(_) => None,
-                _ => Some(out),
-            })
+        out_opt
     }
 
-    fn in_out_inst(&mut self, out: &mut HashSet<Def>, inst_id: InstId) -> Option<HashSet<Def>> {
-        (self.in_)(inst_id, out);
+    /// (この命令のout、更新されたループ文のin)を返す
+    /// 命令のoutは、brかreturn命令の際はNoneとなる
+    fn in_out_inst(
+        &mut self,
+        mut out: HashSet<Def>,
+        inst_id: InstId,
+    ) -> (Option<HashSet<Def>>, Option<HashSet<Def>>) {
+        (self.in_)(inst_id, &mut out);
 
         let mut loop_in = None;
 
@@ -213,7 +216,7 @@ where
                     self.merge.merge_option(&mut block_out, &child_out);
                 } else {
                     // ブロックが空の場合
-                    self.merge.merge_option(&mut block_out, out);
+                    self.merge.merge_option(&mut block_out, &out);
                 }
             }
 
@@ -224,7 +227,7 @@ where
             {
                 // ブロックのoutとifブロックのinを統合する
                 // brやreturnで終わる場合はblock_outはNoneとなる
-                self.merge.merge_option(&mut block_out, out);
+                self.merge.merge_option(&mut block_out, &out);
             }
 
             if breakable {
@@ -232,7 +235,7 @@ where
                     if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
                         // ループならスタックブロックのoutをinに含める
                         loop_in = Some(poped);
-                        self.merge.merge_option(&mut loop_in, out);
+                        self.merge.merge_option(&mut loop_in, &out);
                     } else {
                         let block_out = block_out.as_mut().unwrap();
                         self.merge.merge(block_out, &poped);
@@ -242,27 +245,32 @@ where
 
             // out = gen ∪ (in ∖ kill)
             if let Some(block_out) = block_out {
-                *out = block_out;
-                (self.kill)(inst_id, out); // in ∖ kill
+                out = block_out;
+                (self.kill)(inst_id, &mut out); // in ∖ kill
             } else {
-                *out = HashSet::new();
+                out = HashSet::new();
             }
         } else {
             // out = gen ∪ (in ∖ kill)
-            (self.kill)(inst_id, out); // in ∖ kill
+            (self.kill)(inst_id, &mut out); // in ∖ kill
         }
 
         if (self.gen)(inst_id) {
             out.insert(Def::Inst(inst_id)); // ∪ gen
         }
 
-        // brなら対応するブロック命令のoutと集合を統合する
-        if let InstKind::Br(depth) = self.code.insts[inst_id].kind {
-            let i = self.br_stack.len() - 1 - depth as usize;
-            self.merge.merge_option(&mut self.br_stack[i], out);
-        }
+        let out_opt = match self.code.insts[inst_id].kind {
+            InstKind::Br(depth) => {
+                // brなら対応するブロック命令のoutと集合を統合する
+                let i = self.br_stack.len() - 1 - depth as usize;
+                self.merge.merge_option_move(&mut self.br_stack[i], out);
+                None
+            }
+            InstKind::Return => None,
+            _ => Some(out),
+        };
 
-        loop_in
+        (out_opt, loop_in)
     }
 }
 
@@ -284,6 +292,13 @@ impl Merge {
         match x {
             Some(x) => self.merge(x, y),
             None => *x = Some(y.clone()),
+        }
+    }
+
+    fn merge_option_move(&self, x: &mut Option<HashSet<Def>>, y: HashSet<Def>) {
+        match x {
+            Some(x) => self.merge(x, &y),
+            None => *x = Some(y),
         }
     }
 }
