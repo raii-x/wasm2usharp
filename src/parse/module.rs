@@ -318,8 +318,8 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
         let value = match op_iter.next().unwrap().unwrap() {
             I32Const { value } => Const::Int(value).to_string(),
             I64Const { value } => Const::Long(value).to_string(),
-            F32Const { value } => Const::Float(f32::from_bits(value.bits())).to_string(),
-            F64Const { value } => Const::Double(f64::from_bits(value.bits())).to_string(),
+            F32Const { value } => Const::Float(value.bits()).to_string(),
+            F64Const { value } => Const::Double(value.bits()).to_string(),
             GlobalGet { global_index } => {
                 self.module.globals[global_index as usize].name.to_string()
             }

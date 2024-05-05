@@ -1277,12 +1277,12 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_f32_const(&mut self, value: Ieee32) -> Self::Output {
-        self.push_stack(Const::Float(f32::from_bits(value.bits())).into());
+        self.push_stack(Const::Float(value.bits()).into());
         Ok(())
     }
 
     fn visit_f64_const(&mut self, value: Ieee64) -> Self::Output {
-        self.push_stack(Const::Double(f64::from_bits(value.bits())).into());
+        self.push_stack(Const::Double(value.bits()).into());
         Ok(())
     }
 
