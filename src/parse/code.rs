@@ -953,7 +953,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         self.unreachable = 1;
         let opnd = self.pop_stack();
 
-        self.builder.push_switch(opnd, Breakable::Single);
+        self.builder.push_switch(opnd, Breakable::Multi);
 
         for (i, target) in targets.targets().enumerate() {
             // case i:
