@@ -1,5 +1,6 @@
 mod code;
 mod module;
+mod pool;
 
 use std::collections::HashSet;
 
