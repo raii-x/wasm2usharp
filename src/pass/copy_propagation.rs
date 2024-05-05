@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use cranelift_entity::SecondaryMap;
 
@@ -19,12 +19,23 @@ enum Def {
 }
 
 pub fn copy_propagation(code: &mut Code) {
-    let reach_sets = reaching_def(code);
+    let (use_defs, def_uses) = reaching_def(
+        code,
+        #[cfg(test)]
+        None,
+    );
     let copy_sets = copy(code);
-    replace_copy(code, &reach_sets, &copy_sets);
+    replace_copy(code, &use_defs, &def_uses, &copy_sets);
 }
 
-fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
+/// テスト時には引数のin_setsにReaching definitionのinを出力する
+fn reaching_def(
+    code: &Code,
+    #[cfg(test)] mut in_sets: Option<&mut SecondaryMap<InstId, HashSet<Def>>>,
+) -> (
+    SecondaryMap<InstId, HashSet<Def>>,
+    HashMap<Def, HashSet<InstId>>,
+) {
     // 全ての変数について、その変数への代入文の集合を求める
     let mut var_def = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
@@ -42,8 +53,6 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
         }
     }
 
-    let mut in_sets = SecondaryMap::<_, HashSet<Def>>::with_capacity(code.insts.len());
-
     let gen = |inst_id| code.insts[inst_id].result.is_some();
     let kill = |inst_id, set: &mut HashSet<Def>| {
         if let Some(result) = code.insts[inst_id].result {
@@ -59,11 +68,45 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
         }
     };
 
-    for (inst_id, in_) in in_sets.iter_mut() {
-        if gen(inst_id) {
-            in_.insert(Def::Inst(inst_id));
+    let mut use_defs: SecondaryMap<InstId, HashSet<Def>> =
+        SecondaryMap::with_capacity(code.insts.len());
+    let mut def_uses: HashMap<Def, HashSet<InstId>> = HashMap::with_capacity(code.insts.len());
+
+    let mut in_add_var = |inst_id, out: &HashSet<Def>, var_id| {
+        for def in &var_def[var_id] {
+            if out.contains(def) {
+                use_defs[inst_id].insert(*def);
+                def_uses.entry(*def).or_default().insert(inst_id);
+            }
         }
-    }
+    };
+
+    let in_ = |inst_id, out: &HashSet<Def>| {
+        #[cfg(test)]
+        if let Some(in_sets) = &mut in_sets {
+            // Reaching definitionのinを出力
+            in_sets[inst_id] = out.clone();
+        }
+
+        let inst = &code.insts[inst_id];
+
+        // outにparamsの変数が含まれているかチェック
+        for param in &inst.params {
+            let Primary::Var(var_id) = param else {
+                continue;
+            };
+            in_add_var(inst_id, out, *var_id);
+        }
+
+        // outにsave_varsの変数が含まれているかチェック
+        if let Some(call) = &inst.call {
+            if call.recursive {
+                for var_id in &call.save_vars {
+                    in_add_var(inst_id, out, *var_id);
+                }
+            }
+        }
+    };
 
     // ローカル変数の初期値をprev_outに設定
     let mut prev_out = HashSet::new();
@@ -73,11 +116,9 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
         }
     }
 
-    let in_ = |inst_id, out: &HashSet<_>| in_sets[inst_id] = out.clone();
-
     let builder = SetsBuilder::new(code, Merge::Union, gen, kill, in_);
     builder.build(prev_out);
-    in_sets
+    (use_defs, def_uses)
 }
 
 fn copy(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
@@ -313,10 +354,11 @@ fn is_copy(inst: &Inst) -> bool {
 /// コピー先の変数をコピー元に置き換え、不要なコピー文を削除できるなら削除する
 fn replace_copy(
     code: &mut Code,
-    reach_sets: &SecondaryMap<InstId, HashSet<Def>>,
+    _use_defs: &SecondaryMap<InstId, HashSet<Def>>,
+    def_uses: &HashMap<Def, HashSet<InstId>>,
     copy_sets: &SecondaryMap<InstId, HashSet<Def>>,
 ) {
-    for (copy_inst_id, _) in copy_sets.iter() {
+    for copy_inst_id in code.insts.keys() {
         if !is_copy(&code.insts[copy_inst_id]) {
             // inst_idがコピーではない
             continue;
@@ -329,24 +371,13 @@ fn replace_copy(
 
         let mut removable = true;
 
-        for (reach_inst_id, inst_reach_sets) in reach_sets.iter() {
-            if !inst_reach_sets.contains(&Def::Inst(copy_inst_id)) {
-                // コピー文がreach_inst_idの文に到達可能ではない
-                continue;
-            }
+        if let Some(uses) = def_uses.get(&Def::Inst(copy_inst_id)) {
+            for &use_inst_id in uses {
+                let use_inst = &mut code.insts[use_inst_id];
 
-            let inst = &mut code.insts[reach_inst_id];
-
-            // reach_inst_idの文でコピー先の変数を使用しているかどうか
-            if inst.params.contains(&dst.into())
-                || inst
-                    .call
-                    .as_ref()
-                    .is_some_and(|c| c.recursive && c.save_vars.contains(&dst))
-            {
-                if copy_sets[reach_inst_id].contains(&Def::Inst(copy_inst_id)) {
+                if copy_sets[use_inst_id].contains(&Def::Inst(copy_inst_id)) {
                     // paramsをコピー元の変数に書き換え
-                    for p in &mut inst.params {
+                    for p in &mut use_inst.params {
                         match p {
                             Primary::Var(p) if *p == dst => *p = src,
                             _ => (),
@@ -354,7 +385,7 @@ fn replace_copy(
                     }
 
                     // save_varをコピー元の変数に書き換え
-                    if let Some(call) = &mut inst.call {
+                    if let Some(call) = &mut use_inst.call {
                         if call.recursive {
                             for save_var in &mut call.save_vars {
                                 if *save_var == dst {
@@ -428,7 +459,8 @@ mod tests {
 
         let code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[
@@ -489,7 +521,8 @@ mod tests {
 
         let code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[
@@ -546,7 +579,8 @@ mod tests {
 
         let code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[(0, &[-1, -2]), (1, &[-1, -2]), (2, &[-1, 1, -2])],
@@ -602,7 +636,8 @@ mod tests {
 
         let code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[
@@ -669,7 +704,8 @@ mod tests {
 
         let code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[
@@ -718,10 +754,8 @@ mod tests {
 
         let code = builder.build();
 
-        reaching_def(&code);
-        copy(&code);
-
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[(0, &[]), (1, &[]), (2, &[1]), (3, &[1, 2])],
@@ -766,7 +800,8 @@ mod tests {
 
         let code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[
@@ -814,7 +849,8 @@ mod tests {
 
         let code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[(0, &[-1]), (1, &[-1, 0]), (2, &[-1, 0])],
@@ -858,9 +894,10 @@ mod tests {
 
         let mut code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        let (use_defs, def_uses) = reaching_def(&code, Some(&mut reach_sets));
         let copy_sets = copy(&code);
-        replace_copy(&mut code, &reach_sets, &copy_sets);
+        replace_copy(&mut code, &use_defs, &def_uses, &copy_sets);
 
         code_eq_nop(&code, &[true, true, false]);
     }
@@ -898,7 +935,8 @@ mod tests {
 
         let mut code = builder.build();
 
-        let reach_sets = reaching_def(&code);
+        let mut reach_sets = SecondaryMap::new();
+        let (use_defs, def_uses) = reaching_def(&code, Some(&mut reach_sets));
         set_eq(
             &reach_sets,
             &[
@@ -918,7 +956,7 @@ mod tests {
             "copy",
         );
 
-        replace_copy(&mut code, &reach_sets, &copy_sets);
+        replace_copy(&mut code, &use_defs, &def_uses, &copy_sets);
 
         // TODO: このテストを通るようにする
         // code_eq_nop(&code, &[true, false, false, false, false]);
