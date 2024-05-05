@@ -24,8 +24,8 @@ pub fn copy_propagation(code: &mut Code) {
         #[cfg(test)]
         None,
     );
-    let copy_sets = copy(code);
-    replace_copy(code, &use_defs, &def_uses, &copy_sets);
+    let copy_in = copy(code);
+    replace_copy(code, &use_defs, &def_uses, &copy_in);
 }
 
 /// テスト時には引数のin_setsにReaching definitionのinを出力する
@@ -356,8 +356,22 @@ fn replace_copy(
     code: &mut Code,
     _use_defs: &SecondaryMap<InstId, HashSet<Def>>,
     def_uses: &HashMap<Def, HashSet<InstId>>,
-    copy_sets: &SecondaryMap<InstId, HashSet<Def>>,
+    copy_in: &SecondaryMap<InstId, HashSet<Def>>,
 ) {
+    // コピー文がキー、そのコピーが使用されている文の集合が値
+    let mut copy_uses: SecondaryMap<InstId, HashSet<InstId>> =
+        SecondaryMap::with_capacity(code.insts.len());
+
+    for copy_inst_id in code.insts.keys() {
+        if let Some(uses) = def_uses.get(&Def::Inst(copy_inst_id)) {
+            for &use_inst_id in uses {
+                if copy_in[use_inst_id].contains(&Def::Inst(copy_inst_id)) {
+                    copy_uses[copy_inst_id].insert(use_inst_id);
+                }
+            }
+        }
+    }
+
     for copy_inst_id in code.insts.keys() {
         if !is_copy(&code.insts[copy_inst_id]) {
             // inst_idがコピーではない
@@ -375,7 +389,7 @@ fn replace_copy(
             for &use_inst_id in uses {
                 let use_inst = &mut code.insts[use_inst_id];
 
-                if copy_sets[use_inst_id].contains(&Def::Inst(copy_inst_id)) {
+                if copy_uses[copy_inst_id].contains(&use_inst_id) {
                     // paramsをコピー元の変数に書き換え
                     for p in &mut use_inst.params {
                         match p {
@@ -393,6 +407,12 @@ fn replace_copy(
                                 }
                             }
                         }
+                    }
+
+                    if is_copy(use_inst) {
+                        // コピー文の右辺が置き換えられる場合はcopy_usesを更新する
+                        copy_uses[use_inst_id] =
+                            copy_uses[use_inst_id].and(&copy_uses[copy_inst_id]);
                     }
                 } else {
                     // copyのinの集合に含まれないものがある場合は、コピー文の削除を行わない
@@ -957,9 +977,7 @@ mod tests {
         );
 
         replace_copy(&mut code, &use_defs, &def_uses, &copy_sets);
-
-        // TODO: このテストを通るようにする
-        // code_eq_nop(&code, &[true, false, false, false, false]);
+        code_eq_nop(&code, &[true, false, false, false, false]);
     }
 
     /// 集合が等しいか確認する
