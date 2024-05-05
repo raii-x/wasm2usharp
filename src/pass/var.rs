@@ -55,6 +55,8 @@ pub fn remove_unused_break_depth(code: &mut Code) {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use cranelift_entity::EntityRef;
 
     use crate::ir::{
@@ -85,8 +87,8 @@ mod tests {
             Call {
                 func: 0,
                 recursive: true,
-                save_vars: vec![var0, var1, var2],
-                save_loop_vars: vec![],
+                save_vars: HashSet::from([var0, var1, var2]),
+                save_loop_vars: HashSet::new(),
             },
             vec![],
             None,
@@ -103,7 +105,7 @@ mod tests {
         assert!(code.vars[var2].used);
         assert_eq!(
             code.insts[InstId::new(0)].call.as_ref().unwrap().save_vars,
-            vec![var1, var2]
+            HashSet::from([var1, var2])
         );
     }
 }

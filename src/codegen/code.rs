@@ -42,6 +42,7 @@ fn codegen_inst(
     }
 
     match &inst.kind {
+        InstKind::Nop => {}
         InstKind::Stmt => {
             writeln!(f, "{}", pattern)?;
         }
@@ -105,36 +106,21 @@ fn codegen_inst(
             }
             writeln!(f, "break;")?;
         }
-        InstKind::Switch(cases) => {
+        InstKind::Switch => {
             writeln!(f, "switch ({pattern}) {{")?;
 
-            let mut next_block_id = node.first_child;
-            let mut i = 0;
-            while let Some(block_id) = next_block_id.expand() {
-                if let Some(case) = cases[i] {
-                    writeln!(f, "case {case}:")?;
-                } else {
-                    writeln!(f, "default:")?;
-                }
-
+            let mut iter = node.iter();
+            while let Some(block_id) = iter.next(&code.block_nodes) {
                 codegen_block(f, code, block_id, module, in_block)?;
-
-                let block = &code.block_nodes[block_id];
-
-                // 命令がない、または最後の命令がbrではない場合にbreak
-                if block
-                    .last_child
-                    .expand()
-                    .map_or(true, |id| !matches!(code.insts[id].kind, InstKind::Br(..)))
-                {
-                    writeln!(f, "break;")?;
-                }
-
-                next_block_id = block.next;
-                i += 1;
             }
 
             writeln!(f, "}}")?;
+        }
+        InstKind::Case => {
+            writeln!(f, "case {pattern}:")?;
+        }
+        InstKind::Default => {
+            writeln!(f, "default:")?;
         }
     }
 
@@ -151,24 +137,31 @@ fn codegen_inst(
 
 fn push_save_vars(f: &mut dyn io::Write, call: &Call) -> io::Result<()> {
     if call.recursive && !call.save_vars.is_empty() {
+        let mut save_vars = call.save_vars.iter().copied().collect::<Vec<_>>();
+        save_vars.sort();
+
         // ローカル変数保存用のスタックにプッシュ
-        for (i, &var) in call.save_vars.iter().enumerate() {
+        for (i, &var) in save_vars.iter().enumerate() {
             write!(f, "{STACK}[{STACK_TOP}")?;
             if i != 0 {
                 write!(f, " + {i}")?;
             }
             writeln!(f, "] = {var};")?;
         }
-        writeln!(f, "{STACK_TOP} += {};", call.save_vars.len())?;
+        writeln!(f, "{STACK_TOP} += {};", save_vars.len())?;
     }
     Ok(())
 }
 
 fn pop_save_vars(f: &mut dyn io::Write, call: &Call, code: &Code) -> io::Result<()> {
     if call.recursive && !call.save_vars.is_empty() {
-        writeln!(f, "{STACK_TOP} -= {};", call.save_vars.len())?;
+        let mut save_vars = call.save_vars.iter().copied().collect::<Vec<_>>();
+        save_vars.sort();
+
+        writeln!(f, "{STACK_TOP} -= {};", save_vars.len())?;
+
         // ローカル変数保存用のスタックからポップ
-        for (i, &var_id) in call.save_vars.iter().enumerate() {
+        for (i, &var_id) in save_vars.iter().enumerate() {
             write!(
                 f,
                 "{var_id} = ({}){STACK}[{STACK_TOP}",
@@ -180,8 +173,11 @@ fn pop_save_vars(f: &mut dyn io::Write, call: &Call, code: &Code) -> io::Result<
             writeln!(f, "];")?;
         }
 
+        let mut save_loop_vars = call.save_loop_vars.iter().copied().collect::<Vec<_>>();
+        save_loop_vars.sort();
+
         // ループ変数を元に戻す
-        for i in &call.save_loop_vars {
+        for i in &save_loop_vars {
             writeln!(f, "{LOOP}{i} = true;")?;
         }
     }

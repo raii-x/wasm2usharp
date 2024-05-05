@@ -126,7 +126,7 @@ impl fmt::Display for CsType {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Const {
     Bool(bool),
     Byte(u8),

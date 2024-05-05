@@ -128,6 +128,22 @@ impl Builder {
         });
     }
 
+    pub fn push_block(&mut self, breakable: Breakable) {
+        self.push(Inst {
+            kind: InstKind::Block,
+            breakable,
+            ..Default::default()
+        });
+    }
+
+    pub fn push_loop(&mut self, loop_var: usize, breakable: Breakable) {
+        self.push(Inst {
+            kind: InstKind::Loop(loop_var),
+            breakable,
+            ..Default::default()
+        });
+    }
+
     pub fn push_if(&mut self, cond: Primary, breakable: Breakable) {
         self.push(Inst {
             kind: InstKind::If,
@@ -141,6 +157,32 @@ impl Builder {
     pub fn push_br(&mut self, depth: u32) {
         self.push(Inst {
             kind: InstKind::Br(depth),
+            ..Default::default()
+        });
+    }
+
+    pub fn push_switch(&mut self, param: Primary, breakable: Breakable) {
+        self.push(Inst {
+            kind: InstKind::Switch,
+            pattern: "$p0".to_string(),
+            params: vec![param],
+            breakable,
+            ..Default::default()
+        });
+    }
+
+    pub fn push_case(&mut self, param: Primary) {
+        self.push(Inst {
+            kind: InstKind::Case,
+            pattern: "$p0".to_string(),
+            params: vec![param],
+            ..Default::default()
+        });
+    }
+
+    pub fn push_default(&mut self) {
+        self.push(Inst {
+            kind: InstKind::Default,
             ..Default::default()
         });
     }

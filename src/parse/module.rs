@@ -9,7 +9,7 @@ use wasmparser::{
 use crate::{
     ir::{
         builder::Builder,
-        code::{Call, Inst, InstKind},
+        code::{Breakable, Call, Inst, InstKind},
         module::{Data, Element, Func, FuncHeader, Global, Memory, Module, Table},
         trap,
         ty::{Const, CsType},
@@ -371,10 +371,12 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
                 builder.push(Inst {
-                    pattern: format!("if ({table_name}[$p0] is uint) {{"),
+                    kind: InstKind::If,
+                    pattern: format!("{table_name}[$p0] is uint"),
                     params: vec![index_var_id.into()],
                     ..Default::default()
                 });
+                builder.start_block();
             }
 
             // 関数呼び出し用の引数リスト
@@ -399,11 +401,13 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 }
             } else {
                 builder.push(Inst {
+                    kind: InstKind::Switch,
                     pattern: format!(
-                        "switch ({}{table_name}[$p0]) {{",
+                        "{}{table_name}[$p0]",
                         if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
                     ),
                     params: vec![index_var_id.into()],
+                    breakable: Breakable::Single,
                     ..Default::default()
                 });
 
@@ -417,12 +421,11 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                 };
 
                 for i in cases {
-                    builder.push_line(format!("case {}:", i + 1));
+                    builder.start_block();
+                    builder.push_case(Const::UInt(i as u32 + 1).into());
                     let call = Call {
                         func: i,
-                        recursive: false,
-                        save_vars: vec![],
-                        save_loop_vars: vec![],
+                        ..Default::default()
                     };
                     builder.push_call(call, params_no_index.clone(), result);
 
@@ -430,9 +433,11 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                         Some(id) => builder.push_return(Some(id.into())),
                         None => builder.push_return(None),
                     }
+                    builder.end_block();
                 }
 
-                builder.push_line("default:");
+                builder.start_block();
+                builder.push_default();
                 builder.push_line(trap(self.module, "invalid table value"));
                 match result {
                     Some(id) => {
@@ -440,12 +445,12 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     }
                     None => builder.push_return(None),
                 }
-
-                builder.push_line("}");
+                builder.end_block();
             }
 
             if use_delegate {
-                builder.push_line("} else {");
+                builder.end_block();
+                builder.start_block();
 
                 // delegateに変換して呼び出し
                 let del = func_delegate(ty);
@@ -475,7 +480,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     });
                 }
 
-                builder.push_line("}");
+                builder.end_block();
             }
 
             let index = self.module.all_funcs.len();
@@ -555,9 +560,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             // start関数の呼び出し
             let call = Call {
                 func: start_func,
-                recursive: false,
-                save_vars: vec![],
-                save_loop_vars: vec![],
+                ..Default::default()
             };
             builder.push_call(call, vec![], None);
         }

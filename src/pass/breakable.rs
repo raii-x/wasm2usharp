@@ -1,9 +1,6 @@
 use cranelift_entity::EntitySet;
 
-use crate::ir::{
-    code::{BlockId, Breakable, Code, InstId, InstKind},
-    node::Node,
-};
+use crate::ir::code::{BlockId, Breakable, Code, InstId, InstKind};
 
 /// ブロックを作る命令のbreakableを最適化する
 pub fn breakable(code: &mut Code) {
@@ -69,7 +66,7 @@ fn reduce_depth(
                 0
             };
 
-            if !matches!(inst.kind, InstKind::Loop(_) | InstKind::Switch(_))
+            if !matches!(inst.kind, InstKind::Loop(_) | InstKind::Switch)
                 && !targets.contains(inst_id)
             {
                 // この命令の子孫のbreakを1減らす

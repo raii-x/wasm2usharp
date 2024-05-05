@@ -1,4 +1,4 @@
-use std::vec;
+use std::{collections::HashSet, vec};
 
 use anyhow::Result;
 use wasmparser::{
@@ -192,7 +192,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         self.builder.push_call(call, params, result);
     }
 
-    fn get_save_vars(&self) -> Vec<VarId> {
+    fn get_save_vars(&self) -> HashSet<VarId> {
         let locals = self
             .builder
             .code
@@ -211,7 +211,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         locals.chain(stack_vars).collect()
     }
 
-    fn get_save_loop_vars(&self) -> Vec<usize> {
+    fn get_save_loop_vars(&self) -> HashSet<usize> {
         self.blocks
             .iter()
             .filter_map(|block| block.loop_var)
@@ -759,7 +759,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
                 self.builder.push_set_pattern(
                     result,
                     format!(
-                    "{opnd} < 0 ? {cast_ty}(({opnd_ty_u})($p0 & {}) + {only_msb}) : {cast_ty}($p0)",
+                    "$p0 < 0 ? {cast_ty}(({opnd_ty_u})($p0 & {}) + {only_msb}) : {cast_ty}($p0)",
                     only_msb - 1
                 ),
                     vec![opnd],
@@ -807,16 +807,19 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         Ok(())
     }
 
-    fn visit_br_table_case(&mut self, target: u32) {
+    fn visit_br_table_case(&mut self, case: Option<usize>, target: u32) {
         self.builder.start_block();
+        match case {
+            Some(case) => self.builder.push_case(Const::Int(case as i32).into()),
+            None => self.builder.push_default(),
+        }
         self.block_result(target, true);
         // targetが0の場合、switchブロックがbreakされた後に続きの外のブロックが
         // そのまま実行されるので再度breakする必要はない。
         // targetが1以上の場合、Wasmでは存在しないswitchブロックをbreakするため、
         // targetにswitchブロックの分の1を足している
-        if target != 0 {
-            self.builder.push_br(target + 1);
-        }
+        self.builder
+            .push_br(if target == 0 { 0 } else { target + 1 });
         self.builder.end_block();
     }
 }
@@ -851,14 +854,9 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
             return Ok(());
         }
 
-        let result = self.new_block(blockty, false).result;
+        self.new_block(blockty, false);
 
-        self.builder.push(Inst {
-            kind: InstKind::Block,
-            result,
-            breakable: Breakable::Multi,
-            ..Default::default()
-        });
+        self.builder.push_block(Breakable::Multi);
         self.builder.start_block();
 
         Ok(())
@@ -872,14 +870,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
 
         let block = self.new_block(blockty, true);
         let loop_var = block.loop_var.unwrap();
-        let result = block.result;
 
-        self.builder.push(Inst {
-            kind: InstKind::Loop(loop_var),
-            result,
-            breakable: Breakable::Multi,
-            ..Default::default()
-        });
+        self.builder.push_loop(loop_var, Breakable::Multi);
         self.builder.start_block();
 
         Ok(())
@@ -961,26 +953,15 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         self.unreachable = 1;
         let opnd = self.pop_stack();
 
-        let values = targets.targets().collect::<Result<Vec<_>, _>>()?;
+        self.builder.push_switch(opnd, Breakable::Multi);
 
-        let mut cases: Vec<Option<u32>> = (0..values.len() as u32).map(Some).collect();
-        cases.push(None);
-
-        self.builder.push(Inst {
-            kind: InstKind::Switch(cases),
-            pattern: "$p0".to_string(),
-            params: vec![opnd],
-            breakable: Breakable::Single,
-            ..Default::default()
-        });
-
-        for target in values {
+        for (i, target) in targets.targets().enumerate() {
             // case i:
-            self.visit_br_table_case(target);
+            self.visit_br_table_case(Some(i), target?);
         }
 
         // default:
-        self.visit_br_table_case(targets.default());
+        self.visit_br_table_case(None, targets.default());
 
         Ok(())
     }
