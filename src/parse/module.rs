@@ -425,9 +425,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     builder.push_case(Const::UInt(i as u32 + 1).into());
                     let call = Call {
                         func: i,
-                        recursive: false,
-                        save_vars: vec![],
-                        save_loop_vars: vec![],
+                        ..Default::default()
                     };
                     builder.push_call(call, params_no_index.clone(), result);
 
@@ -562,9 +560,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             // start関数の呼び出し
             let call = Call {
                 func: start_func,
-                recursive: false,
-                save_vars: vec![],
-                save_loop_vars: vec![],
+                ..Default::default()
             };
             builder.push_call(call, vec![], None);
         }

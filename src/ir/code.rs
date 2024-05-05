@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use cranelift_entity::{entity_impl, PrimaryMap, SecondaryMap};
 
 use super::{
@@ -63,11 +65,12 @@ pub enum InstKind {
     Default,
 }
 
+#[derive(Default)]
 pub struct Call {
     pub func: usize,
     pub recursive: bool,
-    pub save_vars: Vec<VarId>,
-    pub save_loop_vars: Vec<usize>,
+    pub save_vars: HashSet<VarId>,
+    pub save_loop_vars: HashSet<usize>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]

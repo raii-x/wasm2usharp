@@ -1,4 +1,4 @@
-use std::vec;
+use std::{collections::HashSet, vec};
 
 use anyhow::Result;
 use wasmparser::{
@@ -192,7 +192,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         self.builder.push_call(call, params, result);
     }
 
-    fn get_save_vars(&self) -> Vec<VarId> {
+    fn get_save_vars(&self) -> HashSet<VarId> {
         let locals = self
             .builder
             .code
@@ -211,7 +211,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         locals.chain(stack_vars).collect()
     }
 
-    fn get_save_loop_vars(&self) -> Vec<usize> {
+    fn get_save_loop_vars(&self) -> HashSet<usize> {
         self.blocks
             .iter()
             .filter_map(|block| block.loop_var)

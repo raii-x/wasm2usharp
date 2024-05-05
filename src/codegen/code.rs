@@ -137,24 +137,31 @@ fn codegen_inst(
 
 fn push_save_vars(f: &mut dyn io::Write, call: &Call) -> io::Result<()> {
     if call.recursive && !call.save_vars.is_empty() {
+        let mut save_vars = call.save_vars.iter().copied().collect::<Vec<_>>();
+        save_vars.sort();
+
         // ローカル変数保存用のスタックにプッシュ
-        for (i, &var) in call.save_vars.iter().enumerate() {
+        for (i, &var) in save_vars.iter().enumerate() {
             write!(f, "{STACK}[{STACK_TOP}")?;
             if i != 0 {
                 write!(f, " + {i}")?;
             }
             writeln!(f, "] = {var};")?;
         }
-        writeln!(f, "{STACK_TOP} += {};", call.save_vars.len())?;
+        writeln!(f, "{STACK_TOP} += {};", save_vars.len())?;
     }
     Ok(())
 }
 
 fn pop_save_vars(f: &mut dyn io::Write, call: &Call, code: &Code) -> io::Result<()> {
     if call.recursive && !call.save_vars.is_empty() {
-        writeln!(f, "{STACK_TOP} -= {};", call.save_vars.len())?;
+        let mut save_vars = call.save_vars.iter().copied().collect::<Vec<_>>();
+        save_vars.sort();
+
+        writeln!(f, "{STACK_TOP} -= {};", save_vars.len())?;
+
         // ローカル変数保存用のスタックからポップ
-        for (i, &var_id) in call.save_vars.iter().enumerate() {
+        for (i, &var_id) in save_vars.iter().enumerate() {
             write!(
                 f,
                 "{var_id} = ({}){STACK}[{STACK_TOP}",
@@ -166,8 +173,11 @@ fn pop_save_vars(f: &mut dyn io::Write, call: &Call, code: &Code) -> io::Result<
             writeln!(f, "];")?;
         }
 
+        let mut save_loop_vars = call.save_loop_vars.iter().copied().collect::<Vec<_>>();
+        save_loop_vars.sort();
+
         // ループ変数を元に戻す
-        for i in &call.save_loop_vars {
+        for i in &save_loop_vars {
             writeln!(f, "{LOOP}{i} = true;")?;
         }
     }

@@ -402,12 +402,8 @@ fn replace_copy(
 
                 // save_varをコピー元の変数に書き換え
                 if let Some(call) = &mut use_inst.call {
-                    if call.recursive {
-                        for save_var in &mut call.save_vars {
-                            if *save_var == dst {
-                                *save_var = src;
-                            }
-                        }
+                    if call.recursive && call.save_vars.remove(&dst) {
+                        call.save_vars.insert(src);
                     }
                 }
 
