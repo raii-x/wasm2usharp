@@ -39,7 +39,6 @@ pub struct CodeParser<'input, 'module> {
     func: usize,
     blocks: Vec<Block>,
     builder: Builder,
-    local_count: usize,
     /// brの後など、到達不可能なコードの処理時に1加算。
     /// unreachableが1以上の場合のブロックの出現ごとに1加算。
     /// ブロックの終了時に1減算。
@@ -60,7 +59,6 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             func,
             blocks: Vec::new(),
             builder: Builder::new(header.ty.params()),
-            local_count: header.ty.params().len(),
             unreachable: 0,
         }
     }
@@ -72,11 +70,11 @@ impl<'input, 'module> CodeParser<'input, 'module> {
                 let cs_ty = CsType::get(ty);
                 self.builder.new_var(Var {
                     ty: cs_ty,
+                    local: true,
                     default: Some(cs_ty.default()),
                     ..Default::default()
                 });
             }
-            self.local_count += count as usize;
         }
 
         let blockty = {
@@ -198,7 +196,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             .code
             .vars
             .iter()
-            .take(self.local_count)
+            .filter(|(_, var)| var.local)
             .map(|(id, _)| id);
 
         let stack_vars = self.blocks.iter().flat_map(|block| {
