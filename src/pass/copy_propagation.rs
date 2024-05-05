@@ -58,9 +58,6 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
             }
         }
     };
-    let in_ = |inst_id, in_sets: &mut SecondaryMap<_, _>, out: &HashSet<_>| {
-        in_sets[inst_id] = out.clone()
-    };
 
     for (inst_id, in_) in in_sets.iter_mut() {
         if gen(inst_id) {
@@ -76,15 +73,18 @@ fn reaching_def(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
         }
     }
 
-    let builder = SetsBuilder::new(code, in_sets, Merge::Union, gen, kill, in_);
-    builder.build(prev_out)
+    let in_ = |inst_id, out: &HashSet<_>| in_sets[inst_id] = out.clone();
+
+    let builder = SetsBuilder::new(code, Merge::Union, gen, kill, in_);
+    builder.build(prev_out);
+    in_sets
 }
 
 fn copy(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
     // 変数が含まれるコピー文の集合
     let mut copies = SecondaryMap::<_, HashSet<_>>::with_capacity(code.vars.len());
 
-    let in_sets = SecondaryMap::<_, HashSet<Def>>::with_capacity(code.insts.len());
+    let mut in_sets = SecondaryMap::<_, HashSet<Def>>::with_capacity(code.insts.len());
 
     for (inst_id, inst) in code.insts.iter() {
         if let Some(result) = inst.result {
@@ -116,17 +116,15 @@ fn copy(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
             }
         }
     };
-    let in_ = |inst_id, in_sets: &mut SecondaryMap<_, _>, out: &HashSet<_>| {
-        in_sets[inst_id] = out.clone()
-    };
+    let in_ = |inst_id, out: &HashSet<_>| in_sets[inst_id] = out.clone();
 
-    let builder = SetsBuilder::new(code, in_sets, Merge::Intersection, gen, kill, in_);
-    builder.build(HashSet::new())
+    let builder = SetsBuilder::new(code, Merge::Intersection, gen, kill, in_);
+    builder.build(HashSet::new());
+    in_sets
 }
 
 struct SetsBuilder<'a, F1, F2, F3> {
     code: &'a Code,
-    in_sets: SecondaryMap<InstId, HashSet<Def>>,
     br_stack: Vec<Option<HashSet<Def>>>,
     merge: Merge,
     /// 引数のInstIdがgenに含まれるかどうかを返すクロージャ
@@ -141,19 +139,11 @@ impl<'a, F1, F2, F3> SetsBuilder<'a, F1, F2, F3>
 where
     F1: Fn(InstId) -> bool,
     F2: Fn(InstId, &mut HashSet<Def>),
-    F3: Fn(InstId, &mut SecondaryMap<InstId, HashSet<Def>>, &HashSet<Def>),
+    F3: FnMut(InstId, &HashSet<Def>),
 {
-    fn new(
-        code: &'a Code,
-        in_sets: SecondaryMap<InstId, HashSet<Def>>,
-        merge: Merge,
-        gen: F1,
-        kill: F2,
-        in_: F3,
-    ) -> Self {
+    fn new(code: &'a Code, merge: Merge, gen: F1, kill: F2, in_: F3) -> Self {
         Self {
             code,
-            in_sets,
             br_stack: Vec::new(),
             merge,
             gen,
@@ -162,9 +152,8 @@ where
         }
     }
 
-    fn build(mut self, prev_out: HashSet<Def>) -> SecondaryMap<InstId, HashSet<Def>> {
+    fn build(mut self, prev_out: HashSet<Def>) {
         self.in_out_block(prev_out, self.code.root);
-        self.in_sets
     }
 
     fn in_out_block(&mut self, mut out: HashSet<Def>, block_id: BlockId) -> Option<HashSet<Def>> {
@@ -204,7 +193,7 @@ where
     }
 
     fn in_out_inst(&mut self, out: &mut HashSet<Def>, inst_id: InstId) -> Option<HashSet<Def>> {
-        (self.in_)(inst_id, &mut self.in_sets, out);
+        (self.in_)(inst_id, out);
 
         let mut loop_in = None;
 
