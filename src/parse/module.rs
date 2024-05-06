@@ -14,7 +14,7 @@ use crate::{
         trap,
         ty::{Const, CsType},
         var::{Primary, Var},
-        CALL_INDIRECT, DATA, ELEMENT, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE, W2US_PREFIX,
+        CALL_INDIRECT, DATA, ELEMENT, FUNC, GLOBAL, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE,
     },
     parse::code::CodeParser,
 };
@@ -232,7 +232,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
         let import = name.is_some();
         let name = match name {
             Some(x) => x,
-            None => format!("{W2US_PREFIX}func{}", self.module.all_funcs.len()),
+            None => format!("{FUNC}{}", self.module.all_funcs.len()),
         };
         let ty = self.module.types[ty as usize].clone();
 
@@ -299,7 +299,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
         let import = name.is_some();
         let name = match name {
             Some(x) => x,
-            None => format!("{W2US_PREFIX}global{}", self.module.globals.len()),
+            None => format!("{GLOBAL}{}", self.module.globals.len()),
         };
         let init_expr = init_expr.map(|x| self.parse_const_expr(&x));
 
