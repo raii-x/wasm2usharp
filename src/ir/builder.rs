@@ -147,7 +147,7 @@ impl Builder {
     pub fn push_if(&mut self, cond: Primary, breakable: Breakable) {
         self.push(Inst {
             kind: InstKind::If,
-            pattern: "$p0 != 0".to_string(),
+            pattern: format!("{}($p0)", CsType::Bool.cast()),
             params: vec![cond],
             breakable,
             ..Default::default()

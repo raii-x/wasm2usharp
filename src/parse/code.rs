@@ -678,7 +678,10 @@ impl<'input, 'module> CodeParser<'input, 'module> {
 
     fn wrap(&mut self, opnd: PoolPrimary, result: VarId) {
         let mut pattern = format!("$r = {}($p0 & 0x7fffffff); ", CsType::Int.cast());
-        pattern += "if (($p0 & 0x80000000) != 0) $r |= -0x7fffffff - 1;";
+        pattern += &format!(
+            "if ({}($p0 & 0x80000000)) $r |= -0x7fffffff - 1;",
+            CsType::Bool.cast(),
+        );
 
         self.builder.push(Inst {
             kind: InstKind::Stmt,
@@ -1032,7 +1035,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
 
         self.builder.push_set_pattern(
             result.id(),
-            "$p2 != 0 ? $p0 : $p1",
+            format!("{}($p2) ? $p0 : $p1", CsType::Bool.cast()),
             vec![val1.into(), val2.into(), c.into()],
         );
 
