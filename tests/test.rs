@@ -89,12 +89,12 @@ test!(test_func, "func");
 test!(test_func_ptrs, "func_ptrs");
 test!(test_globals, "globals");
 test!(
-    test_i32,
+    test_sign_extension_ops_i32,
     "proposals/sign-extension-ops/i32",
     &deny_int_neg_max_case(&["rem_s"])
 );
 test!(
-    test_i64,
+    test_sign_extension_ops_i64,
     "proposals/sign-extension-ops/i64",
     &deny_int_neg_max_case(&["rem_s"])
 );
