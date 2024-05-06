@@ -21,6 +21,7 @@ pub const ELEMENT: &str = "w2us_element";
 pub const INIT: &str = "w2us_init";
 pub const CALL_INDIRECT: &str = "w2us_call_indirect";
 pub const BREAK_DEPTH: &str = "w2us_break_depth";
+pub const VAR: &str = "w2us_v";
 pub const LOOP: &str = "w2us_loop";
 pub const STACK: &str = "w2us_stack";
 pub const STACK_TOP: &str = "w2us_stack_top";

@@ -2,6 +2,8 @@ use std::fmt;
 
 use cranelift_entity::{entity_impl, EntityRef, PrimaryMap};
 
+use crate::ir::VAR;
+
 use super::ty::{Const, CsType};
 
 pub type Vars = PrimaryMap<VarId, Var>;
@@ -31,7 +33,7 @@ impl Default for Var {
 
 impl fmt::Display for VarId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "var{}", self.index())
+        write!(f, "{VAR}{}", self.index())
     }
 }
 
