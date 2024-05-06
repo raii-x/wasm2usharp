@@ -1,9 +1,9 @@
-use std::fmt;
+use std::{fmt, hash::Hash};
 
 use num_traits::Float;
 use wasmparser::ValType;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CsType {
     Void,
     Bool,
@@ -100,8 +100,8 @@ impl CsType {
             Self::UInt => Const::UInt(0),
             Self::Long => Const::Long(0),
             Self::ULong => Const::ULong(0),
-            Self::Float => Const::Float(0.),
-            Self::Double => Const::Double(0.),
+            Self::Float => Const::Float(0f32.to_bits()),
+            Self::Double => Const::Double(0f64.to_bits()),
         }
     }
 }
@@ -126,7 +126,7 @@ impl fmt::Display for CsType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Const {
     Bool(bool),
     Byte(u8),
@@ -134,8 +134,10 @@ pub enum Const {
     UInt(u32),
     Long(i64),
     ULong(u64),
-    Float(f32),
-    Double(f64),
+    /// f32のビット列
+    Float(u32),
+    /// f64のビット列
+    Double(u64),
 }
 
 impl Const {
@@ -168,24 +170,30 @@ impl fmt::Display for Const {
                 _x => write!(f, "{}L", _x),
             },
             Self::ULong(x) => write!(f, "{}ul", x),
-            Self::Float(x) => fmt_float(*x, CsType::Float, f).unwrap_or_else(|| {
-                if x.to_bits() == 0xffc00000 {
-                    write!(f, "float.NaN")
-                } else if x.is_nan() {
-                    write!(f, "BitConverter.Int32BitsToSingle({})", x.to_bits() as i32)
-                } else {
-                    write!(f, "{:e}f", *x)
-                }
-            }),
-            Self::Double(x) => fmt_float(*x, CsType::Double, f).unwrap_or_else(|| {
-                if x.to_bits() == 0xfff8000000000000 {
-                    write!(f, "double.NaN")
-                } else if x.is_nan() {
-                    write!(f, "BitConverter.Int64BitsToDouble({})", x.to_bits() as i64)
-                } else {
-                    write!(f, "{:e}d", *x)
-                }
-            }),
+            Self::Float(x) => {
+                let x_f32 = f32::from_bits(*x);
+                fmt_float(x_f32, CsType::Float, f).unwrap_or_else(|| {
+                    if *x == 0xffc00000 {
+                        write!(f, "float.NaN")
+                    } else if x_f32.is_nan() {
+                        write!(f, "BitConverter.Int32BitsToSingle({})", *x as i32)
+                    } else {
+                        write!(f, "{:e}f", x_f32)
+                    }
+                })
+            }
+            Self::Double(x) => {
+                let x_f64 = f64::from_bits(*x);
+                fmt_float(x_f64, CsType::Double, f).unwrap_or_else(|| {
+                    if *x == 0xfff8000000000000 {
+                        write!(f, "double.NaN")
+                    } else if x_f64.is_nan() {
+                        write!(f, "BitConverter.Int64BitsToDouble({})", *x as i64)
+                    } else {
+                        write!(f, "{:e}d", x_f64)
+                    }
+                })
+            }
         }
     }
 }

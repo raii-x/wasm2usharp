@@ -15,7 +15,7 @@ pub struct Code {
     pub inst_nodes: SecondaryMap<InstId, InstNode>,
     pub root: BlockId,
     pub vars: Vars,
-    pub loop_var_count: usize,
+    pub loop_var_count: u32,
     pub break_depth_used: bool,
 }
 
@@ -57,7 +57,7 @@ pub enum InstKind {
     Return,
     Block,
     /// ループ変数のインデックス
-    Loop(usize),
+    Loop(u32),
     If,
     Br(u32),
     Switch,
@@ -70,7 +70,7 @@ pub struct Call {
     pub func: usize,
     pub recursive: bool,
     pub save_vars: HashSet<VarId>,
-    pub save_loop_vars: HashSet<usize>,
+    pub save_loop_vars: HashSet<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
