@@ -14,7 +14,8 @@ use crate::{
         trap,
         ty::{Const, CsType},
         var::{Primary, Var},
-        CALL_INDIRECT, DATA, ELEMENT, FUNC, GLOBAL, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, TABLE,
+        CALL_INDIRECT, DATA, ELEMENT, FUNC, GLOBAL, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, STACK_TOP,
+        TABLE,
     },
     parse::code::CodeParser,
 };
@@ -504,6 +505,8 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
         };
 
         let mut builder = Builder::new(header.ty.params());
+
+        builder.push_line(format!("{STACK_TOP} = 0;"));
 
         for global in &self.module.globals {
             if global.import {
