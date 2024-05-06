@@ -16,7 +16,7 @@ use crate::ir::{
     PAGE_SIZE,
 };
 
-use super::pool::{PoolPrimary, PoolVar, VarPool};
+use super::pool::{LoopVarPool, PoolLoopVar, PoolPrimary, PoolVar, VarPool};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -46,12 +46,13 @@ pub struct CodeParser<'input, 'module> {
     /// ブロックの終了時に1減算。
     unreachable: i32,
     var_pool: VarPool,
+    loop_var_pool: LoopVarPool,
 }
 
 struct Block {
     stack: Vec<PoolPrimary>,
     result: Option<PoolVar>,
-    loop_var: Option<usize>,
+    loop_var: Option<PoolLoopVar>,
 }
 
 impl<'input, 'module> CodeParser<'input, 'module> {
@@ -64,6 +65,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             builder: Builder::new(header.ty.params()),
             unreachable: 0,
             var_pool: VarPool::new(),
+            loop_var_pool: LoopVarPool::new(),
         }
     }
 
@@ -115,7 +117,10 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         assert!(self.blocks.is_empty());
 
         #[cfg(debug_assertions)]
-        self.var_pool.validate();
+        {
+            self.var_pool.validate();
+            self.loop_var_pool.validate();
+        }
 
         Ok(self.builder.build())
     }
@@ -134,10 +139,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         };
 
         let loop_var = if is_loop {
-            Some({
-                self.builder.code.loop_var_count += 1;
-                self.builder.code.loop_var_count - 1
-            })
+            Some(self.loop_var_pool.take(&mut self.builder))
         } else {
             None
         };
@@ -220,10 +222,11 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         locals.chain(stack_vars).collect()
     }
 
-    fn get_save_loop_vars(&self) -> HashSet<usize> {
+    fn get_save_loop_vars(&self) -> HashSet<u32> {
         self.blocks
             .iter()
-            .filter_map(|block| block.loop_var)
+            .filter_map(|block| block.loop_var.as_ref())
+            .map(|x| x.index())
             .collect()
     }
 
@@ -860,7 +863,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         }
 
         let block = self.new_block(blockty, true);
-        let loop_var = block.loop_var.unwrap();
+        let loop_var = block.loop_var.as_ref().unwrap().index();
 
         self.builder.push_loop(loop_var, Breakable::Multi);
         self.builder.start_block();

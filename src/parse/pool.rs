@@ -109,3 +109,56 @@ impl From<PoolPrimary> for Primary {
         Primary::from(&value)
     }
 }
+
+pub struct LoopVarPool(Rc<RefCell<Vec<u32>>>, #[cfg(debug_assertions)] Vec<u32>);
+
+impl LoopVarPool {
+    pub fn new() -> Self {
+        Self(
+            Rc::new(RefCell::new(Vec::new())),
+            #[cfg(debug_assertions)]
+            Vec::new(),
+        )
+    }
+
+    /// プールから変数を取り出す。取り出せなければ新しい変数を作って返す。
+    pub fn take(&mut self, builder: &mut Builder) -> PoolLoopVar {
+        let index = self.0.borrow_mut().pop().unwrap_or_else(|| {
+            let index = builder.code.loop_var_count;
+            builder.code.loop_var_count += 1;
+            #[cfg(debug_assertions)]
+            self.1.push(index);
+            index
+        });
+
+        PoolLoopVar {
+            pool: Rc::clone(&self.0),
+            index,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn validate(&mut self) {
+        self.0.borrow_mut().sort();
+        self.1.sort();
+        assert_eq!(*self.0.borrow(), self.1);
+    }
+}
+
+pub struct PoolLoopVar {
+    pool: Rc<RefCell<Vec<u32>>>,
+    index: u32,
+}
+
+impl PoolLoopVar {
+    pub fn index(&self) -> u32 {
+        self.index
+    }
+}
+
+impl Drop for PoolLoopVar {
+    fn drop(&mut self) {
+        // 変数をプールに戻す
+        self.pool.borrow_mut().push(self.index);
+    }
+}

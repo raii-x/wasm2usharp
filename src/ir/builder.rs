@@ -136,7 +136,7 @@ impl Builder {
         });
     }
 
-    pub fn push_loop(&mut self, loop_var: usize, breakable: Breakable) {
+    pub fn push_loop(&mut self, loop_var: u32, breakable: Breakable) {
         self.push(Inst {
             kind: InstKind::Loop(loop_var),
             breakable,
