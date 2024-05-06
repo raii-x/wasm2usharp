@@ -32,6 +32,7 @@ Options:
 
 * Import/Export of Mutable Globals
 * Sign-extension operators
+* Bulk memory operations (memory.copy命令とmemory.fill命令のみ対応)
 
 ## TODO
 
