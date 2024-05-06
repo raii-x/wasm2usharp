@@ -153,6 +153,15 @@ impl Const {
             Self::Double(_) => CsType::Double,
         }
     }
+
+    pub fn to_signed(&self) -> Self {
+        match self {
+            Self::UInt(x) => Self::Int(*x as i32),
+            Self::ULong(x) => Self::Long(*x as i64),
+            Self::Int(_) | Self::Long(_) | Self::Float(_) | Self::Double(_) => *self,
+            _ => panic!("Can't convert to signed"),
+        }
+    }
 }
 
 impl fmt::Display for Const {

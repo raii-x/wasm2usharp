@@ -128,6 +128,12 @@ test!(test_utf8_import_field, "utf8-import-field");
 test!(test_utf8_import_module, "utf8-import-module");
 test!(test_utf8_invalid_encoding, "utf8-invalid-encoding");
 
+// Non-trapping float-to-int conversions
+test!(
+    test_nontrapping_float_to_int_conversions,
+    "proposals/nontrapping-float-to-int-conversions/conversions"
+);
+
 // Sign-extension operators
 test!(
     test_sign_extension_ops_i32,

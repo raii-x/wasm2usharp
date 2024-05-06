@@ -20,6 +20,7 @@ use super::pool::{LoopVarPool, PoolLoopVar, PoolPrimary, PoolVar, VarPool};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
+    ( @saturating_float_to_int $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @sign_extension $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @bulk_memory $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {
@@ -699,6 +700,76 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         signed: bool,
     ) -> <Self as VisitOperator<'_>>::Output {
         let (opnd, result) = self.un_op_vars(result_ty);
+        self.trunc(result_ty, signed, opnd, result);
+        Ok(())
+    }
+
+    fn visit_cast_trunc_sat(
+        &mut self,
+        result_ty: CsType,
+        signed: bool,
+    ) -> <Self as VisitOperator<'_>>::Output {
+        let (opnd, result) = self.un_op_vars(result_ty);
+
+        let (min, max) = match (result_ty, signed) {
+            (CsType::Int, true) => (Const::Int(i32::MIN), Const::Int(i32::MAX)),
+            (CsType::Int, false) => (Const::UInt(u32::MIN), Const::UInt(u32::MAX)),
+            (CsType::Long, true) => (Const::Long(i64::MIN), Const::Long(i64::MAX)),
+            (CsType::Long, false) => (Const::ULong(u64::MIN), Const::ULong(u64::MAX)),
+            _ => unreachable!(),
+        };
+
+        self.builder.push_if_pattern(
+            format!("{}.IsNaN($p0)", self.ty(&opnd)),
+            vec![(&opnd).into()],
+            Breakable::No,
+        );
+        {
+            // NaNなら0にする
+            self.builder.start_block();
+            self.builder.push_set(result, result_ty.default().into());
+            self.builder.end_block();
+        }
+        {
+            self.builder.start_block();
+            self.builder.push_if_pattern(
+                format!("$p0 <= {}", min),
+                vec![(&opnd).into()],
+                Breakable::No,
+            );
+            {
+                // 最小値
+                self.builder.start_block();
+                self.builder.push_set(result, min.to_signed().into());
+                self.builder.end_block();
+            }
+            {
+                self.builder.start_block();
+                self.builder.push_if_pattern(
+                    format!("$p0 >= {}", max),
+                    vec![(&opnd).into()],
+                    Breakable::No,
+                );
+                {
+                    // 最大値
+                    self.builder.start_block();
+                    self.builder.push_set(result, max.to_signed().into());
+                    self.builder.end_block();
+                }
+                {
+                    self.builder.start_block();
+                    self.trunc(result_ty, signed, opnd, result);
+                    self.builder.end_block();
+                }
+                self.builder.end_block();
+            }
+            self.builder.end_block();
+        }
+
+        Ok(())
+    }
+
+    fn trunc(&mut self, result_ty: CsType, signed: bool, opnd: PoolPrimary, result: VarId) {
         let tmp = self.var_pool.take(&mut self.builder, CsType::Double, None);
 
         self.builder.push_set_pattern(
@@ -717,7 +788,6 @@ impl<'input, 'module> CodeParser<'input, 'module> {
         } else {
             self.cast_sign(tmp.into(), result);
         }
-        Ok(())
     }
 
     fn visit_cast_extend(&mut self, signed: bool) -> <Self as VisitOperator<'_>>::Output {
@@ -1809,6 +1879,38 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
             vec![opnd.into()],
         );
         Ok(())
+    }
+
+    fn visit_i32_trunc_sat_f32_s(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Int, true)
+    }
+
+    fn visit_i32_trunc_sat_f32_u(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Int, false)
+    }
+
+    fn visit_i32_trunc_sat_f64_s(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Int, true)
+    }
+
+    fn visit_i32_trunc_sat_f64_u(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Int, false)
+    }
+
+    fn visit_i64_trunc_sat_f32_s(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Long, true)
+    }
+
+    fn visit_i64_trunc_sat_f32_u(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Long, false)
+    }
+
+    fn visit_i64_trunc_sat_f64_s(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Long, true)
+    }
+
+    fn visit_i64_trunc_sat_f64_u(&mut self) -> Self::Output {
+        self.visit_cast_trunc_sat(CsType::Long, false)
     }
 
     fn visit_i32_extend8_s(&mut self) -> Self::Output {

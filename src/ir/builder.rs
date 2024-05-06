@@ -154,6 +154,21 @@ impl Builder {
         });
     }
 
+    pub fn push_if_pattern(
+        &mut self,
+        pattern: impl Into<String>,
+        params: Vec<Primary>,
+        breakable: Breakable,
+    ) {
+        self.push(Inst {
+            kind: InstKind::If,
+            pattern: pattern.into(),
+            params,
+            breakable,
+            ..Default::default()
+        });
+    }
+
     pub fn push_br(&mut self, depth: u32) {
         self.push(Inst {
             kind: InstKind::Br(depth),
