@@ -371,12 +371,11 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
 
             if use_delegate {
                 // テストの際はuintの他にdelegateが含まれることがある
-                builder.push(Inst {
-                    kind: InstKind::If,
-                    pattern: format!("{table_name}[$p0] is uint"),
-                    params: vec![index_var_id.into()],
-                    ..Default::default()
-                });
+                builder.push_if_pattern(
+                    format!("{table_name}[$p0] is uint"),
+                    vec![index_var_id.into()],
+                    Breakable::No,
+                );
                 builder.start_block();
             }
 
