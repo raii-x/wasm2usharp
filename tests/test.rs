@@ -88,16 +88,6 @@ test!(test_forward, "forward");
 test!(test_func, "func");
 test!(test_func_ptrs, "func_ptrs");
 test!(test_globals, "globals");
-test!(
-    test_sign_extension_ops_i32,
-    "proposals/sign-extension-ops/i32",
-    &deny_int_neg_max_case(&["rem_s"])
-);
-test!(
-    test_sign_extension_ops_i64,
-    "proposals/sign-extension-ops/i64",
-    &deny_int_neg_max_case(&["rem_s"])
-);
 test!(test_if, "if");
 // test!(test_imports, "imports");
 // test!(test_inline_module, "inline-module");
@@ -137,6 +127,28 @@ test!(test_utf8_custom_section_id, "utf8-custom-section-id");
 test!(test_utf8_import_field, "utf8-import-field");
 test!(test_utf8_import_module, "utf8-import-module");
 test!(test_utf8_invalid_encoding, "utf8-invalid-encoding");
+
+// Sign-extension operators
+test!(
+    test_sign_extension_ops_i32,
+    "proposals/sign-extension-ops/i32",
+    &deny_int_neg_max_case(&["rem_s"])
+);
+test!(
+    test_sign_extension_ops_i64,
+    "proposals/sign-extension-ops/i64",
+    &deny_int_neg_max_case(&["rem_s"])
+);
+
+// Bulk memory operations
+test!(
+    test_memory_copy,
+    "proposals/bulk-memory-operations/memory_copy"
+);
+test!(
+    test_memory_fill,
+    "proposals/bulk-memory-operations/memory_fill"
+);
 
 // traitのエイリアス
 trait Filter: Fn(&WastDirective<'_>) -> bool {}
