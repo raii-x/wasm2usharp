@@ -31,6 +31,7 @@ Options:
 ## 対応している[Wasm proposal](https://github.com/WebAssembly/proposals/blob/main/finished-proposals.md "proposals/finished-proposals.md at main · WebAssembly/proposals")
 
 * Import/Export of Mutable Globals
+* Non-trapping float-to-int conversions
 * Sign-extension operators
 * Bulk memory operations (memory.copy命令とmemory.fill命令のみ対応)
 
@@ -38,4 +39,3 @@ Options:
 
 * 出力されるU#の最適化
 * UdonSharpでのWASIの実装
-* 他のproposalへの対応
