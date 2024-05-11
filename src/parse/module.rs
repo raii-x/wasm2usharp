@@ -529,12 +529,11 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             }
         }
 
-        for (i, Element { offset_expr, items }) in self.module.elements.iter().enumerate() {
+        for (i, Element { offset_expr, .. }) in self.module.elements.iter().enumerate() {
             // テーブルへのエレメントのコピー
             builder.push_line(format!(
-                "Array.Copy({ELEMENT}{i}, 0, {}, {offset_expr}, {});",
-                self.module.table.as_ref().unwrap().name,
-                items.len()
+                "{ELEMENT}{i}.CopyTo({}, {offset_expr});",
+                self.module.table.as_ref().unwrap().name
             ));
         }
 
@@ -549,12 +548,11 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             }
         }
 
-        for (i, Data { offset_expr, data }) in self.module.datas.iter().enumerate() {
+        for (i, Data { offset_expr, .. }) in self.module.datas.iter().enumerate() {
             // メモリへのデータのコピー
             builder.push_line(format!(
-                "Array.Copy({DATA}{i}, 0, {}, {offset_expr}, {});",
-                self.module.memory.as_ref().unwrap().name,
-                data.len()
+                "{DATA}{i}.CopyTo({}, {offset_expr});",
+                self.module.memory.as_ref().unwrap().name
             ));
         }
 
