@@ -168,6 +168,10 @@ struct SetsBuilder<'a, F1, F2, F3> {
     code: &'a Code,
     br_stack: Vec<Option<HashSet<Def>>>,
     merge: Merge,
+    /// ループ文の解析後にループのinの集合が挿入される
+    loop_in: HashMap<InstId, HashSet<Def>>,
+    /// inが更新されたループが存在する場合にtrue
+    loop_changed: bool,
     /// 引数のInstIdがgenに含まれるかどうかを返すクロージャ
     gen: F1,
     /// 引数の集合からInstIdのkillの要素を削除するクロージャ
@@ -187,6 +191,8 @@ where
             code,
             br_stack: Vec::new(),
             merge,
+            loop_in: HashMap::new(),
+            loop_changed: false,
             gen,
             kill,
             in_,
@@ -194,7 +200,13 @@ where
     }
 
     fn build(mut self, prev_out: HashSet<Def>) {
-        self.in_out_block(prev_out, self.code.root);
+        loop {
+            self.in_out_block(prev_out.clone(), self.code.root);
+            if !self.loop_changed {
+                break;
+            }
+            self.loop_changed = false;
+        }
     }
 
     fn in_out_block(&mut self, out: HashSet<Def>, block_id: BlockId) -> Option<HashSet<Def>> {
@@ -204,23 +216,21 @@ where
             let Some(mut out) = out_opt else { break };
 
             if matches!(self.code.insts[inst_id].kind, InstKind::Loop(_)) {
-                loop {
-                    let loop_in;
-                    (out_opt, loop_in) = self.in_out_inst(out.clone(), inst_id);
+                if let Some(loop_in) = self.loop_in.remove(&inst_id) {
+                    // 以前このループを解析した際のinが存在する場合
+                    self.merge.merge(&mut out, &loop_in);
+                }
 
-                    // ループ文ならinが前と等しくなるまで繰り返す
-                    if let Some(loop_in) = loop_in {
-                        if loop_in == out {
-                            // inが更新されなければ終了
-                            break;
-                        } else {
-                            // 次の入力をループのinとする
-                            out = loop_in;
-                        }
-                    } else {
-                        // brでループ先頭に戻らなければ終了
-                        break;
+                let loop_in;
+                (out_opt, loop_in) = self.in_out_inst(out.clone(), inst_id);
+
+                if let Some(loop_in) = loop_in {
+                    if loop_in != out {
+                        // inが更新された場合
+                        self.loop_changed = true;
                     }
+                    // ループのinを挿入
+                    self.loop_in.insert(inst_id, loop_in);
                 }
             } else {
                 (out_opt, _) = self.in_out_inst(out, inst_id);
@@ -782,6 +792,198 @@ mod tests {
         set_eq(
             &copy_sets,
             &[(0, &[]), (1, &[]), (2, &[]), (3, &[2])],
+            "copy",
+        );
+    }
+
+    #[test]
+    fn copy_propagation_loop_sequential() {
+        // func(v1, v2)
+        // 0: v3 = v2
+        // 1: loop (breakable)
+        // 2:   if v1
+        // 3:     v1 = v2
+        // 4:     br 0
+        // 5: loop (breakable)
+        // 6:   if v2
+        // 7:     v2 = v1
+        // 8:     br 0
+        // 9: v1 = v2
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v3 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_set(v3, v2.into()); // 0
+
+        builder.push_loop(0, Breakable::Single); // 1
+        builder.start_block();
+
+        builder.push_if(v1.into(), Breakable::No); // 2
+        builder.start_block();
+
+        builder.push_set(v1, v2.into()); // 3
+        builder.push_br(0); // 4
+
+        builder.end_block();
+        builder.end_block();
+
+        builder.push_loop(0, Breakable::Single); // 5
+        builder.start_block();
+
+        builder.push_if(v2.into(), Breakable::No); // 6
+        builder.start_block();
+
+        builder.push_set(v2, v1.into()); // 7
+        builder.push_br(0); // 8
+
+        builder.end_block();
+        builder.end_block();
+
+        builder.push_set(v1, v2.into()); // 9
+
+        let code = builder.build();
+
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
+        set_eq(
+            &reach_sets,
+            &[
+                (0, &[-1, -2]),
+                (1, &[-1, 3, -2, 0]),
+                (2, &[-1, 3, -2, 0]),
+                (3, &[-1, 3, -2, 0]),
+                (4, &[3, -2, 0]),
+                (5, &[-1, 3, -2, 7, 0]),
+                (6, &[-1, 3, -2, 7, 0]),
+                (7, &[-1, 3, -2, 7, 0]),
+                (8, &[-1, 3, 7, 0]),
+                (9, &[-1, 3, -2, 7, 0]),
+            ],
+            "reach",
+        );
+
+        let copy_sets = copy(&code);
+        set_eq(
+            &copy_sets,
+            &[
+                (0, &[]),
+                (1, &[0]),
+                (2, &[0]),
+                (3, &[0]),
+                (4, &[0, 3]),
+                (5, &[]),
+                (6, &[]),
+                (7, &[]),
+                (8, &[7]),
+                (9, &[]),
+            ],
+            "copy",
+        );
+    }
+
+    #[test]
+    fn copy_propagation_loop_nested() {
+        // func(v1, v2)
+        // 0: v3 = v2
+        // 1: loop (breakable)
+        // 2:   loop (breakable)
+        // 3:     if v1
+        // 4:       v1 = v2
+        // 5:       br 0
+        // 6:   if v2
+        // 7:     v2 = v1
+        // 8:     br 0
+        // 9: v1 = v2
+
+        let mut builder = Builder::new(&[]);
+
+        let v1 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v2 = builder.new_var(Var {
+            local: true,
+            ..Default::default()
+        });
+        let v3 = builder.new_var(Var {
+            ..Default::default()
+        });
+
+        builder.push_set(v3, v2.into()); // 0
+
+        builder.push_loop(0, Breakable::Single); // 1
+        builder.start_block();
+
+        builder.push_loop(0, Breakable::Multi); // 2
+        builder.start_block();
+
+        builder.push_if(v1.into(), Breakable::No); // 3
+        builder.start_block();
+
+        builder.push_set(v1, v2.into()); // 4
+        builder.push_br(0); // 5
+
+        builder.end_block();
+        builder.end_block();
+
+        builder.push_if(v2.into(), Breakable::No); // 6
+        builder.start_block();
+
+        builder.push_set(v2, v1.into()); // 7
+        builder.push_br(0); // 8
+
+        builder.end_block();
+        builder.end_block();
+
+        builder.push_set(v1, v2.into()); // 9
+
+        let code = builder.build();
+
+        let mut reach_sets = SecondaryMap::new();
+        reaching_def(&code, Some(&mut reach_sets));
+        set_eq(
+            &reach_sets,
+            &[
+                (0, &[-1, -2]),
+                (1, &[-1, 4, -2, 7, 0]),
+                (2, &[-1, 4, -2, 7, 0]),
+                (3, &[-1, 4, -2, 7, 0]),
+                (4, &[-1, 4, -2, 7, 0]),
+                (5, &[4, -2, 7, 0]),
+                (6, &[-1, 4, -2, 7, 0]),
+                (7, &[-1, 4, -2, 7, 0]),
+                (8, &[-1, 4, 7, 0]),
+                (9, &[-1, 4, -2, 7, 0]),
+            ],
+            "reach",
+        );
+
+        let copy_sets = copy(&code);
+        set_eq(
+            &copy_sets,
+            &[
+                (0, &[]),
+                (1, &[]),
+                (2, &[]),
+                (3, &[]),
+                (4, &[]),
+                (5, &[4]),
+                (6, &[]),
+                (7, &[]),
+                (8, &[7]),
+                (9, &[]),
+            ],
             "copy",
         );
     }
