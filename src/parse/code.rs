@@ -309,15 +309,13 @@ impl<'input, 'module> CodeParser<'input, 'module> {
 
         let pattern = match storage_ty {
             I8 => format!("{memory}[{idx_pat}] = {}($p1 & 0xff);", CsType::Byte.cast()),
-            I16 => format!("Array.Copy(BitConverter.GetBytes(Convert.ToUInt16($p1 & 0xffff)), 0, {memory}, {idx_pat}, 2);"),
+            I16 => format!("BitConverter.GetBytes(Convert.ToUInt16($p1 & 0xffff)).CopyTo({memory}, {idx_pat});"),
             Val(I32) => match self.ty(&var) {
-                CsType::Int => format!("Array.Copy(BitConverter.GetBytes($p1), 0, {memory}, {idx_pat}, 4);"),
-                CsType::Long => format!("Array.Copy(BitConverter.GetBytes({}($p1 & 0xffffffff)), 0, {memory}, {idx_pat}, 4);", CsType::UInt.cast()),
+                CsType::Int => format!("BitConverter.GetBytes($p1).CopyTo({memory}, {idx_pat});"),
+                CsType::Long => format!("BitConverter.GetBytes({}($p1 & 0xffffffff)).CopyTo({memory}, {idx_pat});", CsType::UInt.cast()),
                 _ => unreachable!(),
             },
-            Val(I64) => format!("Array.Copy(BitConverter.GetBytes($p1), 0, {memory}, {idx_pat}, 8);"),
-            Val(F32) => format!("Array.Copy(BitConverter.GetBytes($p1), 0, {memory}, {idx_pat}, 4);"),
-            Val(F64) => format!("Array.Copy(BitConverter.GetBytes($p1), 0, {memory}, {idx_pat}, 8);"),
+            Val(I64) | Val(F32) | Val(F64) => format!("BitConverter.GetBytes($p1).CopyTo({memory}, {idx_pat});"),
             _ => unreachable!(),
         };
 
@@ -1317,7 +1315,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
             // メモリをsizeだけ拡張
             pattern += &format!("var old = {memory};\n");
             pattern += &format!("{memory} = new byte[old.Length + $p0 * {PAGE_SIZE}];\n");
-            pattern += &format!("Array.Copy(old, {memory}, old.Length);\n");
+            pattern += &format!("old.CopyTo({memory}, 0);\n");
         }
         pattern += "}";
 
