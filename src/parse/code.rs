@@ -1072,11 +1072,6 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         assert!(table_index == 0);
         assert!(table_byte == 0);
 
-        let index = *self
-            .module
-            .call_indirects
-            .get(&(type_index as usize))
-            .unwrap();
         let ty = self.module.types[type_index as usize].clone();
 
         // Iteratorのrevを使わない理由はvisit_callのコメントを参照
@@ -1085,7 +1080,15 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
             .collect();
         params.reverse();
 
-        self.call(index, ty, params);
+        match self.module.call_indirects.get(&(type_index as usize)) {
+            Some(index) => self.call(*index, ty, params),
+            None => {
+                self.builder
+                    .push_line(trap(self.module, "invalid function type"));
+                self.get_result(&ty);
+            }
+        }
+
         Ok(())
     }
 
