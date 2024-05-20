@@ -24,9 +24,9 @@ pub fn codegen_module(module: &Module<'_>, f: &mut dyn io::Write) -> io::Result<
         // エレメント配列
         // テストの際、使用するテーブルを外部からインポートするモジュールの場合、
         // エレメント配列内にC#メソッドのデリゲートを格納する。
-        // それ以外の場合は、uintで関数のインデックス+1を表す
+        // それ以外の場合は、intで関数のインデックス+1を表す
         let use_delegate = module.test && module.table.as_ref().unwrap().import;
-        let cs_ty = if use_delegate { "object" } else { "uint" };
+        let cs_ty = if use_delegate { "object" } else { "int" };
         let eq = if use_delegate { "=>" } else { "=" };
         write!(f, "{cs_ty}[] {ELEMENT}{i} {eq} new {cs_ty}[] {{ ",)?;
 
@@ -85,9 +85,9 @@ pub fn codegen_module(module: &Module<'_>, f: &mut dyn io::Write) -> io::Result<
                 write!(f, "[NonSerialized] public ")?
             }
 
-            // テストの場合はuintとAction/Funcを混在させるため
+            // テストの場合はintとAction/Funcを混在させるため
             // テーブルはobjectの配列で表す
-            let elem_cs_ty = if module.test { "object" } else { "uint" };
+            let elem_cs_ty = if module.test { "object" } else { "int" };
 
             writeln!(f, "{elem_cs_ty}[] {};", table.name)?;
         }
