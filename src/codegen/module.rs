@@ -11,6 +11,8 @@ pub fn codegen_module(module: &Module<'_>, f: &mut dyn io::Write) -> io::Result<
         writeln!(f, "using UnityEngine;")?;
     }
 
+    writeln!(f, "#pragma warning disable")?;
+
     write!(f, "public class {} ", module.class_name)?;
     if module.test {
         writeln!(f, "{{")?;
