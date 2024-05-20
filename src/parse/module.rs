@@ -370,9 +370,9 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             let (index_var_id, _) = builder.code.vars.last().unwrap();
 
             if use_delegate {
-                // テストの際はuintの他にdelegateが含まれることがある
+                // テストの際はintの他にdelegateが含まれることがある
                 builder.push_if_pattern(
-                    format!("{table_name}[$p0] is uint"),
+                    format!("{table_name}[$p0] is int"),
                     vec![index_var_id.into()],
                     Breakable::No,
                 );
@@ -404,7 +404,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     kind: InstKind::Switch,
                     pattern: format!(
                         "{}{table_name}[$p0]",
-                        if self.module.test { "(uint)" } else { "" }, // テストの際はobjectをuintに変換
+                        if self.module.test { "(int)" } else { "" }, // テストの際はobjectをintに変換
                     ),
                     params: vec![index_var_id.into()],
                     breakable: Breakable::Single,
@@ -422,7 +422,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
 
                 for i in cases {
                     builder.start_block();
-                    builder.push_case(Const::UInt(i as u32 + 1).into());
+                    builder.push_case(Const::Int(i as i32 + 1).into());
                     let call = Call {
                         func: i,
                         ..Default::default()
@@ -521,7 +521,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
         if let Some(table) = &self.module.table {
             if !table.import {
                 // テーブル配列の作成
-                let elem_cs_ty = if self.module.test { "object" } else { "uint" };
+                let elem_cs_ty = if self.module.test { "object" } else { "int" };
                 builder.push_line(format!(
                     "{} = new {elem_cs_ty}[{}];",
                     table.name, table.ty.initial
