@@ -13,6 +13,7 @@ pub mod var;
 
 pub const PAGE_SIZE: u32 = 65536;
 pub const MAX_PARAMS: usize = 16;
+pub const STACK_SIZE: usize = 65536;
 pub const FUNC: &str = "w2us_func";
 pub const GLOBAL: &str = "w2us_global";
 pub const MEMORY: &str = "w2us_memory";
@@ -26,7 +27,7 @@ pub const VAR: &str = "w2us_v";
 pub const LOOP: &str = "w2us_loop";
 pub const STACK: &str = "w2us_stack";
 pub const STACK_TOP: &str = "w2us_stack_top";
-pub const STACK_SIZE: usize = 65536;
+pub const START: &str = "w2us_start";
 
 pub fn func_header(
     name: impl fmt::Display,

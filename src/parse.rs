@@ -8,7 +8,7 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 
-use crate::ir::module::Module;
+use crate::ir::{module::Module, START};
 
 use self::module::ModuleParser;
 
@@ -20,7 +20,11 @@ pub fn parse_module<'input>(
     conv.parse(import_map)
 }
 
-pub fn convert_to_ident(name: &str) -> String {
+pub fn convert_to_ident(mut name: &str) -> String {
+    if name == "_start" {
+        name = START;
+    }
+
     static KEYWORDS: Lazy<HashSet<&str>> = Lazy::new(|| {
         HashSet::from([
             "abstract",
