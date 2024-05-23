@@ -10,7 +10,7 @@ use std::{
     collections::HashSet,
     fs,
     io::{BufWriter, Write},
-    path::Path,
+    path::PathBuf,
 };
 
 use anyhow::Result;
@@ -25,10 +25,10 @@ use parse::{convert_to_ident, parse_module};
 #[derive(Parser, Debug)]
 struct Args {
     /// Input file
-    input: String,
+    input: PathBuf,
     /// Write output to file
     #[arg(short)]
-    output: Option<String>,
+    output: Option<PathBuf>,
     /// Convert to C# for test
     #[arg(long)]
     test: bool,
@@ -38,7 +38,7 @@ pub fn lib_main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let class_name = match &args.output {
-        Some(x) => Path::new(x).file_stem().unwrap().to_str().unwrap(),
+        Some(x) => x.file_stem().unwrap().to_str().unwrap(),
         None => "Wasm2USharp",
     };
 
