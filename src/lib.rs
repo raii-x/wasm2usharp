@@ -11,7 +11,6 @@ use std::{
     fs,
     io::{BufWriter, Write},
     path::Path,
-    process::ExitCode,
 };
 
 use anyhow::Result;
@@ -35,7 +34,7 @@ struct Args {
     test: bool,
 }
 
-pub fn lib_main() -> ExitCode {
+pub fn lib_main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let class_name = match &args.output {
@@ -43,11 +42,11 @@ pub fn lib_main() -> ExitCode {
         None => "Wasm2USharp",
     };
 
-    let buf: Vec<u8> = std::fs::read(args.input).unwrap();
-    validate(&buf).unwrap();
+    let buf: Vec<u8> = std::fs::read(args.input)?;
+    validate(&buf)?;
 
     let mut out_file = BufWriter::new(match &args.output {
-        Some(x) => Box::new(fs::File::create(x).unwrap()) as Box<dyn Write>,
+        Some(x) => Box::new(fs::File::create(x)?) as Box<dyn Write>,
         None => Box::new(std::io::stdout()) as Box<dyn Write>,
     });
 
@@ -59,10 +58,9 @@ pub fn lib_main() -> ExitCode {
         args.test,
         &mut out_file,
         &import_map,
-    )
-    .unwrap();
+    )?;
 
-    ExitCode::SUCCESS
+    Ok(())
 }
 
 pub fn convert<'input>(

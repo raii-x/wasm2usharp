@@ -1,5 +1,5 @@
 use wasm2usharp::lib_main;
 
-fn main() -> std::process::ExitCode {
+fn main() -> anyhow::Result<()> {
     lib_main()
 }
