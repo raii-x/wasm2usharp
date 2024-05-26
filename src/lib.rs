@@ -34,21 +34,26 @@ struct Args {
     test: bool,
 }
 
-pub fn run() -> anyhow::Result<()> {
+pub fn run() -> Result<()> {
     let args = Args::parse();
 
     let class_name = match &args.output {
         Some(x) => x
             .file_stem()
-            .context("The output path has no file name")?
+            .with_context(|| format!("the output path `{}` has no file name", x.to_string_lossy()))?
             .to_string_lossy(),
         None => "Wasm2USharp".into(),
     };
 
-    let buf: Vec<u8> = std::fs::read(args.input)?;
+    let buf: Vec<u8> = std::fs::read(&args.input)
+        .with_context(|| format!("failed to read from `{}`", args.input.to_string_lossy()))?;
 
     let mut out_file = BufWriter::new(match &args.output {
-        Some(x) => Box::new(fs::File::create(x)?) as Box<dyn Write>,
+        Some(x) => {
+            let file = fs::File::create(x)
+                .with_context(|| format!("failed to write `{}`", x.to_string_lossy()))?;
+            Box::new(file) as Box<dyn Write>
+        }
         None => Box::new(std::io::stdout()) as Box<dyn Write>,
     });
 
@@ -60,7 +65,8 @@ pub fn run() -> anyhow::Result<()> {
         args.test,
         &mut out_file,
         &import_map,
-    )?;
+    )
+    .context("failed to convert to UdonSharp")?;
 
     Ok(())
 }
