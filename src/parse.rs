@@ -118,3 +118,11 @@ pub fn convert_to_ident(mut name: &str) -> String {
 
     prefix.to_string() + ident.as_ref()
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum NotSupportedError {
+    #[error("`{0}` instrunction is not supported")]
+    Instruction(&'static str),
+    #[error("{0} is not supported")]
+    Feature(&'static str),
+}

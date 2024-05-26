@@ -16,7 +16,10 @@ use crate::ir::{
     PAGE_SIZE,
 };
 
-use super::pool::{LoopVarPool, PoolLoopVar, PoolPrimary, PoolVar, VarPool};
+use super::{
+    pool::{LoopVarPool, PoolLoopVar, PoolPrimary, PoolVar, VarPool},
+    NotSupportedError,
+};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -25,7 +28,7 @@ macro_rules! define_single_visit_operator {
     ( @bulk_memory $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {
         fn $visit(&mut self $($(,$arg: $argty)*)?) -> Self::Output {
-            Err(OperatorError::ProposalNotSupported(stringify!($proposal)).into())
+            panic!(stringify!($proposal))
         }
     };
 }
@@ -91,7 +94,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
             match results.len() {
                 0 => BlockType::Empty,
                 1 => BlockType::Type(results[0]),
-                _ => panic!("multi value is not supported"),
+                _ => panic!("multi_value"),
             }
         };
 
@@ -137,7 +140,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
                         .take(&mut self.builder, cs_ty, Some(cs_ty.default())),
                 )
             }
-            BlockType::FuncType(..) => panic!("func type blocks are not supported"),
+            BlockType::FuncType(..) => panic!("multi_value"),
         };
 
         let loop_var = if is_loop {
@@ -243,9 +246,7 @@ impl<'input, 'module> CodeParser<'input, 'module> {
                 self.push_stack(var.into());
                 Some(id)
             }
-            _ => {
-                panic!("Multiple return values are not supported")
-            }
+            _ => panic!("multi_value"),
         }
     }
 
@@ -1042,9 +1043,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
                 let var = self.last_stack();
                 self.builder.push_return(Some(var.into()));
             }
-            _ => {
-                panic!("Multiple return values are not supported")
-            }
+            _ => panic!("multi_value"),
         }
         Ok(())
     }
@@ -1067,10 +1066,9 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         &mut self,
         type_index: u32,
         table_index: u32,
-        table_byte: u8,
+        _table_byte: u8,
     ) -> Self::Output {
-        assert!(table_index == 0);
-        assert!(table_byte == 0);
+        debug_assert_eq!(table_index, 0, "reference_types");
 
         let ty = self.module.types[type_index as usize].clone();
 
@@ -1267,11 +1265,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         self.visit_store(memarg, StorageType::Val(ValType::I32))
     }
 
-    fn visit_memory_size(&mut self, mem: u32, mem_byte: u8) -> Self::Output {
-        if mem != 0 {
-            panic!("Multi memory is not supported")
-        }
-        assert!(mem_byte == 0);
+    fn visit_memory_size(&mut self, mem: u32, _mem_byte: u8) -> Self::Output {
+        debug_assert_eq!(mem, 0, "multi_memory");
 
         let result = self.var_pool.take(&mut self.builder, CsType::Int, None);
         let memory = &self.module.memory.as_ref().unwrap().name;
@@ -1286,11 +1281,8 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         Ok(())
     }
 
-    fn visit_memory_grow(&mut self, mem: u32, mem_byte: u8) -> Self::Output {
-        if mem != 0 {
-            panic!("Multi memory is not supported")
-        }
-        assert!(mem_byte == 0);
+    fn visit_memory_grow(&mut self, mem: u32, _mem_byte: u8) -> Self::Output {
+        debug_assert_eq!(mem, 0, "multi_memory");
 
         let size = self.pop_stack();
         let result = self.var_pool.take(&mut self.builder, CsType::Int, None);
@@ -1935,17 +1927,16 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_memory_init(&mut self, _data_index: u32, _mem: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("memory.init").into())
+        Err(NotSupportedError::Instruction("memory.init").into())
     }
 
     fn visit_data_drop(&mut self, _data_index: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("data.drop").into())
+        Err(NotSupportedError::Instruction("data.drop").into())
     }
 
     fn visit_memory_copy(&mut self, dst_mem: u32, src_mem: u32) -> Self::Output {
-        if dst_mem != 0 || src_mem != 0 {
-            panic!("Multi memory is not supported")
-        }
+        debug_assert_eq!(dst_mem, 0, "multi_memory");
+        debug_assert_eq!(src_mem, 0, "multi_memory");
 
         let len = self.pop_stack();
         let src = self.pop_stack();
@@ -1963,9 +1954,7 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_memory_fill(&mut self, mem: u32) -> Self::Output {
-        if mem != 0 {
-            panic!("Multi memory is not supported")
-        }
+        debug_assert_eq!(mem, 0, "multi_memory");
 
         let len = self.pop_stack();
         let value = self.pop_stack();
@@ -2001,24 +1990,16 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_table_init(&mut self, _elem_index: u32, _table: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("table.init").into())
+        Err(NotSupportedError::Instruction("table.init").into())
     }
 
     fn visit_elem_drop(&mut self, _elem_index: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("elem.drop").into())
+        Err(NotSupportedError::Instruction("elem.drop").into())
     }
 
     fn visit_table_copy(&mut self, _dst_table: u32, _src_table: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("table.copy").into())
+        Err(NotSupportedError::Instruction("table.copy").into())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum OperatorError {
-    #[error("`{0}` proposal is not implemented")]
-    ProposalNotSupported(&'static str),
-    #[error("`{0}` instrunction is not implemented")]
-    InstructionNotSupported(&'static str),
 }
 
 fn cast_from(from: CsType, to: CsType) -> &'static str {
