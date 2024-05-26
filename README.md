@@ -3,14 +3,14 @@
 ## 使い方
 
 ```
-Usage: wasm2usharp.exe [OPTIONS] <INPUT>
+Usage: wasm2usharp [OPTIONS] [INPUT]
 
 Arguments:
-  <INPUT>  入力ファイル
+  [INPUT]  入力ファイル。指定されない、または`-`の場合は標準入力が使用される
 
 Options:
-  -o <OUTPUT>      出力をファイルへ書き込み
-      --test       テスト用のC#へと変換する
+  -o <OUTPUT>      出力先の場所。指定されない場合は標準出力が使用される
+      --test       テストのためにUdonSharpの代わりにC#へと変換する
   -h, --help       ヘルプを出力
 ```
 
