@@ -18,7 +18,7 @@ use clap::Parser;
 use codegen::codegen_module;
 use ir::module::Module;
 use pass::run_passes;
-use wasmparser::validate;
+use wasmparser::{Validator, WasmFeatures};
 
 use parse::{convert_to_ident, parse_module};
 
@@ -46,7 +46,30 @@ pub fn run() -> anyhow::Result<()> {
     };
 
     let buf: Vec<u8> = std::fs::read(args.input)?;
-    validate(&buf)?;
+
+    Validator::new_with_features(WasmFeatures {
+        mutable_global: true,
+        saturating_float_to_int: true,
+        sign_extension: true,
+        bulk_memory: true,
+        floats: true,
+        reference_types: false,
+        multi_value: false,
+        simd: false,
+        relaxed_simd: false,
+        threads: false,
+        tail_call: false,
+        multi_memory: false,
+        exceptions: false,
+        memory64: false,
+        extended_const: false,
+        component_model: false,
+        function_references: false,
+        memory_control: false,
+        gc: false,
+        component_model_values: false,
+    })
+    .validate_all(&buf)?;
 
     let mut out_file = BufWriter::new(match &args.output {
         Some(x) => Box::new(fs::File::create(x)?) as Box<dyn Write>,
