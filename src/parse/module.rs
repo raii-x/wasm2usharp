@@ -164,7 +164,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                             debug_assert!(table_index.is_none(), "reference_types");
                             self.parse_const_expr(&offset_expr)
                         }
-                        _ => Err(NotSupportedError::Feature("Non active element"))?,
+                        _ => Err(NotSupportedError::Feature("non active element"))?,
                     };
 
                     let items = if let ElementItems::Functions(s) = elem.items {
@@ -193,7 +193,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                             self.parse_const_expr(&offset_expr)
                         }
                         DataKind::Passive => {
-                            Err(NotSupportedError::Feature("Passive data segment"))?
+                            Err(NotSupportedError::Feature("passive data segment"))?
                         }
                     };
                     self.module.datas.push(Data {
