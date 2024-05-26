@@ -47,30 +47,6 @@ pub fn run() -> anyhow::Result<()> {
 
     let buf: Vec<u8> = std::fs::read(args.input)?;
 
-    Validator::new_with_features(WasmFeatures {
-        mutable_global: true,
-        saturating_float_to_int: true,
-        sign_extension: true,
-        bulk_memory: true,
-        floats: true,
-        reference_types: false,
-        multi_value: false,
-        simd: false,
-        relaxed_simd: false,
-        threads: false,
-        tail_call: false,
-        multi_memory: false,
-        exceptions: false,
-        memory64: false,
-        extended_const: false,
-        component_model: false,
-        function_references: false,
-        memory_control: false,
-        gc: false,
-        component_model_values: false,
-    })
-    .validate_all(&buf)?;
-
     let mut out_file = BufWriter::new(match &args.output {
         Some(x) => Box::new(fs::File::create(x)?) as Box<dyn Write>,
         None => Box::new(std::io::stdout()) as Box<dyn Write>,
@@ -96,6 +72,30 @@ pub fn convert<'input>(
     out_file: &mut dyn Write,
     import_map: &dyn Fn(&str) -> String,
 ) -> Result<HashSet<&'input str>> {
+    Validator::new_with_features(WasmFeatures {
+        mutable_global: true,
+        saturating_float_to_int: true,
+        sign_extension: true,
+        bulk_memory: true,
+        floats: true,
+        reference_types: false,
+        multi_value: false,
+        simd: false,
+        relaxed_simd: false,
+        threads: false,
+        tail_call: false,
+        multi_memory: false,
+        exceptions: false,
+        memory64: false,
+        extended_const: false,
+        component_model: false,
+        function_references: false,
+        memory_control: false,
+        gc: false,
+        component_model_values: false,
+    })
+    .validate_all(buf)?;
+
     let mut module = Module::new(buf, class_name, test);
 
     let ret = parse_module(&mut module, import_map)?;
