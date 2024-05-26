@@ -16,7 +16,10 @@ use crate::ir::{
     PAGE_SIZE,
 };
 
-use super::pool::{LoopVarPool, PoolLoopVar, PoolPrimary, PoolVar, VarPool};
+use super::{
+    pool::{LoopVarPool, PoolLoopVar, PoolPrimary, PoolVar, VarPool},
+    NotSupportedError,
+};
 
 macro_rules! define_single_visit_operator {
     ( @mvp $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
@@ -25,7 +28,7 @@ macro_rules! define_single_visit_operator {
     ( @bulk_memory $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {
         fn $visit(&mut self $($(,$arg: $argty)*)?) -> Self::Output {
-            Err(OperatorError::ProposalNotSupported(stringify!($proposal)).into())
+            panic!("`{}` proposal is not supported", stringify!($proposal))
         }
     };
 }
@@ -1935,11 +1938,11 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_memory_init(&mut self, _data_index: u32, _mem: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("memory.init").into())
+        Err(NotSupportedError::Instruction("memory.init").into())
     }
 
     fn visit_data_drop(&mut self, _data_index: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("data.drop").into())
+        Err(NotSupportedError::Instruction("data.drop").into())
     }
 
     fn visit_memory_copy(&mut self, dst_mem: u32, src_mem: u32) -> Self::Output {
@@ -2001,24 +2004,16 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_table_init(&mut self, _elem_index: u32, _table: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("table.init").into())
+        Err(NotSupportedError::Instruction("table.init").into())
     }
 
     fn visit_elem_drop(&mut self, _elem_index: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("elem.drop").into())
+        Err(NotSupportedError::Instruction("elem.drop").into())
     }
 
     fn visit_table_copy(&mut self, _dst_table: u32, _src_table: u32) -> Self::Output {
-        Err(OperatorError::InstructionNotSupported("table.copy").into())
+        Err(NotSupportedError::Instruction("table.copy").into())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum OperatorError {
-    #[error("`{0}` proposal is not implemented")]
-    ProposalNotSupported(&'static str),
-    #[error("`{0}` instrunction is not implemented")]
-    InstructionNotSupported(&'static str),
 }
 
 fn cast_from(from: CsType, to: CsType) -> &'static str {

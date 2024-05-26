@@ -17,7 +17,7 @@ use crate::{
         CALL_INDIRECT, DATA, ELEMENT, FUNC, GLOBAL, INIT, MAX_PARAMS, MEMORY, PAGE_SIZE, STACK_TOP,
         TABLE,
     },
-    parse::code::CodeParser,
+    parse::{code::CodeParser, NotSupportedError},
 };
 
 use super::convert_to_ident;
@@ -166,7 +166,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                             assert!(table_index.is_none());
                             self.parse_const_expr(&offset_expr)
                         }
-                        _ => panic!("Not supported element kind"),
+                        _ => Err(NotSupportedError::Feature("Non active element"))?,
                     };
 
                     let items = if let ElementItems::Functions(s) = elem.items {
@@ -196,7 +196,9 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                             }
                             self.parse_const_expr(&offset_expr)
                         }
-                        DataKind::Passive => panic!("Passive data segment is not supported"),
+                        DataKind::Passive => {
+                            Err(NotSupportedError::Feature("Passive data segment"))?
+                        }
                     };
                     self.module.datas.push(Data {
                         offset_expr,
