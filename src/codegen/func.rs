@@ -3,7 +3,6 @@ use std::io;
 use crate::ir::{
     func_header,
     module::{Func, Module},
-    result_cs_ty,
     ty::CsType,
     var::VarId,
     BREAK_DEPTH, LOOP,
@@ -27,11 +26,14 @@ pub fn codegen_func(func: &Func, f: &mut dyn io::Write, module: &Module<'_>) -> 
         .map(|&ty| CsType::get(ty))
         .zip(code.vars.iter().map(|(id, _)| id))
         .collect();
-    write!(
-        f,
-        "{}",
-        func_header(&func.header.name, result_cs_ty(func_ty.results()), &params)
-    )?;
+
+    let result = match func_ty.results().len() {
+        0 => CsType::Void,
+        1 => CsType::get(func_ty.results()[0]),
+        _ => panic!("multi_value"),
+    };
+
+    write!(f, "{}", func_header(&func.header.name, result, &params))?;
 
     writeln!(f, " {{")?;
 

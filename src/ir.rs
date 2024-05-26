@@ -1,8 +1,6 @@
 use std::fmt;
 
-use wasmparser::ValType;
-
-use self::{module::Module, ty::CsType};
+use self::module::Module;
 
 pub mod builder;
 pub mod code;
@@ -45,14 +43,6 @@ pub fn func_header(
 
     header += ")";
     header
-}
-
-pub fn result_cs_ty(results: &[ValType]) -> CsType {
-    match results.len() {
-        0 => CsType::Void,
-        1 => CsType::get(results[0]),
-        _ => panic!("multi_value"),
-    }
 }
 
 pub fn trap(module: &Module<'_>, message: &str) -> String {
