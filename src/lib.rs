@@ -13,7 +13,7 @@ use std::{
     path::PathBuf,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use codegen::codegen_module;
 use ir::module::Module;
@@ -38,8 +38,11 @@ pub fn lib_main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let class_name = match &args.output {
-        Some(x) => x.file_stem().unwrap().to_str().unwrap(),
-        None => "Wasm2USharp",
+        Some(x) => x
+            .file_stem()
+            .context("The output path has no file name")?
+            .to_string_lossy(),
+        None => "Wasm2USharp".into(),
     };
 
     let buf: Vec<u8> = std::fs::read(args.input)?;
