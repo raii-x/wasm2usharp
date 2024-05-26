@@ -8,9 +8,9 @@ pub mod util;
 
 use std::{
     collections::HashSet,
-    fs,
-    io::{BufWriter, Write},
-    path::PathBuf,
+    fs::File,
+    io::{BufWriter, Read, Write},
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result};
@@ -24,9 +24,9 @@ use parse::{convert_to_ident, parse_module};
 
 #[derive(Parser, Debug)]
 struct Args {
-    /// Input file
-    input: PathBuf,
-    /// Write output to file
+    /// Input file. If not provided or if this is `-` then stdin is used.
+    input: Option<PathBuf>,
+    /// Where to place output. If not provided then stdout is used.
     #[arg(short)]
     output: Option<PathBuf>,
     /// Convert to C# for test
@@ -45,12 +45,21 @@ pub fn run() -> Result<()> {
         None => "Wasm2USharp".into(),
     };
 
-    let buf: Vec<u8> = std::fs::read(&args.input)
-        .with_context(|| format!("failed to read from `{}`", args.input.to_string_lossy()))?;
+    let buf: Vec<u8> = match &args.input {
+        Some(path) if path != Path::new("-") => std::fs::read(path)
+            .with_context(|| format!("failed to read from `{}`", path.to_string_lossy()))?,
+        _ => {
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut buf)
+                .context("failed to read <stdin>")?;
+            buf
+        }
+    };
 
     let mut out_file = BufWriter::new(match &args.output {
         Some(x) => {
-            let file = fs::File::create(x)
+            let file = File::create(x)
                 .with_context(|| format!("failed to write `{}`", x.to_string_lossy()))?;
             Box::new(file) as Box<dyn Write>
         }
