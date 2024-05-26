@@ -34,7 +34,7 @@ struct Args {
     test: bool,
 }
 
-pub fn lib_main() -> anyhow::Result<()> {
+pub fn run() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let class_name = match &args.output {
