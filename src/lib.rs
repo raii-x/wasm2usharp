@@ -29,7 +29,7 @@ struct Args {
     /// Where to place output. If not provided then stdout is used.
     #[arg(short)]
     output: Option<PathBuf>,
-    /// Convert to C# for test
+    /// Convert to C# instead of UdonSharp for testing.
     #[arg(long)]
     test: bool,
 }
