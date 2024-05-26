@@ -64,9 +64,9 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     match ty? {
                         RecGroup::Single(ty) => match ty.structural_type {
                             StructuralType::Func(ty) => self.module.types.push(ty),
-                            _ => panic!("Non-function types are not supported"),
+                            _ => panic!("reference_types"),
                         },
-                        _ => panic!("Non-function types are not supported"),
+                        _ => panic!("reference_types"),
                     }
                 }
             }
@@ -90,7 +90,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                         Table(ty) => self.add_table(ty, Some(full_name.clone())),
                         Memory(ty) => self.add_memory(ty, Some(full_name.clone())),
                         Global(ty) => self.add_global(ty, None, Some(full_name.clone())),
-                        Tag(_) => panic!("Tag import is not supported"),
+                        Tag(_) => panic!("exceptions"),
                     }
                 }
             }
@@ -145,9 +145,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                             global.name = name;
                             global.export = true;
                         }
-                        Tag => {
-                            panic!("Tag export is not supported");
-                        }
+                        Tag => panic!("exceptions"),
                     }
                 }
             }
@@ -163,7 +161,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                             table_index,
                             offset_expr,
                         } => {
-                            assert!(table_index.is_none());
+                            debug_assert!(table_index.is_none(), "reference_types");
                             self.parse_const_expr(&offset_expr)
                         }
                         _ => Err(NotSupportedError::Feature("Non active element"))?,
@@ -172,7 +170,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                     let items = if let ElementItems::Functions(s) = elem.items {
                         s.into_iter().collect::<Result<Vec<_>, _>>()?
                     } else {
-                        panic!("Non function elements are not supported");
+                        panic!("reference_types");
                     };
 
                     for &i in &items {
@@ -191,9 +189,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                             memory_index,
                             offset_expr,
                         } => {
-                            if memory_index != 0 {
-                                panic!("Multi memory is not supported");
-                            }
+                            debug_assert_eq!(memory_index, 0, "multi_memory");
                             self.parse_const_expr(&offset_expr)
                         }
                         DataKind::Passive => {
@@ -259,8 +255,8 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
     }
 
     fn add_table(&mut self, ty: TableType, name: Option<String>) {
-        assert!(self.module.table.is_none());
-        assert!(ty.element_type.is_func_ref());
+        debug_assert!(self.module.table.is_none(), "reference_types");
+        debug_assert!(ty.element_type.is_func_ref(), "reference_types");
 
         let import = name.is_some();
         let name = match name {
@@ -277,7 +273,7 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
     }
 
     fn add_memory(&mut self, ty: MemoryType, name: Option<String>) {
-        assert!(self.module.memory.is_none());
+        debug_assert!(self.module.memory.is_none(), "multi_memory");
 
         let import = name.is_some();
         let name = match name {
@@ -326,14 +322,13 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
             GlobalGet { global_index } => {
                 self.module.globals[global_index as usize].name.to_string()
             }
-            _ => panic!("Not supported const expr operator"),
+            _ => panic!("extended_const"),
         };
 
-        if let End = op_iter.next().unwrap().unwrap() {
-        } else {
-            panic!("Not supported const expr operator")
-        };
-        assert!(op_iter.next().is_none());
+        debug_assert!(
+            matches!(op_iter.next().unwrap().unwrap(), End),
+            "extended_const"
+        );
 
         value
     }

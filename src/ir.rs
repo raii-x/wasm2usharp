@@ -51,7 +51,7 @@ pub fn result_cs_ty(results: &[ValType]) -> CsType {
     match results.len() {
         0 => CsType::Void,
         1 => CsType::get(results[0]),
-        _ => unreachable!(),
+        _ => panic!("multi_value"),
     }
 }
 
