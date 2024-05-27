@@ -5,6 +5,12 @@ use crate::ir::{module::Module, ty::CsType, DATA, ELEMENT, STACK, STACK_SIZE, ST
 use super::func::codegen_func;
 
 pub fn codegen_module(module: &Module<'_>, f: &mut dyn io::Write) -> io::Result<()> {
+    writeln!(
+        f,
+        "// Converted from WebAssembly with {} {}",
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+    )?;
     writeln!(f, "using System;")?;
     if !module.test {
         writeln!(f, "using UdonSharp;")?;
