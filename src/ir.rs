@@ -25,6 +25,7 @@ pub const VAR: &str = "w2us_v";
 pub const LOOP: &str = "w2us_loop";
 pub const STACK: &str = "w2us_stack";
 pub const STACK_TOP: &str = "w2us_stack_top";
+pub const NULL: &str = "w2us_null";
 pub const START: &str = "w2us_start";
 
 pub fn func_header(
@@ -50,8 +51,6 @@ pub fn trap(module: &Module<'_>, message: &str) -> String {
         format!(r#"throw new Exception("{message}");"#)
     } else {
         // エラー時にはnullのメソッドを呼び出すことで例外を出して停止する
-        format!(
-            r#"Debug.LogError("{message}"); ((UdonSharpBehaviour)null).GetProgramVariable("");"#
-        )
+        format!(r#"Debug.LogError("{message}"); {NULL}.RequestSerialization();"#)
     }
 }

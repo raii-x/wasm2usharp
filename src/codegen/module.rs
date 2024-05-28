@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::ir::{module::Module, ty::CsType, DATA, ELEMENT, STACK, STACK_SIZE, STACK_TOP};
+use crate::ir::{module::Module, ty::CsType, DATA, ELEMENT, NULL, STACK, STACK_SIZE, STACK_TOP};
 
 use super::func::codegen_func;
 
@@ -112,6 +112,11 @@ pub fn codegen_module(module: &Module<'_>, f: &mut dyn io::Write) -> io::Result<
     // 再帰呼び出しで保存するローカル変数用のスタック
     writeln!(f, "object[] {STACK} = new object[{STACK_SIZE}];")?;
     writeln!(f, "int {STACK_TOP} = 0;")?;
+
+    // trap用のnull変数
+    if !module.test {
+        writeln!(f, "UdonSharpBehaviour {NULL} = null;")?;
+    }
 
     writeln!(f, "}}")?;
 
