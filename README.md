@@ -1,8 +1,53 @@
-# wasm2u#
+# wasm2usharp
+
+[日本語はこちら](#日本語)
+
+A tool for converting WebAssembly to UdonSharp
+
+## How to use
+
+```text
+Usage: wasm2usharp [OPTIONS] [INPUT]
+
+Arguments:
+  [INPUT]  Input file. If not provided or if this is `-` then stdin is used
+
+Options:
+  -o <OUTPUT>      Where to place output. If not provided then stdout is used
+      --test       Convert to C# instead of UdonSharp for testing
+  -h, --help       Print help
+```
+
+* In U#, you need to call `w2us_init` method first for initialization
+* Global variables, memory, and table exported by Wasm become public fields in U#,
+  and functions exported by Wasm become public methods in U#
+* Imports in Wasm create public fields of type <code>class_*module_name*</code> for each module name in U#,
+  and they are accessed by <code>*module_name*.*import_name*</code> in the converted code
+* The identifier `_start` in Wasm will be replaced by `w2us_start` after conversion to U#.
+  This is to prevent a function named `_start`, which is an entry point in WASI, from being called unexpectedly,
+  since it is treated as a Start event function in Udon.
+* Recursive calls to functions that are completed within Wasm are handled correctly,
+  but if a function is recursively called by calling an external function from Wasm and then calling the Wasm function again from outside,
+  the value of the local variable of the recursively called function may not be correct
+* Integer types in Wasm correspond to signed integer types in U#
+* If an output file name is specified in the command, the file name minus the extension is the class name in U#
+* In Wasm export/import names, non-alphanumeric characters are replaced by `_`,
+  and if the first letter is a number or the same name as a C# keyword, it is prefixed with `_`
+
+## Supported [Wasm proposals](https://github.com/WebAssembly/proposals/blob/main/finished-proposals.md "proposals/finished-proposals.md at main · WebAssembly/proposals")
+
+* Import/Export of Mutable Globals
+* Non-trapping float-to-int conversions
+* Sign-extension operators
+* Bulk memory operations (Only `memory.copy` and `memory.fill` instructions are supported)
+
+## 日本語
+
+WebAssemblyからUdonSharpへの変換ツール
 
 ## 使い方
 
-```
+```text
 Usage: wasm2usharp [OPTIONS] [INPUT]
 
 Arguments:
@@ -36,9 +81,4 @@ Options:
 * Import/Export of Mutable Globals
 * Non-trapping float-to-int conversions
 * Sign-extension operators
-* Bulk memory operations (memory.copy命令とmemory.fill命令のみ対応)
-
-## TODO
-
-* 出力されるU#の最適化
-* UdonSharpでのWASIの実装
+* Bulk memory operations (`memory.copy`命令と`memory.fill`命令のみ対応)
