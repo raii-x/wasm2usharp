@@ -2,7 +2,12 @@
 
 [日本語はこちら](#日本語)
 
-This is an exapmle of a use of wasm2usharp.
+This is an exapmle of a use of wasm2usharp in a VRChat project.
+This program works as follows.
+
+1. Add the player name to the end of the string `Hello, ` in the Wasm memory from the `Start` function of U# outside the Wasm program, and call the `hello` function of the Wasm program
+1. Call the external `debug_log` function from the `hello` function of the Wasm program with the range in the memory of the string as arguments
+1. Print the string in the Wasm memory by the external `debug_log` function
 
 ## Description of each file
 
@@ -32,12 +37,17 @@ wasm2usharp hello.wasm -o Assets/Hello.cs
 ## How to run in Unity
 
 1. Copy all files under `Assets` in this directory to any location in the `Assets` folder in the Unity project of VRChat world.
-1. Add `ExecuteHello` Prefab in the scene.
+1. Add the `ExecuteHello` prefab in the scene.
 1. Play the scene and you will see the output <code>Hello, *PlayerName*</code> in the Console window.
 
 ## 日本語
 
-wasm2usharpの使用例です。
+VRChatプロジェクト内でのwasm2usharpの使用例です。
+このプログラムは次のように動作します。
+
+1. Wasmプログラムの外部のU#の`Start`関数からWasmメモリ内の`Hello, `という文字列の末尾にプレイヤー名を追加し、Wasmプログラムの`hello`関数を呼び出す
+1. Wasmプログラムの`hello`関数から文字列のメモリ内での範囲を引数として外部の`debug_log`関数を呼び出す
+1. 外部の`debug_log`関数でWasmメモリ内の文字列を出力する
 
 ## 各ファイルの説明
 
