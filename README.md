@@ -18,6 +18,8 @@ Options:
   -h, --help       Print help
 ```
 
+See [examples](examples) for usage in a VRChat project.
+
 * In U#, you need to call `w2us_init` method first for initialization
 * Global variables, memory, and table exported by Wasm become public fields in U#,
   and functions exported by Wasm become public methods in U#
@@ -58,6 +60,8 @@ Options:
       --test       テストのためにUdonSharpの代わりにC#へと変換する
   -h, --help       ヘルプを出力
 ```
+
+VRChatプロジェクト内での使用例は[examples](examples)を参照してください。
 
 * U#では初期化のために最初に`w2us_init`メソッドを呼ぶ必要がある
 * Wasmでエクスポートされたグローバル変数・メモリ・テーブルはU#ではpublicフィールドとなり、
