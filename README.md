@@ -34,7 +34,7 @@ Options:
 * In Wasm export/import names, non-alphanumeric characters are replaced by `_`,
   and if the first letter is a number or the same name as a C# keyword, it is prefixed with `_`
 
-## Supported [Wasm proposals](https://github.com/WebAssembly/proposals/blob/main/finished-proposals.md "proposals/finished-proposals.md at main · WebAssembly/proposals")
+## Supported [Wasm proposals][WasmProposals]
 
 * Import/Export of Mutable Globals
 * Non-trapping float-to-int conversions
@@ -76,9 +76,11 @@ Options:
 * Wasmのエクスポート・インポートの名前は、英数字以外の文字は`_`に置換され、
   先頭が数字の場合とC#のキーワードと同じ名前の場合は先頭に`_`が付与される
 
-## 対応している[Wasm proposal](https://github.com/WebAssembly/proposals/blob/main/finished-proposals.md "proposals/finished-proposals.md at main · WebAssembly/proposals")
+## 対応している[Wasm proposal][WasmProposals]
 
 * Import/Export of Mutable Globals
 * Non-trapping float-to-int conversions
 * Sign-extension operators
 * Bulk memory operations (`memory.copy`命令と`memory.fill`命令のみ対応)
+
+[WasmProposals]: https://github.com/WebAssembly/proposals/blob/main/finished-proposals.md "proposals/finished-proposals.md at main · WebAssembly/proposals"
