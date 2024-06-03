@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 authors = ["raii <raii.program@gmail.com>"]
 license = "MIT OR Apache-2.0"
+description = "A tool for converting WebAssembly to UdonSharp"
+categories = ["command-line-utilities", "compilers", "wasm"]
+keywords = ["wasm", "webassembly", "vrchat", "udon"]
+repository = "https://github.com/raii-x/wasm2usharp"
+readme = "README.md"
 
 [dependencies]
 anyhow = "1.0.75"
