@@ -4,6 +4,16 @@
 
 A tool for converting WebAssembly to UdonSharp
 
+## Installation
+
+You can download prebuilt binaries from the [Releases][releases] page.
+
+If you are using Cargo, you can install from Cargo.
+
+```bash
+cargo install wasm2usharp
+```
+
 ## How to use
 
 ```text
@@ -48,6 +58,16 @@ See [examples](examples) for usage in a VRChat project.
 
 WebAssemblyからUdonSharpへの変換ツール
 
+## インストール
+
+[Releases][releases]のページから、ビルド済みのバイナリをダウンロードできます。
+
+Cargoを使用している場合、Cargoからインストールすることができます。
+
+```bash
+cargo install wasm2usharp
+```
+
 ## 使い方
 
 ```text
@@ -89,4 +109,5 @@ VRChatプロジェクト内での使用例は[examples](examples)を参照して
 * Sign-extension operators
 * Bulk memory operations (`memory.copy`命令と`memory.fill`命令のみ対応)
 
+[releases]: https://github.com/raii-x/wasm2usharp/releases
 [WasmProposals]: https://github.com/WebAssembly/proposals/blob/main/finished-proposals.md "proposals/finished-proposals.md at main · WebAssembly/proposals"
