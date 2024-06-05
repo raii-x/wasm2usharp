@@ -16,6 +16,7 @@ Options:
   -o <OUTPUT>      Where to place output. If not provided then stdout is used
       --test       Convert to C# instead of UdonSharp for testing
   -h, --help       Print help
+  -V, --version    Print version
 ```
 
 See [examples](examples) for usage in a VRChat project.
@@ -59,6 +60,7 @@ Options:
   -o <OUTPUT>      出力先の場所。指定されない場合は標準出力が使用される
       --test       テストのためにUdonSharpの代わりにC#へと変換する
   -h, --help       ヘルプを出力
+  -V, --version    バージョンを出力
 ```
 
 VRChatプロジェクト内での使用例は[examples](examples)を参照してください。
