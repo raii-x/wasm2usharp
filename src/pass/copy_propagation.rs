@@ -85,7 +85,7 @@ fn reaching_def(
         #[cfg(test)]
         if let Some(in_sets) = &mut in_sets {
             // Reaching definitionのinを出力
-            in_sets[inst_id] = out.clone();
+            in_sets[inst_id].clone_from(out);
         }
 
         let inst = &code.insts[inst_id];
@@ -157,7 +157,7 @@ fn copy(code: &Code) -> SecondaryMap<InstId, HashSet<Def>> {
             }
         }
     };
-    let in_ = |inst_id, out: &HashSet<_>| in_sets[inst_id] = out.clone();
+    let in_ = |inst_id, out: &HashSet<_>| in_sets[inst_id].clone_from(out);
 
     let builder = SetsBuilder::new(code, Merge::Intersection, gen, kill, in_);
     builder.build(HashSet::new());
