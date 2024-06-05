@@ -23,6 +23,7 @@ use wasmparser::{Validator, WasmFeatures};
 use parse::{convert_to_ident, parse_module};
 
 #[derive(Parser, Debug)]
+#[command(version, about)]
 struct Args {
     /// Input file. If not provided or if this is `-` then stdin is used.
     input: Option<PathBuf>,
