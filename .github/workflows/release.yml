@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: ci-test
+          bin: wasm2usharp
           target: ${{ matrix.target }}
           tar: unix
           zip: windows
