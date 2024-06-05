@@ -305,7 +305,7 @@ fn test_wast(name: &str, filter: Option<&dyn Filter>) {
             | AssertException { .. } => {
                 println!("Failure case is skipped")
             }
-            Register { .. } => {}
+            Register { .. } | Thread(_) | Wait { .. } => {}
         }
     }
 }
