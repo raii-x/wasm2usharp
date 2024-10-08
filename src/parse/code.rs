@@ -1635,7 +1635,11 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
     }
 
     fn visit_f32_ceil(&mut self) -> Self::Output {
-        self.visit_math_un_op("Ceiling")
+        if self.module.test {
+            self.visit_math_un_op("Ceiling")
+        } else {
+            self.visit_math_un_op("Ceil")
+        }
     }
 
     fn visit_f32_floor(&mut self) -> Self::Output {
