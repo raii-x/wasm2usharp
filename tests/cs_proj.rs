@@ -48,7 +48,7 @@ impl<'input> CsProj<'input> {
         let cs_path = self.dir.path().join(format!("{class_name}.cs"));
         let mut cs_file = File::create(cs_path).unwrap();
         let import_map = |module: &_| format!("Module{}", self.reg_modules.get(module).unwrap());
-        let imports = convert(data, class_name, true, &mut cs_file, &import_map).unwrap();
+        let imports = convert(data, class_name, None, true, &mut cs_file, &import_map).unwrap();
 
         // インポート宣言を変換
         let imports = imports
