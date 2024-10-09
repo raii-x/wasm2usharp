@@ -23,10 +23,11 @@ Arguments:
   [INPUT]  Input file. If not provided or if this is `-` then stdin is used
 
 Options:
-  -o <OUTPUT>      Where to place output. If not provided then stdout is used
-      --test       Convert to C# instead of UdonSharp for testing
-  -h, --help       Print help
-  -V, --version    Print version
+  -o <OUTPUT>                  Where to place output. If not provided then stdout is used
+  -n, --namespace <NAMESPACE>  Namespace to use for the generated class
+      --test                   Convert to C# instead of UdonSharp for testing
+  -h, --help                   Print help
+  -V, --version                Print version
 ```
 
 See [examples](examples) for usage in a VRChat project.
@@ -77,10 +78,11 @@ Arguments:
   [INPUT]  入力ファイル。指定されない、または`-`の場合は標準入力が使用される
 
 Options:
-  -o <OUTPUT>      出力先の場所。指定されない場合は標準出力が使用される
-      --test       テストのためにUdonSharpの代わりにC#へと変換する
-  -h, --help       ヘルプを出力
-  -V, --version    バージョンを出力
+  -o <OUTPUT>                  出力先の場所。指定されない場合は標準出力が使用される
+  -n, --namespace <NAMESPACE>  生成されるクラスに使用する名前空間
+      --test                   テストのためにUdonSharpの代わりにC#へと変換する
+  -h, --help                   ヘルプを出力
+  -V, --version                バージョンを出力
 ```
 
 VRChatプロジェクト内での使用例は[examples](examples)を参照してください。

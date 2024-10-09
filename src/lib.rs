@@ -30,6 +30,9 @@ struct Args {
     /// Where to place output. If not provided then stdout is used.
     #[arg(short)]
     output: Option<PathBuf>,
+    /// Namespace to use for the generated class.
+    #[arg(short, long)]
+    namespace: Option<String>,
     /// Convert to C# instead of UdonSharp for testing.
     #[arg(long)]
     test: bool,
@@ -72,6 +75,7 @@ pub fn run() -> Result<()> {
     convert(
         &buf,
         class_name.to_string(),
+        args.namespace,
         args.test,
         &mut out_file,
         &import_map,
@@ -84,6 +88,7 @@ pub fn run() -> Result<()> {
 pub fn convert<'input>(
     buf: &'input [u8],
     class_name: String,
+    namespace: Option<String>,
     test: bool,
     out_file: &mut dyn Write,
     import_map: &dyn Fn(&str) -> String,
@@ -112,7 +117,7 @@ pub fn convert<'input>(
     })
     .validate_all(buf)?;
 
-    let mut module = Module::new(buf, class_name, test);
+    let mut module = Module::new(buf, class_name, namespace, test);
 
     let ret = parse_module(&mut module, import_map)?;
     run_passes(&mut module);
