@@ -23,7 +23,7 @@ Arguments:
   [INPUT]  Input file. If not provided or if this is `-` then stdin is used
 
 Options:
-  -o <OUTPUT>                  Where to place output. If not provided then stdout is used
+  -o, --output <OUTPUT>        Where to place output. If not provided then stdout is used
   -n, --namespace <NAMESPACE>  Namespace to use for the generated class
       --test                   Convert to C# instead of UdonSharp for testing
   -h, --help                   Print help
@@ -78,7 +78,7 @@ Arguments:
   [INPUT]  入力ファイル。指定されない、または`-`の場合は標準入力が使用される
 
 Options:
-  -o <OUTPUT>                  出力先の場所。指定されない場合は標準出力が使用される
+  -o, --output <OUTPUT>        出力先の場所。指定されない場合は標準出力が使用される
   -n, --namespace <NAMESPACE>  生成されるクラスに使用する名前空間
       --test                   テストのためにUdonSharpの代わりにC#へと変換する
   -h, --help                   ヘルプを出力
