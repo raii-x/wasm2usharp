@@ -1081,9 +1081,9 @@ impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
         match self.module.call_indirects.get(&(type_index as usize)) {
             Some(index) => self.call(*index, ty, params),
             None => {
+                self.unreachable = 1;
                 self.builder
                     .push_line(trap(self.module, "invalid function type"));
-                self.get_result(&ty);
             }
         }
 
