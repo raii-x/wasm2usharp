@@ -19,6 +19,10 @@ pub fn codegen_module(module: &Module<'_>, f: &mut dyn io::Write) -> io::Result<
 
     writeln!(f, "#pragma warning disable")?;
 
+    if let Some(namespace) = &module.namespace {
+        writeln!(f, "namespace {} {{", namespace)?;
+    }
+
     write!(f, "public class {} ", module.class_name)?;
     if module.test {
         writeln!(f, "{{")?;
@@ -118,7 +122,12 @@ pub fn codegen_module(module: &Module<'_>, f: &mut dyn io::Write) -> io::Result<
         writeln!(f, "UdonSharpBehaviour {NULL} = null;")?;
     }
 
+    // classの終了
     writeln!(f, "}}")?;
+
+    if module.namespace.is_some() {
+        writeln!(f, "}}")?;
+    }
 
     Ok(())
 }

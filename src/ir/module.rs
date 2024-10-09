@@ -7,6 +7,7 @@ use super::{code::Code, ty::CsType};
 pub struct Module<'input> {
     pub buf: &'input [u8],
     pub class_name: String,
+    pub namespace: Option<String>,
     pub test: bool,
     pub types: Vec<FuncType>,
     /// 出力のU#に含まれる全ての関数。
@@ -26,10 +27,16 @@ pub struct Module<'input> {
 }
 
 impl<'input> Module<'input> {
-    pub fn new(buf: &'input [u8], class_name: String, test: bool) -> Self {
+    pub fn new(
+        buf: &'input [u8],
+        class_name: String,
+        namespace: Option<String>,
+        test: bool,
+    ) -> Self {
         Self {
             buf,
             class_name,
+            namespace,
             test,
             types: Vec::new(),
             all_funcs: Vec::new(),
