@@ -28,7 +28,7 @@ struct Args {
     /// Input file. If not provided or if this is `-` then stdin is used.
     input: Option<PathBuf>,
     /// Where to place output. If not provided then stdout is used.
-    #[arg(short)]
+    #[arg(short, long)]
     output: Option<PathBuf>,
     /// Namespace to use for the generated class.
     #[arg(short, long)]
