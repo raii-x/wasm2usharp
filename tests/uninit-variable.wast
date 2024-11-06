@@ -1,5 +1,5 @@
 (module
-  (func (export "uninit-variable") (param i32) (result i32)
+  (func (export "copy-propagation-param") (param i32) (result i32)
     loop
       i32.const 1
       local.tee 0
@@ -16,4 +16,4 @@
   )
 )
 
-(assert_return (invoke "uninit-variable" (i32.const 0)) (i32.const 1))
+(assert_return (invoke "copy-propagation-param" (i32.const 0)) (i32.const 1))
