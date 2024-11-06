@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{EntityRef, SecondaryMap};
+use wasmparser::FuncType;
 
 use crate::{
     ir::{
@@ -18,14 +19,14 @@ enum Def {
     Inst(InstId),
 }
 
-pub fn copy_propagation(code: &mut Code) {
+pub fn copy_propagation(func_ty: &FuncType, code: &mut Code) {
     let (use_defs, def_uses) = reaching_def(
         code,
         #[cfg(test)]
         None,
     );
     let copy_in = copy(code);
-    replace_copy(code, &use_defs, &def_uses, &copy_in);
+    replace_copy(func_ty, code, &use_defs, &def_uses, &copy_in);
 }
 
 /// テスト時には引数のin_setsにReaching definitionのinを出力する
@@ -363,6 +364,7 @@ fn is_copy(inst: &Inst) -> bool {
 
 /// コピー先の変数をコピー元に置き換え、不要なコピー文を削除できるなら削除する
 fn replace_copy(
+    func_ty: &FuncType,
     code: &mut Code,
     _use_defs: &SecondaryMap<InstId, HashSet<Def>>,
     def_uses: &HashMap<Def, HashSet<InstId>>,
@@ -430,8 +432,14 @@ fn replace_copy(
             };
 
             // 2つの変数のdefaultを合わせる
-            if code.vars[src].default.is_none() && code.vars[dst].default.is_some() {
-                code.vars[src].default = code.vars[dst].default;
+            if code.vars[src].default.is_none() {
+                if code.vars[dst].default.is_some() {
+                    // コピー先にdefaultが存在する場合、コピー元にコピー先のdefaultを設定
+                    code.vars[src].default = code.vars[dst].default;
+                } else if dst.index() < func_ty.params().len() {
+                    // コピー先が引数の場合、コピー元のdefaultに変数の型のデフォルト値を設定
+                    code.vars[src].default = Some(code.vars[src].ty.default());
+                }
             }
         }
     }
@@ -439,18 +447,11 @@ fn replace_copy(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use wasmparser::ValType::I32;
 
-    use cranelift_entity::{EntityRef, SecondaryMap};
+    use crate::ir::{builder::Builder, ty::Const, var::Var};
 
-    use crate::ir::{
-        builder::Builder,
-        code::{Breakable, Code, InstId, InstKind},
-        ty::Const,
-        var::{Var, VarId},
-    };
-
-    use super::{copy, reaching_def, replace_copy, Def};
+    use super::*;
 
     #[test]
     fn copy_propagation_block() {
@@ -1126,6 +1127,7 @@ mod tests {
         // 1: v4 = v2;
         // 2: v5 = v3 + v4;
 
+        let func_ty = FuncType::new(vec![I32, I32], vec![]);
         let mut builder = Builder::new(&[]);
 
         let v1 = builder.new_var(Var {
@@ -1155,7 +1157,7 @@ mod tests {
         let mut reach_sets = SecondaryMap::new();
         let (use_defs, def_uses) = reaching_def(&code, Some(&mut reach_sets));
         let copy_sets = copy(&code);
-        replace_copy(&mut code, &use_defs, &def_uses, &copy_sets);
+        replace_copy(&func_ty, &mut code, &use_defs, &def_uses, &copy_sets);
 
         code_eq_nop(&code, &[/* 0 */ true, /* 1 */ true, /* 2 */ false]);
     }
@@ -1169,6 +1171,7 @@ mod tests {
         // 3: v2 = x + tmp
         // 4: return v2
 
+        let func_ty = FuncType::new(vec![I32], vec![]);
         let mut builder = Builder::new(&[]);
 
         let x = builder.new_var(Var {
@@ -1220,7 +1223,7 @@ mod tests {
             "copy",
         );
 
-        replace_copy(&mut code, &use_defs, &def_uses, &copy_sets);
+        replace_copy(&func_ty, &mut code, &use_defs, &def_uses, &copy_sets);
         code_eq_nop(
             &code,
             &[

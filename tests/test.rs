@@ -42,119 +42,130 @@ macro_rules! test_ignore {
     };
 }
 
-test!(test_address, "address");
-test!(test_align, "align");
-test!(test_binary_leb128, "binary-leb128");
-test!(test_binary, "binary");
-test!(test_block, "block");
-test!(test_br, "br");
-test!(test_br_if, "br_if");
-test_ignore!(test_br_table, "br_table");
-test!(test_break_drop, "break-drop");
-test!(test_call, "call");
-test!(test_call_indirect, "call_indirect");
-test!(test_comments, "comments");
-test!(test_const, "const");
-test!(test_conversions, "conversions");
-test!(test_custom, "custom");
-test!(test_data, "data");
-test!(test_elem, "elem");
-test!(test_endianness, "endianness");
-test!(test_exports, "exports");
-test!(test_f32, "f32");
+test!(test_address, "testsuite/address");
+test!(test_align, "testsuite/align");
+test!(test_binary_leb128, "testsuite/binary-leb128");
+test!(test_binary, "testsuite/binary");
+test!(test_block, "testsuite/block");
+test!(test_br, "testsuite/br");
+test!(test_br_if, "testsuite/br_if");
+test_ignore!(test_br_table, "testsuite/br_table");
+test!(test_break_drop, "testsuite/break-drop");
+test!(test_call, "testsuite/call");
+test!(test_call_indirect, "testsuite/call_indirect");
+test!(test_comments, "testsuite/comments");
+test!(test_const, "testsuite/const");
+test!(test_conversions, "testsuite/conversions");
+test!(test_custom, "testsuite/custom");
+test!(test_data, "testsuite/data");
+test!(test_elem, "testsuite/elem");
+test!(test_endianness, "testsuite/endianness");
+test!(test_exports, "testsuite/exports");
+test!(test_f32, "testsuite/f32");
 test!(
     test_f32_bitwise,
-    "f32_bitwise",
+    "testsuite/f32_bitwise",
     &deny_float_nan_case(&["copysign"])
 );
-test!(test_f32_cmp, "f32_cmp");
-test!(test_f64, "f64");
+test!(test_f32_cmp, "testsuite/f32_cmp");
+test!(test_f64, "testsuite/f64");
 test!(
     test_f64_bitwise,
-    "f64_bitwise",
+    "testsuite/f64_bitwise",
     &deny_float_nan_case(&["copysign"])
 );
-test!(test_f64_cmp, "f64_cmp");
-test!(test_fac, "fac");
-test!(test_float_exprs, "float_exprs");
-test!(test_float_literals, "float_literals");
-test!(test_float_memory, "float_memory");
+test!(test_f64_cmp, "testsuite/f64_cmp");
+test!(test_fac, "testsuite/fac");
+test!(test_float_exprs, "testsuite/float_exprs");
+test!(test_float_literals, "testsuite/float_literals");
+test!(test_float_memory, "testsuite/float_memory");
 test!(
     test_float_misc,
-    "float_misc",
+    "testsuite/float_misc",
     &deny_float_nan_case(&["f32.copysign", "f64.copysign"])
 );
-test!(test_forward, "forward");
-test!(test_func, "func");
-test!(test_func_ptrs, "func_ptrs");
-test!(test_globals, "globals");
-test!(test_if, "if");
-// test!(test_imports, "imports");
-// test!(test_inline_module, "inline-module");
-test!(test_int_exprs, "int_exprs");
-test!(test_int_literals, "int_literals");
-test!(test_labels, "labels");
-test!(test_left_to_right, "left-to-right");
-// test!(test_linking, "linking");
-test!(test_load, "load");
-test!(test_local_get, "local_get");
-test!(test_local_set, "local_set");
-test!(test_local_tee, "local_tee");
-test!(test_loop, "loop");
-test!(test_memory, "memory");
-test!(test_memory_grow, "memory_grow");
-test!(test_memory_redundancy, "memory_redundancy");
-test!(test_memory_size, "memory_size");
-test!(test_memory_trap, "memory_trap");
-// test!(test_names, "names");
-test!(test_nop, "nop");
-test!(test_return, "return");
-test!(test_select, "select");
-test!(test_skip_stack_guard_page, "skip-stack-guard-page");
-test!(test_stack, "stack");
-test!(test_start, "start");
-test!(test_store, "store");
-test!(test_switch, "switch");
-test!(test_table, "table");
-test!(test_token, "token");
-test!(test_traps, "traps");
-test!(test_type, "type");
-test!(test_typecheck, "typecheck");
-test!(test_unreachable, "unreachable");
-test!(test_unreached_invalid, "unreached-invalid");
-test!(test_unwind, "unwind");
-test!(test_utf8_custom_section_id, "utf8-custom-section-id");
-test!(test_utf8_import_field, "utf8-import-field");
-test!(test_utf8_import_module, "utf8-import-module");
-test!(test_utf8_invalid_encoding, "utf8-invalid-encoding");
+test!(test_forward, "testsuite/forward");
+test!(test_func, "testsuite/func");
+test!(test_func_ptrs, "testsuite/func_ptrs");
+test!(test_globals, "testsuite/globals");
+test!(test_if, "testsuite/if");
+// test!(test_imports, "testsuite/imports");
+// test!(test_inline_module, "testsuite/inline-module");
+test!(test_int_exprs, "testsuite/int_exprs");
+test!(test_int_literals, "testsuite/int_literals");
+test!(test_labels, "testsuite/labels");
+test!(test_left_to_right, "testsuite/left-to-right");
+// test!(test_linking, "testsuite/linking");
+test!(test_load, "testsuite/load");
+test!(test_local_get, "testsuite/local_get");
+test!(test_local_set, "testsuite/local_set");
+test!(test_local_tee, "testsuite/local_tee");
+test!(test_loop, "testsuite/loop");
+test!(test_memory, "testsuite/memory");
+test!(test_memory_grow, "testsuite/memory_grow");
+test!(test_memory_redundancy, "testsuite/memory_redundancy");
+test!(test_memory_size, "testsuite/memory_size");
+test!(test_memory_trap, "testsuite/memory_trap");
+// test!(test_names, "testsuite/names");
+test!(test_nop, "testsuite/nop");
+test!(test_return, "testsuite/return");
+test!(test_select, "testsuite/select");
+test!(
+    test_skip_stack_guard_page,
+    "testsuite/skip-stack-guard-page"
+);
+test!(test_stack, "testsuite/stack");
+test!(test_start, "testsuite/start");
+test!(test_store, "testsuite/store");
+test!(test_switch, "testsuite/switch");
+test!(test_table, "testsuite/table");
+test!(test_token, "testsuite/token");
+test!(test_traps, "testsuite/traps");
+test!(test_type, "testsuite/type");
+test!(test_typecheck, "testsuite/typecheck");
+test!(test_unreachable, "testsuite/unreachable");
+test!(test_unreached_invalid, "testsuite/unreached-invalid");
+test!(test_unwind, "testsuite/unwind");
+test!(
+    test_utf8_custom_section_id,
+    "testsuite/utf8-custom-section-id"
+);
+test!(test_utf8_import_field, "testsuite/utf8-import-field");
+test!(test_utf8_import_module, "testsuite/utf8-import-module");
+test!(
+    test_utf8_invalid_encoding,
+    "testsuite/utf8-invalid-encoding"
+);
 
 // Non-trapping float-to-int conversions
 test!(
     test_nontrapping_float_to_int_conversions,
-    "proposals/nontrapping-float-to-int-conversions/conversions"
+    "testsuite/proposals/nontrapping-float-to-int-conversions/conversions"
 );
 
 // Sign-extension operators
 test!(
     test_sign_extension_ops_i32,
-    "proposals/sign-extension-ops/i32",
+    "testsuite/proposals/sign-extension-ops/i32",
     &deny_int_neg_max_case(&["rem_s"])
 );
 test!(
     test_sign_extension_ops_i64,
-    "proposals/sign-extension-ops/i64",
+    "testsuite/proposals/sign-extension-ops/i64",
     &deny_int_neg_max_case(&["rem_s"])
 );
 
 // Bulk memory operations
 test!(
     test_memory_copy,
-    "proposals/bulk-memory-operations/memory_copy"
+    "testsuite/proposals/bulk-memory-operations/memory_copy"
 );
 test!(
     test_memory_fill,
-    "proposals/bulk-memory-operations/memory_fill"
+    "testsuite/proposals/bulk-memory-operations/memory_fill"
 );
+
+test!(test_uninit_variable, "uninit-variable");
 
 // traitのエイリアス
 trait Filter: Fn(&WastDirective<'_>) -> bool {}
@@ -206,7 +217,7 @@ fn deny_int_neg_max_case(names: &'static [&'static str]) -> impl Filter {
 fn test_wast(name: &str, filter: Option<&dyn Filter>) {
     let buf = read_to_string("tests/spectest.wast").unwrap();
 
-    let mut wast_path: PathBuf = PathBuf::from("tests/testsuite/");
+    let mut wast_path: PathBuf = PathBuf::from("tests/");
     wast_path.push(name);
     wast_path.set_extension("wast");
 

@@ -66,7 +66,7 @@ mod tests {
         var::Var,
     };
 
-    use super::remove_unused_vars;
+    use super::*;
 
     #[test]
     fn test_remove_unused_vars() {
