@@ -447,19 +447,11 @@ fn replace_copy(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use wasmparser::ValType::I32;
 
-    use cranelift_entity::{EntityRef, SecondaryMap};
-    use wasmparser::{FuncType, ValType::I32};
+    use crate::ir::{builder::Builder, ty::Const, var::Var};
 
-    use crate::ir::{
-        builder::Builder,
-        code::{Breakable, Code, InstId, InstKind},
-        ty::Const,
-        var::{Var, VarId},
-    };
-
-    use super::{copy, reaching_def, replace_copy, Def};
+    use super::*;
 
     #[test]
     fn copy_propagation_block() {
