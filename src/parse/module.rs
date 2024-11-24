@@ -604,6 +604,11 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
                         name += &format!("_{i}");
                     }
 
+                    if name.len() >= 1024 {
+                        // C#では1024文字以上のメソッド名はエラーとなるため名前を変更しない
+                        break;
+                    }
+
                     if names.insert(name.clone()) {
                         // 同名の関数がない場合のみに関数の名前を変更
                         header.name = name;
