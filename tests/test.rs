@@ -166,6 +166,7 @@ test!(
 );
 
 test!(test_uninit_variable, "uninit-variable");
+test!(test_long_func_name, "long-func-name");
 
 // traitのエイリアス
 trait Filter: Fn(&WastDirective<'_>) -> bool {}
