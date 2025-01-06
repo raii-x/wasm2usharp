@@ -53,7 +53,7 @@ impl<'input> Module<'input> {
     }
 }
 
-impl<'input> Module<'input> {
+impl Module<'_> {
     pub fn math_class(&self, ty: CsType) -> &'static str {
         match ty {
             CsType::Float => {

@@ -206,7 +206,7 @@ static void WriteResult(object? result)
     }
 }
 
-impl<'a> Default for CsProj<'a> {
+impl Default for CsProj<'_> {
     fn default() -> Self {
         Self::new()
     }
