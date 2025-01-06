@@ -5,7 +5,7 @@ mod value;
 
 use std::{fs::read_to_string, path::PathBuf};
 
-use cs_proj::{CsProj, CsProjExec};
+use cs_proj::{CsProj, CsProjInput};
 use wasm2usharp::parse::convert_to_ident;
 use wast::{
     core::{Module, WastArgCore},
@@ -231,7 +231,7 @@ fn test_wast(name: &str, filter: Option<&dyn Filter>) {
     };
 
     let lexer = Lexer::new(&buf);
-    let buf: ParseBuffer<'_> = ParseBuffer::new_with_lexer(lexer)
+    let buf = ParseBuffer::new_with_lexer(lexer)
         .map_err(adjust_wast)
         .unwrap();
     let mut ast = parser::parse::<Wast<'_>>(&buf)
@@ -239,24 +239,60 @@ fn test_wast(name: &str, filter: Option<&dyn Filter>) {
         .unwrap();
 
     let mut cs_proj = CsProj::new();
+    let mut cs_proj_input = CsProjInput::new();
 
     // 各モジュールのクラスファイルの生成
     for directive in ast.directives.iter_mut() {
+        use wast::WastDirective::*;
+        if let Some(filter) = &filter {
+            if !filter(directive) {
+                continue;
+            }
+        }
         match directive {
-            WastDirective::Wat(wat) => {
+            Wat(wat) => {
                 // Wasmとして読み込んでC#に変換
                 cs_proj.add_module(get_wat_id(wat), &wat.encode().unwrap());
+                match wat {
+                    QuoteWat::Wat(wast::Wat::Module(Module { id, .. })) => {
+                        cs_proj_input.next_module(&cs_proj, *id);
+                    }
+                    _ => unreachable!(),
+                }
             }
-            WastDirective::Register { name, module, .. } => {
+            Register { name, module, .. } => {
                 cs_proj.register(name.to_string(), module);
             }
-            _ => (),
+            Invoke(invoke) => {
+                invoke_func(&cs_proj, invoke, &mut cs_proj_input);
+            }
+            AssertReturn { exec, .. } => {
+                match exec {
+                    WastExecute::Invoke(invoke) => {
+                        invoke_func(&cs_proj, invoke, &mut cs_proj_input)
+                    }
+                    WastExecute::Get { module, global } => {
+                        cs_proj_input.get_global(&cs_proj, *module, global);
+                    }
+                    _ => panic!(),
+                };
+            }
+            AssertMalformed { .. }
+            | AssertInvalid { .. }
+            | AssertTrap { .. }
+            | AssertExhaustion { .. }
+            | AssertUnlinkable { .. }
+            | AssertException { .. }
+            | Thread(_)
+            | Wait { .. } => {}
         }
     }
 
-    let mut cs_proj_exec = cs_proj.run();
+    let output = cs_proj.run(cs_proj_input);
+    let lines = output.lines().collect::<Vec<_>>();
+    let mut i = 0;
 
-    // モジュールの実行
+    // 出力のテスト
     for directive in ast.directives {
         use wast::WastDirective::*;
         if let Some(filter) = &filter {
@@ -266,23 +302,24 @@ fn test_wast(name: &str, filter: Option<&dyn Filter>) {
             }
         }
         match directive {
-            Wat(wat) => match wat {
-                QuoteWat::Wat(wast::Wat::Module(Module { id, .. })) => {
-                    cs_proj_exec.next_module(id);
-                }
-                _ => unreachable!(),
-            },
+            Wat(_) => {
+                i += 1;
+            }
             Invoke(invoke) => {
-                invoke_func(invoke, &mut cs_proj_exec);
+                println!("Invoke: {} {:?}", invoke.name, invoke.args);
+                i += 1;
             }
             AssertReturn { exec, results, .. } => {
-                let actual = match exec {
-                    WastExecute::Invoke(invoke) => invoke_func(invoke, &mut cs_proj_exec),
-                    WastExecute::Get { module, global } => {
-                        get_global(module, global, &mut cs_proj_exec)
+                match exec {
+                    WastExecute::Invoke(invoke) => {
+                        println!("Invoke: {} {:?}", invoke.name, invoke.args)
                     }
+                    WastExecute::Get { global, .. } => println!("Get: {}", global),
                     _ => panic!(),
-                };
+                }
+
+                let actual = parse_results(lines[i]);
+                i += 1;
 
                 let expected = results
                     .into_iter()
@@ -333,11 +370,11 @@ fn get_wat_id<'a>(wat: &QuoteWat<'a>) -> Option<Id<'a>> {
 }
 
 fn invoke_func<'input>(
-    invoke: WastInvoke<'input>,
-    exec: &mut CsProjExec<'input, '_>,
-) -> Vec<WastArgCore<'static>> {
+    cs_proj: &CsProj<'input>,
+    invoke: &WastInvoke<'input>,
+    input: &mut CsProjInput,
+) {
     use wast::core::WastArgCore::*;
-    println!("Invoking: {} {:?}", invoke.name, invoke.args);
 
     // 最初のコマンド引数に呼び出す関数名を指定
     let mut args = vec![convert_to_ident(invoke.name)];
@@ -357,21 +394,7 @@ fn invoke_func<'input>(
     }));
 
     let args = args.join(" ");
-    let line = exec.invoke(invoke.module, &args);
-
-    parse_results(&line)
-}
-
-fn get_global<'input>(
-    module: Option<Id<'input>>,
-    global: &'input str,
-    exec: &mut CsProjExec<'input, '_>,
-) -> Vec<WastArgCore<'static>> {
-    println!("Get: {global}");
-
-    let line = exec.get_global(module, global);
-
-    parse_results(&line)
+    input.invoke(cs_proj, invoke.module, &args);
 }
 
 fn parse_results(line: &str) -> Vec<WastArgCore<'static>> {

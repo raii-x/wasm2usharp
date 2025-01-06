@@ -1,8 +1,8 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{BufRead, BufReader, Write},
-    process::{Child, Command, Stdio},
+    io::{Read, Write},
+    process::Command,
 };
 
 use tempfile::{tempdir, TempDir};
@@ -28,7 +28,8 @@ impl<'input> CsProj<'input> {
 
         // .NETプロジェクトを作成
         Command::new("dotnet")
-            .args(["new", "console", "-o", dir.path().to_str().unwrap()])
+            .args(["new", "console"])
+            .current_dir(dir.path())
             .status()
             .unwrap();
 
@@ -75,37 +76,39 @@ impl<'input> CsProj<'input> {
         self.reg_modules.insert(name, module);
     }
 
-    pub fn run(&self) -> CsProjExec<'input, '_> {
+    pub fn run(&self, input: CsProjInput) -> String {
         self.create_main_cs();
 
         // .NETプロジェクトをビルド
         let status = Command::new("dotnet")
-            .args([
-                "build",
-                self.dir.path().to_str().unwrap(),
-                "--no-restore",
-                "--nologo",
-                "-v",
-                "q",
-            ])
+            .args(["build", "--no-restore", "--nologo", "-v", "q"])
+            .current_dir(self.dir.path())
             .status()
             .unwrap();
         assert!(status.success());
 
-        // .NETプロジェクトを実行
-        let child = Command::new("dotnet")
-            .args([
-                "run",
-                "--project",
-                self.dir.path().to_str().unwrap(),
-                "--no-build",
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
+        // 入力ファイルを作成
+        let input_path = self.dir.path().join("input.txt");
+        File::create(&input_path)
+            .unwrap()
+            .write_all(input.input.as_bytes())
             .unwrap();
 
-        CsProjExec::new(self, child)
+        // .NETプロジェクトを実行
+        let status = Command::new("dotnet")
+            .args(["run", "--no-build"])
+            .current_dir(self.dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        // 出力ファイルを読み込み
+        let mut output = String::new();
+        File::open(self.dir.path().join("output.txt"))
+            .unwrap()
+            .read_to_string(&mut output)
+            .unwrap();
+        output
     }
 
     fn create_main_cs(&self) {
@@ -138,8 +141,11 @@ impl<'input> CsProj<'input> {
         }
 
         writeln!(cs_file, r#"
+using var inputFile = new StreamReader("input.txt");
+using var outputFile = new StreamWriter("output.txt");
+
 string? line;
-while ((line = Console.ReadLine()) != null) {{
+while ((line = inputFile.ReadLine()) != null) {{
     var args = line.Split(' ');
 
     string command = args[0];
@@ -168,14 +174,14 @@ while ((line = Console.ReadLine()) != null) {{
                 }}
             }}
 
-            WriteResult(mi.Invoke(instances[iModule], parameters));
+            WriteResult(mi.Invoke(instances[iModule], parameters), outputFile);
 
             break;
 
         case "get":
             string name = args[2];
             var fi = t.GetField(name) ?? throw new ArgumentException($"Global variable '{{name}}' is not found");
-            WriteResult(fi.GetValue(instances[iModule])!);
+            WriteResult(fi.GetValue(instances[iModule])!, outputFile);
 
             break;
 
@@ -188,7 +194,7 @@ while ((line = Console.ReadLine()) != null) {{
         writeln!(cs_file, "}}").unwrap();
 
         writeln!(cs_file, r#"
-static void WriteResult(object? result)
+static void WriteResult(object? result, StreamWriter outputFile)
 {{
     string resultStr = result switch
     {{
@@ -199,7 +205,7 @@ static void WriteResult(object? result)
         null => "",
         _ => throw new InvalidOperationException($"Unsupported result type: '{{result.GetType()}}'"),
     }};
-    Console.WriteLine(resultStr);
+    outputFile.WriteLine(resultStr);
 }}"#).unwrap();
 
         writeln!(cs_file, "}}").unwrap();
@@ -222,49 +228,39 @@ struct CsImport {
     name: String,
 }
 
-pub struct CsProjExec<'input, 'a> {
-    cs_proj: &'a CsProj<'input>,
-    child: Child,
+pub struct CsProjInput {
     last_module: Option<usize>,
+    input: String,
 }
 
-impl<'input, 'a> CsProjExec<'input, 'a> {
-    fn new(cs_proj: &'a CsProj<'input>, child: Child) -> Self {
+impl CsProjInput {
+    pub fn new() -> Self {
         Self {
-            cs_proj,
-            child,
             last_module: None,
+            input: String::new(),
         }
     }
 
-    /// wastのdirectiveの2回目のイテレートでwat読み込みの際にこの関数を呼ぶことで、
-    /// IDとモジュールの対応関係が1回目のイテレートの時と同じようになる
-    pub fn next_module(&mut self, module: Option<Id<'input>>) {
+    /// wastのdirectiveのイテレートでwat読み込みの際にこの関数を呼ぶことで、
+    /// IDとモジュールの対応関係がCsProjと同じようになる
+    pub fn next_module(&mut self, cs_proj: &CsProj<'_>, module: Option<Id<'_>>) {
         self.last_module = Some(match self.last_module {
             Some(x) => x + 1,
             None => 0,
         });
 
-        self.invoke(module, INIT);
+        self.invoke(cs_proj, module, INIT);
     }
 
-    fn get_module(&self, module: Option<Id<'input>>) -> &CsModule {
-        &self.cs_proj.modules[match module {
-            Some(id) => *self.cs_proj.id_to_module.get(&id).unwrap(),
+    fn get_module<'input, 'a>(
+        &self,
+        cs_proj: &'a CsProj<'input>,
+        module: Option<Id<'input>>,
+    ) -> &'a CsModule {
+        &cs_proj.modules[match module {
+            Some(id) => *cs_proj.id_to_module.get(&id).unwrap(),
             None => self.last_module.unwrap(),
         }]
-    }
-
-    fn input_line(&mut self, input: &str) -> String {
-        let stdin: &mut std::process::ChildStdin = self.child.stdin.as_mut().unwrap();
-        stdin.write_all(input.as_bytes()).unwrap();
-
-        let stdout = self.child.stdout.as_mut().unwrap();
-        let mut stdout = BufReader::new(stdout);
-        let mut line = String::new();
-        stdout.read_line(&mut line).unwrap();
-
-        line
     }
 
     /// 指定したモジュールIDのインスタンスに対して関数を実行する
@@ -274,11 +270,16 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
     /// 2番目にモジュール番号 (この関数で追加される)、
     /// 3番目に関数名、
     /// 関数に渡す引数があれば、3番目以降に引数の型と10進整数でビット列を表現した引数の値を順番に渡す
-    pub fn invoke(&mut self, module: Option<Id<'input>>, args: &str) -> String {
-        let module = self.get_module(module);
+    pub fn invoke<'input>(
+        &mut self,
+        cs_proj: &CsProj<'input>,
+        module: Option<Id<'input>>,
+        args: &str,
+    ) {
+        let module = self.get_module(cs_proj, module);
 
         let args = format!("invoke {} {args}\n", module.index);
-        self.input_line(&args)
+        self.input += &args;
     }
 
     /// 指定したモジュールIDのインスタンスのグローバル変数を取得する
@@ -287,10 +288,21 @@ impl<'input, 'a> CsProjExec<'input, 'a> {
     /// 1番目に "get" (この関数で追加される)、
     /// 2番目にモジュール番号 (この関数で追加される)、
     /// 3番目にグローバル変数名を順番に渡す
-    pub fn get_global(&mut self, module: Option<Id<'input>>, global: &str) -> String {
-        let module = self.get_module(module);
+    pub fn get_global<'input>(
+        &mut self,
+        cs_proj: &CsProj<'input>,
+        module: Option<Id<'input>>,
+        global: &str,
+    ) {
+        let module = self.get_module(cs_proj, module);
 
         let args = format!("get {} {global}\n", module.index);
-        self.input_line(&args)
+        self.input += &args
+    }
+}
+
+impl Default for CsProjInput {
+    fn default() -> Self {
+        Self::new()
     }
 }
