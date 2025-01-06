@@ -899,7 +899,7 @@ fn index_pattern(offset: u64) -> String {
     }
 }
 
-impl<'a, 'input, 'module> VisitOperator<'a> for CodeParser<'input, 'module> {
+impl<'a> VisitOperator<'a> for CodeParser<'_, '_> {
     type Output = Result<()>;
 
     for_each_operator!(define_visit_operator);
