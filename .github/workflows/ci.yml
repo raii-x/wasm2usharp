@@ -35,5 +35,10 @@ jobs:
       - name: Build
         run: cargo build --verbose
 
+      # 並列テストでの初回実行レース（NuGet-Migrations Mutexの競合）を避けるため、
+      # dotnetの初回セットアップをここで直列に1回だけ済ませておく
+      - name: Warm up .NET first-time experience
+        run: dotnet new console -o /tmp/dotnet-warmup
+
       - name: Test
         run: cargo test --verbose
