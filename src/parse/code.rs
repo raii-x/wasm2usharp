@@ -27,7 +27,7 @@ macro_rules! define_single_visit_operator {
     ( @sign_extension $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @bulk_memory $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {};
     ( @$proposal:ident $op:ident $({ $($arg:ident: $argty:ty),* })? => $visit:ident) => {
-        fn $visit(&mut self $($(,$arg: $argty)*)?) -> Self::Output {
+        fn $visit(&mut self $($(, _: $argty)*)?) -> Self::Output {
             panic!(stringify!($proposal))
         }
     };
