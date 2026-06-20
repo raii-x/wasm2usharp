@@ -215,10 +215,9 @@ impl<'input, 'module> ModuleParser<'input, 'module> {
 
                 self.code_idx += 1;
             }
-            CustomSection(s)
-                if s.name() == "name" => {
-                    self.apply_names(s)?;
-                }
+            CustomSection(s) if s.name() == "name" => {
+                self.apply_names(s)?;
+            }
             _other => {}
         }
         Ok(())
