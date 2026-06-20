@@ -3,6 +3,7 @@ use std::io;
 use crate::ir::{
     code::{BlockId, Breakable, Call, Code, InstId, InstKind},
     module::Module,
+    var::VarId,
     BREAK_DEPTH, LOOP, STACK, STACK_TOP,
 };
 
@@ -38,7 +39,7 @@ fn codegen_inst(
     let pattern = inst.expand_pattern(module);
 
     if let Some(call) = &inst.call {
-        push_save_vars(f, call)?;
+        push_save_vars(f, call, inst.result)?;
     }
 
     match &inst.kind {
@@ -130,15 +131,29 @@ fn codegen_inst(
     }
 
     if let Some(call) = &inst.call {
-        pop_save_vars(f, call, code)?;
+        pop_save_vars(f, call, code, inst.result)?;
     }
     Ok(())
 }
 
-fn push_save_vars(f: &mut dyn io::Write, call: &Call) -> io::Result<()> {
-    if call.recursive && !call.save_vars.is_empty() {
-        let mut save_vars = call.save_vars.iter().copied().collect::<Vec<_>>();
-        save_vars.sort();
+fn filtered_save_vars(call: &Call, result: Option<VarId>) -> Vec<VarId> {
+    if !call.recursive {
+        return Vec::new();
+    }
+
+    let mut save_vars = call
+        .save_vars
+        .iter()
+        .copied()
+        .filter(|&var_id| Some(var_id) != result)
+        .collect::<Vec<_>>();
+    save_vars.sort();
+    save_vars
+}
+
+fn push_save_vars(f: &mut dyn io::Write, call: &Call, result: Option<VarId>) -> io::Result<()> {
+    let save_vars = filtered_save_vars(call, result);
+    if !save_vars.is_empty() {
 
         // ローカル変数保存用のスタックにプッシュ
         for (i, &var) in save_vars.iter().enumerate() {
@@ -153,10 +168,14 @@ fn push_save_vars(f: &mut dyn io::Write, call: &Call) -> io::Result<()> {
     Ok(())
 }
 
-fn pop_save_vars(f: &mut dyn io::Write, call: &Call, code: &Code) -> io::Result<()> {
-    if call.recursive && !call.save_vars.is_empty() {
-        let mut save_vars = call.save_vars.iter().copied().collect::<Vec<_>>();
-        save_vars.sort();
+fn pop_save_vars(
+    f: &mut dyn io::Write,
+    call: &Call,
+    code: &Code,
+    result: Option<VarId>,
+) -> io::Result<()> {
+    let save_vars = filtered_save_vars(call, result);
+    if !save_vars.is_empty() {
 
         writeln!(f, "{STACK_TOP} -= {};", save_vars.len())?;
 
@@ -182,4 +201,35 @@ fn pop_save_vars(f: &mut dyn io::Write, call: &Call, code: &Code) -> io::Result<
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use crate::ir::{
+        builder::Builder,
+        code::Call,
+        var::Var,
+    };
+
+    use super::filtered_save_vars;
+
+    #[test]
+    fn excludes_recursive_call_result_from_saved_vars() {
+        let mut builder = Builder::new(&[]);
+        let var0 = builder.new_var(Var::default());
+        let var1 = builder.new_var(Var::default());
+
+        let call = Call {
+            func: 0,
+            recursive: true,
+            save_vars: HashSet::from([var0, var1]),
+            save_loop_vars: Default::default(),
+        };
+
+        assert_eq!(filtered_save_vars(&call, Some(var0)), vec![var1]);
+        assert_eq!(filtered_save_vars(&call, Some(var1)), vec![var0]);
+        assert_eq!(filtered_save_vars(&call, None), vec![var0, var1]);
+    }
 }
