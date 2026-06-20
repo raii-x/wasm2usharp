@@ -154,7 +154,6 @@ fn filtered_save_vars(call: &Call, result: Option<VarId>) -> Vec<VarId> {
 fn push_save_vars(f: &mut dyn io::Write, call: &Call, result: Option<VarId>) -> io::Result<()> {
     let save_vars = filtered_save_vars(call, result);
     if !save_vars.is_empty() {
-
         // ローカル変数保存用のスタックにプッシュ
         for (i, &var) in save_vars.iter().enumerate() {
             write!(f, "{STACK}[{STACK_TOP}")?;
@@ -176,7 +175,6 @@ fn pop_save_vars(
 ) -> io::Result<()> {
     let save_vars = filtered_save_vars(call, result);
     if !save_vars.is_empty() {
-
         writeln!(f, "{STACK_TOP} -= {};", save_vars.len())?;
 
         // ローカル変数保存用のスタックからポップ
@@ -207,11 +205,7 @@ fn pop_save_vars(
 mod tests {
     use std::collections::HashSet;
 
-    use crate::ir::{
-        builder::Builder,
-        code::Call,
-        var::Var,
-    };
+    use crate::ir::{builder::Builder, code::Call, var::Var};
 
     use super::filtered_save_vars;
 
